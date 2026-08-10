@@ -1,0 +1,1698 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://alcdn.msauth.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.sharepoint.com https://graph.microsoft.com; font-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.sharepoint.com; frame-src https://login.microsoftonline.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Sipnology · Sistema de Tickets NOC</title>
+<style>
+:root{
+  --bg:#0d1b2a; --panel:#12263a; --panel2:#183048; --line:#26445f;
+  --txt:#e8f1f8; --muted:#93aec4; --brand:#00b2a9; --brand2:#0e86d4;
+  --p1:#e5484d; --p2:#f2a900; --p3:#3fb950; --warn:#ff9f1c;
+  --radius:10px; --sh:0 6px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(160deg,#0a1622,#0d1b2a 40%,#0b1e30);color:var(--txt);
+ font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;min-height:100vh}
+h1,h2,h3{margin:0 0 10px;font-weight:600}
+a{color:var(--brand2)}
+/* ---------- Auth gate ---------- */
+#authGate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
+ background:radial-gradient(1200px 600px at 50% -10%,#12384d,#08121c 70%)}
+#authGate .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 38px;
+ width:min(420px,92vw);text-align:center;box-shadow:var(--sh)}
+.logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:6px}
+.logo .mark{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));
+ display:grid;place-items:center;font-weight:800;color:#04121a;font-size:19px}
+.logo .name{font-size:20px;font-weight:700;letter-spacing:.5px}
+.logo .name span{color:var(--brand)}
+.sub{color:var(--muted);font-size:12.5px;margin-bottom:20px}
+/* ---------- Layout ---------- */
+header.top{position:sticky;top:0;z-index:50;background:rgba(13,27,42,.92);backdrop-filter:blur(8px);
+ border-bottom:1px solid var(--line);padding:10px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+nav.tabs{display:flex;gap:4px;flex:1;flex-wrap:wrap}
+nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:8px 14px;
+ border-radius:8px;cursor:pointer;font-size:13.5px;font-weight:500}
+nav.tabs button:hover{background:var(--panel2);color:var(--txt)}
+nav.tabs button.on{background:var(--brand);color:#04121a;font-weight:700}
+.who{font-size:12px;color:var(--muted);text-align:right;line-height:1.3}
+.who b{color:var(--txt);display:block;font-size:12.5px}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
+.b-admin{background:#7c3aed;color:#fff}.b-op{background:var(--brand);color:#04121a}.b-cli{background:#334e68;color:#cfe3f5}
+main{padding:18px;max-width:1500px;margin:0 auto}
+.view{display:none}.view.on{display:block}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
+.panel>h2{font-size:15px;color:var(--brand);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.f{display:flex;flex-direction:column;gap:5px}
+.f label{font-size:11.5px;color:var(--muted);font-weight:600;letter-spacing:.2px}
+.f label .req{color:var(--p1)}
+input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
+ padding:8px 10px;font:inherit;font-size:13px;width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:-1px}
+input[readonly],input:disabled,select:disabled,textarea:disabled{opacity:.65;cursor:not-allowed}
+textarea{min-height:80px;resize:vertical}
+select[multiple]{min-height:120px}
+.btn{background:var(--brand);color:#04121a;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
+ cursor:pointer;font-size:13px}
+.btn:hover{filter:brightness(1.08)}
+.btn.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line);font-weight:600}
+.btn.dan{background:var(--p1);color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.right{margin-left:auto}
+hr.sep{border:0;border-top:1px solid var(--line);margin:14px 0}
+/* ---------- Table ---------- */
+.tw{overflow:auto;border:1px solid var(--line);border-radius:8px;max-height:62vh}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th{position:sticky;top:0;background:var(--panel2);color:var(--muted);text-align:left;padding:9px 10px;
+ font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;z-index:2}
+td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top}
+tbody tr:hover{background:rgba(0,178,169,.07)}
+td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:nowrap}
+.pill{padding:2px 9px;border-radius:99px;font-size:10.5px;font-weight:700;white-space:nowrap;display:inline-block}
+.s-ABIERTO{background:#0e86d4;color:#fff}.s-ESPERA{background:var(--warn);color:#2b1600}.s-CERRADO{background:#2f4b60;color:#b9d2e6}
+.pr-P1{background:var(--p1);color:#fff}.pr-P2{background:var(--p2);color:#2b1a00}.pr-P3{background:var(--p3);color:#04220c}
+.sla-ok{color:var(--p3)}.sla-warn{color:var(--warn);font-weight:700}.sla-bad{color:var(--p1);font-weight:800}
+/* ---------- Cards / KPI ---------- */
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.kpi .n{font-size:26px;font-weight:800;line-height:1}
+.kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+.charts{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;position:relative}
+.chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.chartbox canvas{max-height:260px}
+.chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
+/* ---------- Modal ---------- */
+.mask{position:fixed;inset:0;background:rgba(3,10,18,.75);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:22px;overflow:auto}
+.mask.on{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(1050px,96vw);box-shadow:var(--sh)}
+.modal .mh{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.modal .mh h2{margin:0;font-size:16px}
+.modal .mb{padding:16px 18px;max-height:76vh;overflow:auto}
+.modal .mf{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap}
+.close{margin-left:auto;background:transparent;border:0;color:var(--muted);font-size:22px;cursor:pointer;line-height:1}
+/* ---------- RTE ---------- */
+.rte-tb{display:flex;gap:3px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-bottom:0;
+ border-radius:8px 8px 0 0;padding:5px}
+.rte-tb button{background:transparent;border:1px solid transparent;color:var(--muted);width:30px;height:26px;
+ border-radius:5px;cursor:pointer;font-size:12px}
+.rte-tb button:hover{background:var(--panel);color:var(--txt)}
+.rte{min-height:130px;max-height:320px;overflow:auto;background:var(--panel2);border:1px solid var(--line);
+ border-radius:0 0 8px 8px;padding:10px;font-size:13px}
+.rte:focus{outline:2px solid var(--brand);outline-offset:-1px}
+.rte img{max-width:100%;border-radius:6px}
+/* ---------- Adjuntos ---------- */
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:16px;text-align:center;color:var(--muted);
+ font-size:12.5px;cursor:pointer}
+.drop.hot{border-color:var(--brand);background:rgba(0,178,169,.08);color:var(--txt)}
+.files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.file{display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);
+ border-radius:7px;padding:5px 9px;font-size:12px}
+.file .rm{background:transparent;border:0;color:var(--p1);cursor:pointer;font-size:14px;line-height:1}
+.file .ic{font-size:14px}
+/* ---------- Timeline ---------- */
+.tl{border-left:2px solid var(--line);margin-left:8px;padding-left:16px}
+.tl .it{position:relative;padding-bottom:16px}
+.tl .it:before{content:"";position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;
+ background:var(--brand);border:2px solid var(--panel)}
+.tl .mt{font-size:11px;color:var(--muted);margin-bottom:3px}
+.tl .bd{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+/* ---------- Misc ---------- */
+.toast{position:fixed;right:18px;bottom:18px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast div{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--brand);
+ border-radius:8px;padding:11px 16px;font-size:13px;box-shadow:var(--sh);max-width:380px}
+.toast div.err{border-left-color:var(--p1)}
+.toast div.warn{border-left-color:var(--warn)}
+.note{font-size:12px;color:var(--muted);background:var(--panel2);border-left:3px solid var(--brand2);
+ padding:9px 12px;border-radius:0 8px 8px 0;margin:10px 0}
+.pag{display:flex;gap:5px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
+.pag button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;
+ padding:4px 10px;cursor:pointer;font-size:12px}
+.pag button.on{background:var(--brand);color:#04121a;font-weight:700;border-color:var(--brand)}
+.hide{display:none!important}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:11.5px;display:flex;gap:6px;align-items:center}
+.chip .rm{background:transparent;border:0;color:var(--p1);cursor:pointer;font-size:13px;line-height:1}
+.spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;
+ display:inline-block;animation:sp .8s linear infinite;vertical-align:-3px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:760px){main{padding:12px}.modal .mb{max-height:70vh}}
+</style>
+</head>
+<body>
+
+<!-- ============ AUTH GATE ============ -->
+<div id="authGate">
+  <div class="card">
+    <div class="logo"><div class="mark">S</div><div class="name">SIP<span>NOLOGY</span></div></div>
+    <div class="sub">Sistema de Control de Tickets · NOC</div>
+    <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.</div>
+    <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
+    <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
+      Clientes externos: usen el correo con el que fueron invitados.
+    </div>
+  </div>
+</div>
+
+<!-- ============ HEADER ============ -->
+<header class="top hide" id="topBar">
+  <div class="logo" style="margin:0"><div class="mark">S</div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div></div>
+  <nav class="tabs" id="tabs">
+    <button data-v="vApertura" class="on">Apertura de ticket</button>
+    <button data-v="vSeguimiento">Seguimiento</button>
+    <button data-v="vEstado">Estado / Dashboard</button>
+    <button data-v="vCatalogos" id="tabCat">Catálogos</button>
+    <button data-v="vBitacora" id="tabBit">Bitácora</button>
+  </nav>
+  <div class="who"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
+  <button class="btn sec" id="btnLogout">Salir</button>
+</header>
+
+<main class="hide" id="app">
+
+<!-- ============ VISTA 1: APERTURA ============ -->
+<section class="view on" id="vApertura">
+  <div class="panel">
+    <h2>Apertura de ticket</h2>
+    <div class="grid">
+      <div class="f"><label>ID del ticket</label>
+        <input id="tId" readonly placeholder="Se genera automáticamente"></div>
+      <div class="f"><label>Cliente <span class="req">*</span></label><select id="tCliente"></select></div>
+      <div class="f"><label>Localidad / Sede <span class="req">*</span></label><select id="tLocalidad"></select></div>
+      <div class="f"><label>Piso <span class="req">*</span></label><select id="tPiso"></select></div>
+    </div>
+    <hr class="sep">
+    <div class="grid">
+      <div class="f"><label>Categoría <span class="req">*</span></label><select id="tCategoria"></select></div>
+      <div class="f"><label>Subcategoría <span class="req">*</span></label><select id="tSubcategoria"></select></div>
+      <div class="f"><label>Tipo de incidente <span class="req">*</span></label><select id="tTipo"></select></div>
+      <div class="f"><label>Prioridad <span class="req">*</span></label><select id="tPrioridad"></select></div>
+    </div>
+    <hr class="sep">
+    <div class="grid g2">
+      <div class="f"><label>Equipo principal afectado <span class="req">*</span></label>
+        <div class="row" style="gap:6px">
+          <select id="tEquipoSel" style="flex:1"></select>
+          <button class="btn sec" id="btnEqAdd" type="button" title="Agregar equipo seleccionado">+</button>
+        </div>
+        <div class="chips" id="tEquipos"></div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <input id="tEqLibre" placeholder="Hostname manual (si no está en catálogo)" style="flex:1">
+          <button class="btn sec" id="btnEqLibre" type="button">Agregar</button>
+        </div>
+      </div>
+      <div class="f"><label>Colaterales afectados</label>
+        <div class="row" style="gap:6px">
+          <select id="tColTipo" style="flex:1"></select>
+          <input id="tColCant" type="number" min="1" value="1" style="width:80px">
+          <button class="btn sec" id="btnColAdd" type="button">+</button>
+        </div>
+        <div class="chips" id="tColaterales"></div>
+        <textarea id="tColNota" placeholder="Detalle de la afectación colateral (opcional)"></textarea>
+      </div>
+    </div>
+    <hr class="sep">
+    <div class="grid">
+      <div class="f"><label>Fecha de apertura <span class="req">*</span></label><input type="date" id="tFecha"></div>
+      <div class="f"><label>Hora de apertura (12 h) <span class="req">*</span></label>
+        <div class="row" style="gap:6px">
+          <input id="tHora" placeholder="hh:mm:ss" style="flex:1">
+          <select id="tAmPm" style="width:80px"><option>AM</option><option>PM</option></select>
+          <button class="btn sec" id="btnAhora" type="button" title="Ahora">⏱</button>
+        </div></div>
+      <div class="f"><label>Responsable de la apertura <span class="req">*</span></label><input id="tRespAp" readonly></div>
+      <div class="f"><label>Status</label><input id="tStatus" value="ABIERTO" readonly title="En la apertura el status siempre es ABIERTO"></div>
+    </div>
+    <div class="f" style="margin-top:12px"><label>Descripción inicial / Notas de apertura</label>
+      <div class="rte-tb" data-for="tDesc">
+        <button type="button" data-c="bold" title="Negrita"><b>B</b></button>
+        <button type="button" data-c="italic" title="Cursiva"><i>I</i></button>
+        <button type="button" data-c="underline" title="Subrayado"><u>U</u></button>
+        <button type="button" data-c="insertUnorderedList" title="Viñetas">•</button>
+        <button type="button" data-c="insertOrderedList" title="Numerada">1.</button>
+        <button type="button" data-c="removeFormat" title="Limpiar formato">✕</button>
+      </div>
+      <div class="rte" id="tDesc" contenteditable="true"></div>
+    </div>
+    <div class="f" style="margin-top:12px"><label>Evidencias / Archivos adjuntos</label>
+      <div class="drop" id="tDrop">Arrastra archivos aquí o haz clic para seleccionar (imágenes, txt, Excel, Word, PPT, ZIP…)</div>
+      <input type="file" id="tFiles" multiple class="hide">
+      <div class="files" id="tFileList"></div>
+    </div>
+    <div class="note">El status en apertura es siempre <b>ABIERTO</b>. Los adjuntos se guardarán en SharePoint dentro de la carpeta <code id="tFolderHint">Tickets/AAAA-MM/&lt;ID&gt;/</code>.</div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="btnCrear">Crear ticket</button>
+      <button class="btn sec" id="btnLimpiar">Limpiar formulario</button>
+      <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
+        <input type="checkbox" id="tMail" checked style="width:auto"> Enviar correo de apertura</label>
+    </div>
+  </div>
+</section>
+
+<!-- ============ VISTA 2: SEGUIMIENTO ============ -->
+<section class="view" id="vSeguimiento">
+  <div class="panel">
+    <h2>Filtros de consulta</h2>
+    <div class="grid">
+      <div class="f"><label>ID del ticket</label><input id="fId" placeholder="98090826-01"></div>
+      <div class="f"><label>Cliente</label><select id="fCliente"></select></div>
+      <div class="f"><label>Localidad</label><select id="fLocalidad"></select></div>
+      <div class="f"><label>Piso</label><select id="fPiso"></select></div>
+      <div class="f"><label>Categoría</label><select id="fCategoria"></select></div>
+      <div class="f"><label>Subcategoría</label><select id="fSubcategoria"></select></div>
+      <div class="f"><label>Tipo de incidente</label><select id="fTipo"></select></div>
+      <div class="f"><label>Prioridad</label><select id="fPrioridad"></select></div>
+      <div class="f"><label>Equipo afectado</label><input id="fEquipo" placeholder="hostname"></div>
+      <div class="f"><label>Status</label><select id="fStatus"></select></div>
+      <div class="f"><label>Responsable apertura</label><select id="fRespAp"></select></div>
+      <div class="f"><label>Responsable cierre</label><select id="fRespCi"></select></div>
+      <div class="f"><label>Apertura desde</label><input type="date" id="fFecAp1"></div>
+      <div class="f"><label>Apertura hasta</label><input type="date" id="fFecAp2"></div>
+      <div class="f"><label>Cierre desde</label><input type="date" id="fFecCi1"></div>
+      <div class="f"><label>Cierre hasta</label><input type="date" id="fFecCi2"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="btnFiltrar">Aplicar filtros</button>
+      <button class="btn sec" id="btnLimpiaF">Limpiar</button>
+      <button class="btn sec" id="btnRefrescar">↻ Refrescar desde SharePoint</button>
+      <span class="right row" style="gap:8px">
+        <button class="btn sec" id="btnExpXlsSeg">Exportar Excel</button>
+        <button class="btn sec" id="btnExpPdfSeg">Exportar PDF</button>
+      </span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Tickets <span id="segCount" style="color:var(--muted);font-weight:400"></span></h2>
+    <div class="tw"><table id="tblSeg">
+      <thead><tr>
+        <th>ID</th><th>Status</th><th>SLA</th><th>Pri</th><th>Cliente</th><th>Localidad</th><th>Piso</th>
+        <th>Categoría</th><th>Subcategoría</th><th>Tipo de incidente</th><th>Equipo</th>
+        <th>Apertura</th><th>Cierre</th><th>T. Falla</th><th>T. Afect.</th><th>Resp. Ap.</th><th>Resp. Ci.</th><th></th>
+      </tr></thead><tbody></tbody></table></div>
+    <div class="pag" id="segPag"></div>
+  </div>
+</section>
+
+<!-- ============ VISTA 3: ESTADO / DASHBOARD ============ -->
+<section class="view" id="vEstado">
+  <div class="panel">
+    <h2>Filtros del tablero</h2>
+    <div class="grid">
+      <div class="f"><label>Cliente</label><select id="dCliente"></select></div>
+      <div class="f"><label>Localidad</label><select id="dLocalidad"></select></div>
+      <div class="f"><label>Piso</label><select id="dPiso"></select></div>
+      <div class="f"><label>Categoría</label><select id="dCategoria"></select></div>
+      <div class="f"><label>Prioridad</label><select id="dPrioridad"></select></div>
+      <div class="f"><label>Status</label><select id="dStatus"></select></div>
+      <div class="f"><label>Desde</label><input type="date" id="dF1"></div>
+      <div class="f"><label>Hasta</label><input type="date" id="dF2"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="btnDash">Aplicar</button>
+      <button class="btn sec" id="btnDashClr">Limpiar</button>
+      <span class="right row" style="gap:8px">
+        <select id="dNuevo" style="width:220px"></select>
+        <button class="btn sec" id="btnAddChart">+ Agregar gráfica</button>
+        <select id="dExport" style="width:210px">
+          <option value="">Exportar…</option>
+          <option value="pdf">PDF (gráficas + resumen)</option>
+          <option value="xlsx">Excel (datos filtrados)</option>
+          <option value="both">PDF + Excel</option>
+        </select>
+      </span>
+    </div>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="charts" id="charts"></div>
+</section>
+
+<!-- ============ VISTA 4: CATÁLOGOS ============ -->
+<section class="view" id="vCatalogos">
+  <div class="panel">
+    <h2>Catálogos maestros</h2>
+    <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Los cambios se guardan en <code>Sistema/_tickets_catalogo.json</code> y se propagan automáticamente a todos los usuarios.</div>
+    <div class="row"><select id="catSel" style="width:260px">
+      <option value="clientes">Clientes</option>
+      <option value="localidades">Localidades / Sedes (ID de 2 dígitos)</option>
+      <option value="pisos">Pisos por localidad</option>
+      <option value="categorias">Categorías y subcategorías</option>
+      <option value="tipos">Tipos de incidente por subcategoría</option>
+      <option value="prioridades">Prioridades y SLA</option>
+      <option value="equipos">Equipos / Dispositivos</option>
+      <option value="tiposDispositivo">Tipos de dispositivo</option>
+      <option value="imputables">Imputables</option>
+      <option value="clientesExternos">Usuarios cliente (acceso externo)</option>
+      <option value="admins">Administradores</option>
+    </select>
+      <button class="btn" id="btnCatSave" class="right">Guardar cambios</button>
+      <button class="btn sec" id="btnCatReload">↻ Recargar</button>
+    </div>
+    <div id="catBody" style="margin-top:14px"></div>
+  </div>
+</section>
+
+<!-- ============ VISTA 5: BITÁCORA ============ -->
+<section class="view" id="vBitacora">
+  <div class="panel">
+    <h2>Bitácora de auditoría</h2>
+    <div class="row">
+      <select id="bitSize" style="width:110px"><option>5</option><option selected>10</option><option>25</option><option>50</option></select>
+      <input id="bitQ" placeholder="Buscar evento, usuario, detalle…" style="flex:1;max-width:340px">
+      <button class="btn sec" id="btnBitRef">↻ Refrescar</button>
+    </div>
+    <div class="tw" style="margin-top:12px"><table id="tblBit">
+      <thead><tr><th>Fecha</th><th>Hora</th><th>Usuario</th><th>Evento</th><th>Detalle</th></tr></thead><tbody></tbody></table></div>
+    <div class="pag" id="bitPag"></div>
+  </div>
+</section>
+</main>
+
+<!-- ============ MODAL DE SEGUIMIENTO ============ -->
+<div class="mask" id="mSeg">
+  <div class="modal">
+    <div class="mh">
+      <h2>Ticket <span id="mId" style="font-family:ui-monospace,monospace;color:var(--brand)"></span></h2>
+      <span class="pill" id="mStatus"></span><span class="pill" id="mPri"></span>
+      <span id="mSla" style="font-size:12px"></span>
+      <button class="close" id="mClose">×</button>
+    </div>
+    <div class="mb">
+      <div class="panel" style="margin:0 0 14px">
+        <h2>Datos de apertura (no editables)</h2>
+        <div class="grid" id="mResumen"></div>
+        <div id="mDescBox" style="margin-top:12px"></div>
+      </div>
+
+      <div class="panel" style="margin:0 0 14px" id="mSegForm">
+        <h2>Seguimiento y cierre</h2>
+        <div class="grid">
+          <div class="f"><label>Nuevo status <span class="req">*</span></label>
+            <select id="sStatus"><option value="">— sin cambio —</option><option>EN ESPERA</option><option>CERRADO</option></select></div>
+          <div class="f"><label>Imputable</label><select id="sImputable"></select></div>
+          <div class="f"><label>Fecha de restablecimiento</label><input type="date" id="sFecRes"></div>
+          <div class="f"><label>Hora de restablecimiento</label>
+            <div class="row" style="gap:6px"><input id="sHoraRes" placeholder="hh:mm:ss" style="flex:1">
+            <select id="sAmPmRes" style="width:78px"><option>AM</option><option>PM</option></select></div></div>
+          <div class="f"><label>Fecha de cierre</label><input type="date" id="sFecCie"></div>
+          <div class="f"><label>Hora de cierre</label>
+            <div class="row" style="gap:6px"><input id="sHoraCie" placeholder="hh:mm:ss" style="flex:1">
+            <select id="sAmPmCie" style="width:78px"><option>AM</option><option>PM</option></select></div></div>
+          <div class="f"><label>Tiempo de falla/incidente (hh:mm:ss)</label>
+            <input id="sTFalla" readonly title="Calculado: cierre − apertura"></div>
+          <div class="f"><label>Tiempo de afectación (hh:mm:ss)</label>
+            <input id="sTAfect" placeholder="0:00:00" title="Restablecimiento − apertura (editable)"></div>
+          <div class="f"><label>Responsable del cierre</label><input id="sRespCi" readonly></div>
+          <div class="f"><label>Ticket del cliente (CRQ / INC)</label><input id="sCrq" placeholder="CRQ000000123456"></div>
+        </div>
+        <div class="f" style="margin-top:12px"><label>Notas y actividades <span class="req">*</span></label>
+          <div class="rte-tb" data-for="sNota">
+            <button type="button" data-c="bold"><b>B</b></button>
+            <button type="button" data-c="italic"><i>I</i></button>
+            <button type="button" data-c="underline"><u>U</u></button>
+            <button type="button" data-c="insertUnorderedList">•</button>
+            <button type="button" data-c="insertOrderedList">1.</button>
+            <button type="button" data-c="removeFormat">✕</button>
+          </div>
+          <div class="rte" id="sNota" contenteditable="true"></div>
+        </div>
+        <div class="f" style="margin-top:12px"><label>Evidencias / Archivos</label>
+          <div class="drop" id="sDrop">Arrastra archivos aquí o haz clic para seleccionar</div>
+          <input type="file" id="sFiles" multiple class="hide">
+          <div class="files" id="sFileList"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" id="btnGuardarSeg">Guardar seguimiento</button>
+          <button class="btn sec" id="btnMail">✉ Enviar por correo</button>
+          <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
+            <input type="checkbox" id="sMailAuto" checked style="width:auto"> Notificar por correo al guardar</label>
+        </div>
+        <div class="note">Los tickets no pueden eliminarse. Todo cambio queda registrado en la bitácora con usuario, fecha y hora.</div>
+      </div>
+
+      <div class="panel" style="margin:0">
+        <h2>Historial del ticket</h2>
+        <div class="tl" id="mHist"></div>
+        <h2 style="margin-top:16px">Archivos del ticket</h2>
+        <div class="files" id="mAdj"></div>
+      </div>
+    </div>
+    <div class="mf"><button class="btn sec" id="mClose2">Cerrar</button></div>
+  </div>
+</div>
+
+<!-- ============ MODAL DE CORREO ============ -->
+<div class="mask" id="mMail">
+  <div class="modal" style="width:min(760px,96vw)">
+    <div class="mh"><h2>Enviar ticket por correo</h2><button class="close" id="mmClose">×</button></div>
+    <div class="mb">
+      <div class="f"><label>Para (separar con ; )</label><input id="mmTo"></div>
+      <div class="f" style="margin-top:10px"><label>CC</label><input id="mmCc"></div>
+      <div class="f" style="margin-top:10px"><label>Asunto</label><input id="mmSubj"></div>
+      <div class="f" style="margin-top:10px"><label>Mensaje adicional</label>
+        <div class="rte-tb" data-for="mmBody">
+          <button type="button" data-c="bold"><b>B</b></button>
+          <button type="button" data-c="italic"><i>I</i></button>
+          <button type="button" data-c="underline"><u>U</u></button>
+          <button type="button" data-c="insertUnorderedList">•</button>
+        </div>
+        <div class="rte" id="mmBody" contenteditable="true"></div></div>
+      <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted);margin-top:10px">
+        <input type="checkbox" id="mmAdj" checked style="width:auto"> Incluir evidencias como archivos adjuntos (máx. 3 MB por archivo)</label>
+      <div id="mmPrev" style="margin-top:12px"></div>
+    </div>
+    <div class="mf"><button class="btn" id="mmSend">Enviar</button><button class="btn sec" id="mmCancel">Cancelar</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="pdfStage" style="position:fixed;left:-10000px;top:0;width:1100px;background:#fff;color:#111"></div>
+
+<!--
+  ================= SRI / INTEGRIDAD =================
+  Antes de publicar, agrega a CADA <script> de CDN su atributo integrity="sha512-..."
+  ExcelJS 4.4.0, jsPDF 2.5.1, html2canvas 1.4.1, jspdf-autotable 3.8.2 y MSAL 3.7.1 son
+  LAS MISMAS VERSIONES del Cotizador: copia los hashes desde su index.html.
+  Para Chart.js 4.4.1 obtén el hash en https://cdnjs.com (boton "Copy Script tag" con SRI).
+  Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, seccion 8.
+  ====================================================
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/msal/3.7.1/msal-browser.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+const CAT_DEFAULT={"version":1,"admins":["fernando.fernandez@sipnology.com.mx"],"clientes":[{"id":"BBVA","nombre":"BBVA","dominios":["bbva.com","bbva.mx"],"correosNotif":[]}],"localidades":[{"id":"98","clienteId":"BBVA","nombre":"Tecno Parque","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"99","clienteId":"BBVA","nombre":"Reforma PF","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"97","clienteId":"BBVA","nombre":"Puebla - Inxignia","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12","P13","P14","P15","P16","P17","P18","P19","P20","P21","P22","P23","P24","P25","P26","P27","P28","P29","P30","P31","P32","P33","P34"]},{"id":"96","clienteId":"BBVA","nombre":"Guadalajara - Landmark","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"95","clienteId":"BBVA","nombre":"Monterrey - Torre TOP","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"94","clienteId":"BBVA","nombre":"León - City Center","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"93","clienteId":"BBVA","nombre":"Tijuana - BH","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"92","clienteId":"BBVA","nombre":"Patriotismo - Athenea","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]}],"prioridades":[{"id":"P1","nombre":"Alta (P1)","slaHoras":4},{"id":"P2","nombre":"Mediana (P2)","slaHoras":8},{"id":"P3","nombre":"Baja (P3)","slaHoras":24}],"imputables":["Sipnology","Cliente","Proveedor/Tercero"],"estatus":["ABIERTO","EN ESPERA","CERRADO"],"categorias":{"Falla":["LAN_Hardware","LAN_Software","LAN_Aplicativo","WLAN_Hardware","WLAN_Software","WLAN_Aplicativo","ISE_Hardware","ISE_Software","Dispositivo"],"ABC":["LAN","WLAN","ISE"],"Tarea_Programada":["Tarea_Programada_LAN","Tarea_Programada_WLAN","Tarea_Programada_ISE"],"Tarea_Colaborativa":["Atención conjunta usuario","Llamada/Videollamada","Reunión presencial"]},"tipos":{"LAN_Hardware":["Falla de SW general (Apagado/Reinicio)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla Usuario (Problema de conexión física LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Hardware (Apertura)","Caso TAC LAN Hardware (Seguimiento)","Caso TAC LAN Hardware (Cierre)"],"LAN":["Alta de equipo (Switch)","Alta de puerto (Uplink/enlace)","Alta de puerto servicio (Usuario, endpoint, etc.)","Alta de configuración (Otro)","Baja de equipo (Switch)","Baja de puerto (Uplink/enlace)","Baja de puerto servicio (Usuario, endpoint, etc.)","Baja de configuración (Otro)","Cambio de configuración (Uplink/enlace)","Cambio de configuración puerto servicio (Usuario, endpoint, etc.)","Cambio de configuración (Otro)"],"Tarea_Programada_LAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Software (Apertura)","Caso TAC LAN Software (Seguimiento)","Caso TAC LAN Software (Cierre)"],"WLAN":["Alta de equipo (AP)","Alta de SSID (Red Inalámbrica)","Alta de configuración (Otro)","Baja de equipo (AP)","Baja de SSID (Red inalámbrica)","Baja de configuración (Otro)","Cambio de configuración (AP)","Cambio de configuración SSID (Red inalámbrica)","Cambio de configuración (Otro)"],"Tarea_Programada_WLAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Aplicativo":["Falla de acceso Aplicativo vía LAN"],"ISE":["Alta de adaptador","Alta de dipositivo (Laptop, Camara, Impresora, Control de acceso, etc)","Alta de NAD (Switch, AP, etc)","Baja de adaptador","Baja de dispositivo (Laptop, Cámara, Impresora, Control de acceso, etc.)","Baja de NAD (Switch, AP, etc.)","Cambio de grupo de acceso","Cambio de tiempo de duración","Depuración de Mac Add"],"Tarea_Programada_ISE":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"WLAN_Hardware":["Falla de AP general (Apagado/Reinicio)","Falla de suministro Electrico","Falla física (Problema de cableado)","Falla conectividad (Perdida de conectividad/gestió)","Caso TAC WLAN Hardware (Apertura)","Caso TAC WLAN Hardware (Seguimiento)","Caso TAC WLAN Hardware (Cierre)"],"WLAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug/Flappeo)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración WLAN)","Caso TAC WLAN Software (Apertura)","Caso TAC WLAN Software (Seguimiento)","Caso TAC WLAN Software (Cierre)"],"WLAN_Aplicativo":["Falla de acceso Aplicativo vía WLAN"],"ISE_Hardware":["Falla de general (Apagado/Reinicio/Falla servidor)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla conectividad (falla de conectividad LAN)","Caso TAC ISE Hardware (Apertura)","Caso TAC ISE Hardware (Seguimiento)","Caso TAC ISE Hardware (Cierre)"],"ISE_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración equipo)","Caso TAC ISE Software (Apertura)","Caso TAC ISE Software (Seguimiento)","Caso TAC ISE Software (Cierre)"],"Dispositivo":["Falla física de dispositivo","Falla lógica de dispositivo","Falla de componente (Cable, Docking, adaptador, etc.)","Falla eléctrica (Cargador, batería, etc.)","Falla de plataformado/política de seguridad","Falla de configuración"],"Atención conjunta usuario":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Llamada/Videollamada":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Reunión presencial":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"]},"tiposDispositivo":["Switch","Access Point","WLC","ISE Node","Router","Firewall","Cámara IP","Impresora","Teléfono IP","Control de acceso","Laptop/PC","Docking","Otro"],"equipos":[{"tipo":"Switch","modelo":"C9300-48P","hostname":"SW94071-IDF1-Tecno","localidadId":"98","piso":"P02"},{"tipo":"Switch","modelo":"C9300-48P","hostname":"SW94072-IDF1-Tecno","localidadId":"98","piso":"P02"},{"tipo":"Access Point","modelo":"C9120AXI","hostname":"AP-Tecno-P02-01","localidadId":"98","piso":"P02"}],"clientesExternos":[]};/* =====================================================================
+   SIPNOLOGY · SISTEMA DE TICKETS NOC
+   App de un solo archivo. Backend = Microsoft 365 / SharePoint via Graph.
+   Basado en la arquitectura del Cotizador Sipnology.
+   ===================================================================== */
+'use strict';
+
+/* ---------------------- 1. CONFIGURACIÓN ---------------------- */
+const cfg = {
+  clientId : 'e56a9819-016c-4325-9239-298b7ef6b425',    // App Registration PROPIA de tickets (NO la del Cotizador)
+  tenantId : '7e4245e5-225d-4ad0-9cf3-276fcc694c15',    // directorio de Sipnology: es el mismo para toda la organización
+  host     : 'sipnologysacv.sharepoint.com',
+  sitePath : '/sites/NOC',                              // sitio de SharePoint "NOC"
+  library  : 'Tickets',                                 // biblioteca de documentos dentro del sitio NOC
+  scopes   : ['Sites.ReadWrite.All','Mail.Send','User.Read'],
+  remitenteNotif : 'noc@sipnology.com.mx'               // solo informativo para pie de correo
+};
+const AUTH_TTL   = 3*60*60*1000;      // 3 h
+const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
+const MAX_ADJ_MB = 25;                // límite por archivo
+const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin sesión de carga)
+
+/* ---------------------- 2. ESTADO GLOBAL ---------------------- */
+const S = {
+  cat:null, idx:[], bit:[], role:'cliente', me:{name:'',mail:''},
+  clienteScope:null,        // si es cliente externo: id del cliente al que se limita
+  filtro:{}, segPage:1, segSize:25, bitPage:1,
+  ticket:null,              // ticket abierto en el modal
+  filesNew:[], filesSeg:[], // File[] pendientes de subir
+  charts:[], chartDefs:[],
+  driveId:null, _q:Promise.resolve(), _timer:null
+};
+
+/* ---------------------- 3. UTILIDADES ---------------------- */
+const $  = s=>document.querySelector(s);
+const $$ = s=>Array.prototype.slice.call(document.querySelectorAll(s));
+const pad2=n=>String(n).padStart(2,'0');
+
+function esc(s){return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+/* Sanitizador de HTML enriquecido: lista blanca de etiquetas, SIN atributos.
+   Evita XSS almacenado en notas/descripciones que se insertan con innerHTML. */
+const OK_TAGS = ['B','STRONG','I','EM','U','BR','P','DIV','UL','OL','LI','SPAN','H3','H4','CODE','PRE','A','IMG'];
+/* Etiquetas que se eliminan CON todo su contenido (no se desenvuelven) */
+const DROP_TAGS = ['SCRIPT','STYLE','IFRAME','FRAME','FRAMESET','OBJECT','EMBED','APPLET','FORM','INPUT','BUTTON',
+  'SELECT','OPTION','TEXTAREA','LINK','META','BASE','TEMPLATE','SVG','MATH','NOSCRIPT','AUDIO','VIDEO','SOURCE'];
+function sanitizeHtml(html){
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(html==null?'':html);
+  (function walk(node){
+    const kids = Array.prototype.slice.call(node.childNodes);
+    kids.forEach(function(n){
+      if(n.nodeType===3) return;                                  // texto: OK
+      if(n.nodeType!==1){ n.remove(); return; }                   // comentarios, etc.
+      if(DROP_TAGS.indexOf(n.tagName)!==-1){ n.remove(); return; } // ejecutable/peligroso: fuera con contenido
+      if(OK_TAGS.indexOf(n.tagName)===-1){                        // etiqueta no permitida -> desenvuelve
+        const f=document.createDocumentFragment();
+        while(n.firstChild) f.appendChild(n.firstChild);
+        walk(f);                       // IMPORTANTE: sanea tambien los hijos promovidos
+        n.replaceWith(f); return;
+      }
+      const isA=n.tagName==='A', isImg=n.tagName==='IMG';
+      const href=isA?n.getAttribute('href'):'', src=isImg?n.getAttribute('src'):'';
+      Array.prototype.slice.call(n.attributes).forEach(a=>n.removeAttribute(a.name));
+      if(isA && /^https?:\/\//i.test(href||'')){ n.setAttribute('href',href); n.setAttribute('rel','noopener noreferrer'); n.setAttribute('target','_blank'); }
+      if(isImg && /^(data:image\/(png|jpe?g|gif|webp);base64,|https:\/\/)/i.test(src||'')) n.setAttribute('src',src);
+      else if(isImg){ n.remove(); return; }
+      walk(n);
+    });
+  })(tpl.content);
+  return tpl.innerHTML;
+}
+/* Nombre seguro para carpetas/archivos en SharePoint */
+function sanitizeName(s){
+  return String(s==null?'':s).replace(/[\\/:*?"<>|#%]/g,'_').replace(/\.+$/,'').trim().slice(0,120) || 'sin_nombre';
+}
+function graphEncPath(rel){ return String(rel).split('/').map(encodeURIComponent).join('/'); }
+
+/* ---- fechas y horas ---- */
+function todayISO(d){ d=d||new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+function hora12(d){ d=d||new Date(); let h=d.getHours(); const ap=h>=12?'PM':'AM'; h=h%12||12;
+  return {t:pad2(h)+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()), ap:ap}; }
+/* "01:05:09" + "PM" -> "13:05:09" */
+function to24(t,ap){
+  const m=/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(t||'').trim()); if(!m) return '';
+  let h=+m[1]; const mi=+m[2], se=+(m[3]||0);
+  if(h<1||h>12||mi>59||se>59) return '';
+  if(ap==='PM'&&h!==12) h+=12; if(ap==='AM'&&h===12) h=0;
+  return pad2(h)+':'+pad2(mi)+':'+pad2(se);
+}
+/* "13:05:09" -> {t:"01:05:09",ap:"PM"} */
+function from24(t){
+  const m=/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(t||'')); if(!m) return {t:'',ap:'AM'};
+  let h=+m[1]; const ap=h>=12?'PM':'AM'; h=h%12||12;
+  return {t:pad2(h)+':'+m[2]+':'+pad2(+(m[3]||0)), ap:ap};
+}
+function dt(fechaISO,hora24){
+  if(!fechaISO) return null;
+  const d=new Date(fechaISO+'T'+(hora24||'00:00:00'));
+  return isNaN(d.getTime())?null:d;
+}
+function durHMS(ms){
+  if(ms==null||isNaN(ms)||ms<0) return '';
+  const s=Math.floor(ms/1000);
+  return Math.floor(s/3600)+':'+pad2(Math.floor(s%3600/60))+':'+pad2(s%60);
+}
+function hmsToMs(t){
+  const m=/^(\d+):(\d{2}):(\d{2})$/.exec(String(t||'').trim());
+  return m? ((+m[1])*3600+(+m[2])*60+(+m[3]))*1000 : null;
+}
+function fechaHumana(iso,h24){
+  if(!iso) return '';
+  const p=iso.split('-'); const f=p[2]+'/'+p[1]+'/'+p[0];
+  if(!h24) return f;
+  const x=from24(h24); return f+' '+x.t+' '+x.ap;
+}
+
+/* ---- UI helpers ---- */
+function toast(msg,kind,ms){
+  const d=document.createElement('div'); if(kind) d.className=kind;
+  d.textContent=msg; $('#toast').appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .4s';setTimeout(()=>d.remove(),400);}, ms||4200);
+}
+function fillSel(sel,arr,ph,val){
+  const e=typeof sel==='string'?$(sel):sel; if(!e) return;
+  e.innerHTML = (ph!=null? '<option value="">'+esc(ph)+'</option>':'') +
+    (arr||[]).map(o=>{const v=(typeof o==='object')?o.v:o, t=(typeof o==='object')?o.t:o;
+      return '<option value="'+esc(v)+'">'+esc(t)+'</option>';}).join('');
+  if(val!=null) e.value=val;
+}
+function busy(btn,on){ if(!btn) return; btn.disabled=!!on;
+  if(on){ btn.dataset.txt=btn.innerHTML; btn.innerHTML='<span class="spin"></span>'; }
+  else if(btn.dataset.txt){ btn.innerHTML=btn.dataset.txt; delete btn.dataset.txt; } }
+
+/* ---------------------- 4. AUTENTICACIÓN M365 ---------------------- */
+let _msalApp=null;
+function msalApp(){
+  if(_msalApp) return _msalApp;
+  _msalApp = new msal.PublicClientApplication({
+    auth:{ clientId:cfg.clientId, authority:'https://login.microsoftonline.com/'+cfg.tenantId,
+           redirectUri: location.origin+location.pathname },
+    cache:{ cacheLocation:'localStorage', storeAuthStateInCookie:false }
+  });
+  return _msalApp;
+}
+function currentUserEmails(){
+  const a=_msalApp && _msalApp.getAllAccounts()[0]; if(!a) return [];
+  const c=a.idTokenClaims||{};
+  return [a.username,c.preferred_username,c.email,c.upn].filter(Boolean)
+    .map(s=>String(s).trim().toLowerCase());
+}
+function isAdmin(){
+  const admins=((S.cat&&S.cat.admins)||[]).map(s=>String(s).toLowerCase());
+  return currentUserEmails().some(e=>admins.indexOf(e)!==-1);
+}
+function esInterno(){
+  return currentUserEmails().some(e=>/@sipnology\.com\.mx$/i.test(e));
+}
+async function graphToken(opts){
+  const app=msalApp(); await app.initialize();
+  const req={scopes:cfg.scopes};
+  const acc=app.getAllAccounts()[0];
+  try{
+    if(acc && !(opts&&opts.forceLogin)) return (await app.acquireTokenSilent(Object.assign({account:acc},req))).accessToken;
+    const r=await app.loginPopup(Object.assign({prompt:'select_account'},req));
+    return (await app.acquireTokenSilent({account:r.account,scopes:cfg.scopes})).accessToken;
+  }catch(e){
+    const r=await app.acquireTokenPopup(req); return r.accessToken;
+  }
+}
+async function graphTokenSilent(){
+  try{ const app=msalApp(); await app.initialize();
+    const acc=app.getAllAccounts()[0]; if(!acc) return null;
+    return (await app.acquireTokenSilent({account:acc,scopes:cfg.scopes})).accessToken;
+  }catch(e){ return null; }
+}
+async function H(){ const t=await graphTokenSilent(); if(!t) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
+  return {Authorization:'Bearer '+t}; }
+
+/* ---------------------- 5. CAPA GRAPH / SHAREPOINT ---------------------- */
+const P_CAT = 'Sistema/_tickets_catalogo.json';
+const P_IDX = 'Sistema/_tickets_indice.json';
+const P_BIT = 'Sistema/_tickets_bitacora.json';
+const P_CASOS = 'Casos';                       // Casos/AAAA-MM/<ID>/ticket.json + evidencias
+
+async function driveId(h){
+  if(S.driveId) return S.driveId;
+  const site=await (await fetch('https://graph.microsoft.com/v1.0/sites/'+cfg.host+':'+cfg.sitePath,{headers:h})).json();
+  if(!site.id) throw new Error('No se pudo resolver el sitio de SharePoint ('+cfg.sitePath+').');
+  const drv =await (await fetch('https://graph.microsoft.com/v1.0/sites/'+site.id+'/drives',{headers:h})).json();
+  const d=((drv.value||[]).find(x=>x.name===cfg.library)||(drv.value||[])[0]);
+  if(!d) throw new Error('No se encontró la biblioteca "'+cfg.library+'".');
+  S.driveId=d.id; return d.id;
+}
+async function gGet(h,path){
+  const id=await driveId(h);
+  const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+id+'/root:/'+graphEncPath(path),{headers:h});
+  if(r.status===404) return null;
+  if(!r.ok) throw new Error('Graph GET '+r.status+' · '+path);
+  return r.json();
+}
+async function gGetJson(h,path){
+  const meta=await gGet(h,path); if(!meta) return null;
+  const url=meta['@microsoft.graph.downloadUrl']; if(!url) return null;
+  const r=await fetch(url); if(!r.ok) return null;
+  try{ return await r.json(); }catch(e){ return null; }
+}
+async function gPut(h,path,body,type){
+  const id=await driveId(h);
+  const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+id+'/root:/'+graphEncPath(path)+':/content',
+    {method:'PUT',headers:Object.assign({'Content-Type':type||'application/octet-stream'},h),body:body});
+  if(!r.ok) throw new Error('Graph PUT '+r.status+' · '+path+' — '+(await r.text()).slice(0,180));
+  return r.json();
+}
+const gPutJson=(h,path,obj)=>gPut(h,path,JSON.stringify(obj,null,1),'application/json');
+async function gList(h,folder){
+  const id=await driveId(h);
+  const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+id+'/root:/'+graphEncPath(folder)+':/children?$top=200',{headers:h});
+  if(!r.ok) return [];
+  return (await r.json()).value||[];
+}
+/* Subida de archivos: <4 MB con PUT simple; mayores con sesión de carga por trozos */
+async function gUpload(h,path,file){
+  if(file.size<=4*1024*1024) return gPut(h,path,file,file.type||'application/octet-stream');
+  const id=await driveId(h);
+  const s=await (await fetch('https://graph.microsoft.com/v1.0/drives/'+id+'/root:/'+graphEncPath(path)+':/createUploadSession',
+    {method:'POST',headers:Object.assign({'Content-Type':'application/json'},h),
+     body:JSON.stringify({item:{'@microsoft.graph.conflictBehavior':'replace'}})})).json();
+  const CH=5*327680*2, total=file.size; let off=0, last=null;
+  while(off<total){
+    const end=Math.min(off+CH,total), chunk=file.slice(off,end);
+    const r=await fetch(s.uploadUrl,{method:'PUT',
+      headers:{'Content-Length':String(end-off),'Content-Range':'bytes '+off+'-'+(end-1)+'/'+total},body:chunk});
+    if(!r.ok) throw new Error('Carga fallida ('+r.status+') en '+file.name);
+    if(r.status===200||r.status===201) last=await r.json();
+    off=end;
+  }
+  return last;
+}
+
+/* ---------------------- 6. CATÁLOGO CENTRAL ---------------------- */
+function deepMerge(base,ext){
+  if(ext===undefined||ext===null) return base;
+  if(Array.isArray(base)||Array.isArray(ext)) return (ext!==undefined?ext:base);
+  if(typeof base==='object'&&typeof ext==='object'){
+    const o=Object.assign({},base);
+    Object.keys(ext).forEach(k=>{ o[k]= (k in base)? deepMerge(base[k],ext[k]) : ext[k]; });
+    return o;
+  }
+  return ext;
+}
+async function catalogoPull(silent){
+  try{
+    const h=await H(); const remoto=await gGetJson(h,P_CAT);
+    S.cat = remoto? deepMerge(JSON.parse(JSON.stringify(CAT_DEFAULT)),remoto)
+                  : JSON.parse(JSON.stringify(CAT_DEFAULT));
+    if(!remoto && isAdmin()){ await gPutJson(h,P_CAT,S.cat); }   // siembra inicial
+    poblarCatalogosUI();
+    if(!silent) toast('Catálogo actualizado.');
+  }catch(e){
+    if(!S.cat) S.cat=JSON.parse(JSON.stringify(CAT_DEFAULT));
+    poblarCatalogosUI();
+    if(!silent) toast('No se pudo leer el catálogo: '+e.message,'err',7000);
+  }
+}
+async function catalogoPush(){
+  if(!isAdmin()){ toast('Solo el administrador puede modificar catálogos.','err'); return false; }
+  const h=await H();
+  S.cat.version=(S.cat.version||0)+1;
+  S.cat.actualizado={por:S.me.mail,cuando:new Date().toISOString()};
+  await gPutJson(h,P_CAT,S.cat);
+  logEvent('CATALOGO_ACTUALIZADO','version '+S.cat.version);
+  return true;
+}
+
+/* ---------------------- 7. ÍNDICE DE TICKETS ---------------------- */
+function idxEntry(t){
+  return {id:t.id, clienteId:t.clienteId, cliente:t.cliente, localidadId:t.localidadId, localidad:t.localidad,
+    piso:t.piso, categoria:t.categoria, subcategoria:t.subcategoria, tipo:t.tipo, prioridad:t.prioridad,
+    equipos:t.equipos, colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
+    fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
+    fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
+    imputable:t.imputable, respAp:t.respAp, respCi:t.respCi, status:t.status,
+    crq:t.crq, ruta:t.ruta, actualizado:t.actualizado};
+}
+async function idxPull(silent){
+  try{
+    const h=await H(); const a=await gGetJson(h,P_IDX);
+    S.idx = Array.isArray(a)? a : (a&&Array.isArray(a.tickets)? a.tickets : []);
+    aplicarScopeCliente();
+    renderSeg(); renderDash();
+    if(!silent) toast('Tickets actualizados ('+S.idx.length+').');
+  }catch(e){ if(!silent) toast('No se pudo leer el índice: '+e.message,'err',7000); }
+}
+/* Escritura serializada leer-modificar-escribir (last-write-wins, volumen bajo) */
+function idxUpsert(t){
+  const e=idxEntry(t);
+  const i=S.idx.findIndex(x=>x.id===e.id);
+  if(i>=0) S.idx[i]=e; else S.idx.unshift(e);
+  S._q = S._q.then(async()=>{
+    const h=await H(); let a=await gGetJson(h,P_IDX); a=Array.isArray(a)?a:[];
+    const j=a.findIndex(x=>x.id===e.id); if(j>=0) a[j]=e; else a.unshift(e);
+    await gPutJson(h,P_IDX,a);
+  }).catch(err=>toast('Índice no sincronizado: '+err.message,'err',8000));
+  return S._q;
+}
+/* Si el usuario es cliente externo, solo ve los tickets de su cliente */
+function aplicarScopeCliente(){
+  if(S.role!=='cliente'||!S.clienteScope) return;
+  S.idx=S.idx.filter(t=>t.clienteId===S.clienteScope);
+}
+
+/* ---------------------- 8. BITÁCORA ---------------------- */
+function logEvent(evento,detalle){
+  const d=new Date();
+  const entry={fecha:todayISO(d), hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()),
+    evento:evento, detalle:String(detalle||'').slice(0,500), usuario:S.me.mail||'(anónimo)'};
+  S.bit.unshift(entry); renderBit();
+  S._q = S._q.then(async()=>{
+    const h=await H(); let a=await gGetJson(h,P_BIT); a=Array.isArray(a)?a:[];
+    a.unshift(entry); if(a.length>20000) a=a.slice(0,20000);
+    await gPutJson(h,P_BIT,a);
+  }).catch(()=>{});
+}
+async function bitPull(){
+  try{ const h=await H(); const a=await gGetJson(h,P_BIT); S.bit=Array.isArray(a)?a:[]; renderBit(); }
+  catch(e){ toast('Bitácora no disponible: '+e.message,'err'); }
+}
+
+/* ---------------------- 9. GATE / ROLES ---------------------- */
+function resolverRol(){
+  if(isAdmin()) { S.role='admin'; return; }
+  if(esInterno()){ S.role='operador'; return; }
+  S.role='cliente';
+  const mails=currentUserEmails();
+  const ext=(S.cat.clientesExternos||[]).find(u=>mails.indexOf(String(u.correo||'').toLowerCase())!==-1);
+  if(ext){ S.clienteScope=ext.clienteId; return; }
+  const c=(S.cat.clientes||[]).find(c=>(c.dominios||[]).some(d=>mails.some(m=>m.endsWith('@'+String(d).toLowerCase()))));
+  S.clienteScope = c? c.id : '__ninguno__';
+}
+function aplicarPermisosUI(){
+  const admin=S.role==='admin', interno=S.role!=='cliente';
+  $('#tabCat').classList.toggle('hide',!admin);
+  $('#tabBit').classList.toggle('hide',!interno);
+  $$('#vApertura input,#vApertura select,#vApertura textarea,#vApertura button').forEach(el=>{ if(!interno) el.disabled=true; });
+  $('#tabs').querySelector('[data-v="vApertura"]').classList.toggle('hide',!interno);
+  $('#mSegForm') && $('#mSegForm').classList.toggle('hide',!interno);
+  const r=$('#whoRole');
+  r.textContent = admin?'ADMIN':(interno?'OPERADOR':'CLIENTE');
+  r.className='badge '+(admin?'b-admin':(interno?'b-op':'b-cli'));
+  if(!interno) irA('vSeguimiento');
+}
+async function unlockApp(){
+  const a=msalApp().getAllAccounts()[0]||{};
+  S.me={name:a.name||a.username||'', mail:(a.username||'').toLowerCase()};
+  $('#whoName').textContent=S.me.name; $('#whoMail').textContent=S.me.mail;
+  $('#tRespAp').value=S.me.name||S.me.mail;
+  localStorage.setItem('sip_tkt_auth_at',String(Date.now()));
+  $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
+  await catalogoPull(true);
+  resolverRol(); aplicarPermisosUI();
+  await idxPull(true);
+  if(S.role!=='cliente') bitPull();
+  logEvent('LOGIN','rol '+S.role);
+  clearInterval(S._timer);
+  S._timer=setInterval(()=>{ catalogoPull(true); idxPull(true); }, POLL_MS);
+  setTimeout(()=>{ toast('Sesión expirada por seguridad (3 h).','warn',9000); location.reload(); }, AUTH_TTL);
+}
+async function initAuthGate(){
+  const at=+(localStorage.getItem('sip_tkt_auth_at')||0);
+  if(at && (Date.now()-at)<AUTH_TTL){
+    const t=await graphTokenSilent();
+    if(t){ await unlockApp(); return; }
+  }
+  $('#btnLogin').onclick=async function(){
+    busy(this,true);
+    try{ await graphToken({forceLogin:true}); await unlockApp(); }
+    catch(e){ $('#gateMsg').innerHTML='<b style="color:var(--p1)">No fue posible iniciar sesión.</b><br>'+esc(e.message); }
+    finally{ busy(this,false); }
+  };
+}
+
+/* ---------------------- 10. POBLADO DE COMBOS ---------------------- */
+function locsDe(clienteId){ return (S.cat.localidades||[]).filter(l=>!clienteId||l.clienteId===clienteId); }
+function pisosDe(locId){ const l=(S.cat.localidades||[]).find(x=>x.id===locId); return l?(l.pisos||[]):[]; }
+function subsDe(cat){ return (S.cat.categorias||{})[cat]||[]; }
+function tiposDe(sub){ return (S.cat.tipos||{})[sub]||[]; }
+function nombreLoc(id){ const l=(S.cat.localidades||[]).find(x=>x.id===id); return l?l.nombre:id; }
+function slaHoras(pri){ const p=(S.cat.prioridades||[]).find(x=>x.id===pri); return p?(p.slaHoras||24):24; }
+
+function poblarCatalogosUI(){
+  if(!S.cat) return;
+  const cls=(S.cat.clientes||[]).map(c=>({v:c.id,t:c.nombre}));
+  const cats=Object.keys(S.cat.categorias||{});
+  const pris=(S.cat.prioridades||[]).map(p=>({v:p.id,t:p.nombre}));
+
+  fillSel('#tCliente',cls,'— selecciona —');
+  fillSel('#tCategoria',cats,'— selecciona —');
+  fillSel('#tPrioridad',pris,'— selecciona —');
+  fillSel('#tColTipo',S.cat.tiposDispositivo||[],'Tipo de colateral');
+  fillSel('#sImputable',S.cat.imputables||[],'— selecciona —');
+
+  // filtros de seguimiento
+  fillSel('#fCliente',cls,'Todos');
+  fillSel('#fLocalidad',(S.cat.localidades||[]).map(l=>({v:l.id,t:l.nombre})),'Todas');
+  fillSel('#fCategoria',cats,'Todas');
+  fillSel('#fSubcategoria',[],'Todas');
+  fillSel('#fTipo',[],'Todos');
+  fillSel('#fPrioridad',pris,'Todas');
+  fillSel('#fStatus',S.cat.estatus||[],'Todos');
+  fillSel('#fPiso',[],'Todos');
+  // dashboard
+  fillSel('#dCliente',cls,'Todos');
+  fillSel('#dLocalidad',(S.cat.localidades||[]).map(l=>({v:l.id,t:l.nombre})),'Todas');
+  fillSel('#dPiso',[],'Todos');
+  fillSel('#dCategoria',cats,'Todas');
+  fillSel('#dPrioridad',pris,'Todas');
+  fillSel('#dStatus',S.cat.estatus||[],'Todos');
+  fillSel('#dNuevo',DIMENSIONES.map(d=>({v:d.k,t:'Gráfica: '+d.t})),'Nueva gráfica…');
+  poblarResponsables();
+}
+function poblarResponsables(){
+  const ap=[...new Set(S.idx.map(t=>t.respAp).filter(Boolean))].sort();
+  const ci=[...new Set(S.idx.map(t=>t.respCi).filter(Boolean))].sort();
+  const a=$('#fRespAp').value, b=$('#fRespCi').value;
+  fillSel('#fRespAp',ap,'Todos',a); fillSel('#fRespCi',ci,'Todos',b);
+}
+function enlazarCascadas(){
+  $('#tCliente').onchange=function(){
+    fillSel('#tLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre+' ['+l.id+']'})),'— selecciona —');
+    fillSel('#tPiso',[],'— selecciona —'); calcFolio();
+  };
+  $('#tLocalidad').onchange=function(){ fillSel('#tPiso',pisosDe(this.value),'— selecciona —');
+    fillSel('#tEquipoSel',equiposDe(this.value).map(e=>({v:e.hostname,t:e.hostname+' · '+e.tipo+' '+e.modelo})),'— selecciona equipo —');
+    calcFolio(); };
+  $('#tCategoria').onchange=function(){ fillSel('#tSubcategoria',subsDe(this.value),'— selecciona —'); fillSel('#tTipo',[],'— selecciona —'); };
+  $('#tSubcategoria').onchange=function(){ fillSel('#tTipo',tiposDe(this.value),'— selecciona —'); };
+  $('#tFecha').onchange=calcFolio;
+  $('#fCliente').onchange=function(){ fillSel('#fLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre})),'Todas'); fillSel('#fPiso',[],'Todos'); };
+  $('#fLocalidad').onchange=function(){ fillSel('#fPiso',pisosDe(this.value),'Todos'); };
+  $('#fCategoria').onchange=function(){ fillSel('#fSubcategoria',subsDe(this.value),'Todas'); fillSel('#fTipo',[],'Todos'); };
+  $('#fSubcategoria').onchange=function(){ fillSel('#fTipo',tiposDe(this.value),'Todos'); };
+  $('#dCliente').onchange=function(){ fillSel('#dLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre})),'Todas'); fillSel('#dPiso',[],'Todos'); };
+  $('#dLocalidad').onchange=function(){ fillSel('#dPiso',pisosDe(this.value),'Todos'); };
+}
+function equiposDe(locId){
+  const e=(S.cat.equipos||[]);
+  return locId? e.filter(x=>!x.localidadId||x.localidadId===locId) : e;
+}
+
+/* ---------------------- 11. FOLIO ---------------------- */
+/* Formato: SS + DDMMAA + "-" + NN   →  98090826-01
+   SS = ID de 2 dígitos de la localidad/sede · DDMMAA = fecha · NN = consecutivo del día */
+function baseFolio(locId,fechaISO){
+  if(!locId||!fechaISO) return '';
+  const p=fechaISO.split('-');
+  return String(locId).padStart(2,'0')+p[2]+p[1]+p[0].slice(2);
+}
+function siguienteConsecutivo(base){
+  let max=0;
+  S.idx.forEach(t=>{ if(t.id && t.id.indexOf(base+'-')===0){ const n=parseInt(t.id.split('-')[1],10); if(n>max) max=n; } });
+  return max+1;
+}
+function calcFolio(){
+  const b=baseFolio($('#tLocalidad').value,$('#tFecha').value);
+  $('#tId').value = b? b+'-'+pad2(siguienteConsecutivo(b)) : '';
+  const f=$('#tFecha').value;
+  $('#tFolderHint').textContent = f? P_CASOS+'/'+f.slice(0,7)+'/'+($('#tId').value||'<ID>')+'/' : P_CASOS+'/AAAA-MM/<ID>/';
+}
+
+/* ---------------------- 12. RTE Y ADJUNTOS ---------------------- */
+function enlazarRTE(){
+  $$('.rte-tb').forEach(tb=>{
+    const target=$('#'+tb.dataset.for);
+    tb.addEventListener('click',e=>{
+      const b=e.target.closest('button'); if(!b) return;
+      e.preventDefault(); target.focus(); document.execCommand(b.dataset.c,false,null);
+    });
+  });
+  // pegar imágenes desde el portapapeles
+  $$('.rte').forEach(r=>{
+    r.addEventListener('paste',ev=>{
+      const items=(ev.clipboardData||{}).items||[];
+      for(const it of items){
+        if(it.type&&it.type.indexOf('image/')===0){
+          ev.preventDefault(); const f=it.getAsFile(); if(!f) return;
+          const fr=new FileReader();
+          fr.onload=()=>document.execCommand('insertHTML',false,'<img src="'+fr.result+'">');
+          fr.readAsDataURL(f);
+        }
+      }
+    });
+  });
+}
+const ICONS={pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',csv:'📗',ppt:'📙',pptx:'📙',
+  png:'🖼',jpg:'🖼',jpeg:'🖼',gif:'🖼',webp:'🖼',bmp:'🖼',txt:'📄',log:'📄',zip:'🗜',rar:'🗜','7z':'🗜'};
+const iconOf=n=>ICONS[String(n).split('.').pop().toLowerCase()]||'📎';
+function kb(n){ return n<1024?n+' B':(n<1048576?(n/1024).toFixed(0)+' KB':(n/1048576).toFixed(1)+' MB'); }
+
+function enlazarDrop(dropSel,inputSel,listSel,bucket){
+  const d=$(dropSel), i=$(inputSel);
+  d.onclick=()=>i.click();
+  d.addEventListener('dragover',e=>{e.preventDefault();d.classList.add('hot');});
+  d.addEventListener('dragleave',()=>d.classList.remove('hot'));
+  d.addEventListener('drop',e=>{e.preventDefault();d.classList.remove('hot');addFiles(e.dataTransfer.files,listSel,bucket);});
+  i.onchange=()=>{addFiles(i.files,listSel,bucket); i.value='';};
+  renderFiles(listSel,bucket);
+}
+function addFiles(list,listSel,bucket){
+  Array.prototype.slice.call(list||[]).forEach(f=>{
+    if(f.size>MAX_ADJ_MB*1048576){ toast('«'+f.name+'» supera '+MAX_ADJ_MB+' MB y no se agregó.','err',6000); return; }
+    S[bucket].push(f);
+  });
+  renderFiles(listSel,bucket);
+}
+function renderFiles(listSel,bucket){
+  $(listSel).innerHTML = S[bucket].map((f,i)=>
+    '<span class="file"><span class="ic">'+iconOf(f.name)+'</span>'+esc(f.name)+
+    ' <span style="color:var(--muted)">'+kb(f.size)+'</span>'+
+    '<button class="rm" data-b="'+bucket+'" data-i="'+i+'" title="Quitar">×</button></span>').join('');
+  $(listSel).querySelectorAll('.rm').forEach(b=>b.onclick=()=>{
+    S[b.dataset.b].splice(+b.dataset.i,1); renderFiles(listSel,bucket);
+  });
+}
+
+/* ---------------------- 13. MÓDULO 1 · APERTURA ---------------------- */
+let _equipos=[], _colaterales=[];
+function renderChips(){
+  $('#tEquipos').innerHTML=_equipos.map((e,i)=>'<span class="chip">'+esc(e)+'<button class="rm" data-i="'+i+'">×</button></span>').join('');
+  $('#tEquipos').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{_equipos.splice(+b.dataset.i,1);renderChips();});
+  $('#tColaterales').innerHTML=_colaterales.map((c,i)=>'<span class="chip">'+esc(c.tipo)+' × '+c.cant+'<button class="rm" data-i="'+i+'">×</button></span>').join('');
+  $('#tColaterales').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{_colaterales.splice(+b.dataset.i,1);renderChips();});
+}
+function limpiarApertura(){
+  ['tCliente','tLocalidad','tPiso','tCategoria','tSubcategoria','tTipo','tPrioridad','tEqLibre','tColNota'].forEach(id=>$('#'+id).value='');
+  fillSel('#tLocalidad',[],'— selecciona —'); fillSel('#tPiso',[],'— selecciona —');
+  fillSel('#tSubcategoria',[],'— selecciona —'); fillSel('#tTipo',[],'— selecciona —');
+  fillSel('#tEquipoSel',[],'— selecciona equipo —');
+  _equipos=[]; _colaterales=[]; S.filesNew=[]; renderChips(); renderFiles('#tFileList','filesNew');
+  $('#tDesc').innerHTML=''; ahora(); calcFolio();
+}
+function ahora(){
+  const d=new Date(); $('#tFecha').value=todayISO(d);
+  const h=hora12(d); $('#tHora').value=h.t; $('#tAmPm').value=h.ap;
+}
+function validarApertura(){
+  const req=[['tCliente','Cliente'],['tLocalidad','Localidad'],['tPiso','Piso'],['tCategoria','Categoría'],
+    ['tSubcategoria','Subcategoría'],['tTipo','Tipo de incidente'],['tPrioridad','Prioridad'],['tFecha','Fecha de apertura']];
+  for(const [id,lbl] of req){ if(!$('#'+id).value){ toast('Falta: '+lbl,'err'); $('#'+id).focus(); return null; } }
+  if(!_equipos.length){ toast('Agrega al menos un equipo afectado.','err'); return null; }
+  const h24=to24($('#tHora').value,$('#tAmPm').value);
+  if(!h24){ toast('Hora de apertura inválida. Usa hh:mm:ss en formato 12 h.','err'); return null; }
+  return h24;
+}
+async function crearTicket(){
+  if(S.role==='cliente'){ toast('Tu perfil no permite crear tickets.','err'); return; }
+  const h24=validarApertura(); if(h24===null) return;
+  const btn=$('#btnCrear'); busy(btn,true);
+  try{
+    await idxPull(true);                                  // evita colisión de consecutivo
+    calcFolio();
+    const id=$('#tId').value; if(!id) throw new Error('No se pudo generar el ID.');
+    const fecha=$('#tFecha').value, mes=fecha.slice(0,7);
+    const ruta=P_CASOS+'/'+mes+'/'+sanitizeName(id);
+    const cli=(S.cat.clientes||[]).find(c=>c.id===$('#tCliente').value)||{};
+    const t={
+      id:id, ruta:ruta,
+      clienteId:cli.id||'', cliente:cli.nombre||'',
+      localidadId:$('#tLocalidad').value, localidad:nombreLoc($('#tLocalidad').value), piso:$('#tPiso').value,
+      categoria:$('#tCategoria').value, subcategoria:$('#tSubcategoria').value, tipo:$('#tTipo').value,
+      prioridad:$('#tPrioridad').value, slaHoras:slaHoras($('#tPrioridad').value),
+      equipos:_equipos.slice(), colaterales:_colaterales.slice(), colateralNota:$('#tColNota').value,
+      fechaAp:fecha, horaAp:h24, respAp:S.me.name||S.me.mail, respApMail:S.me.mail,
+      status:'ABIERTO', imputable:'', fechaRes:'', horaRes:'', fechaCie:'', horaCie:'',
+      tFalla:'', tAfect:'', respCi:'', respCiMail:'', crq:'',
+      descripcion:sanitizeHtml($('#tDesc').innerHTML),
+      adjuntos:[], historial:[], creado:new Date().toISOString(), actualizado:new Date().toISOString()
+    };
+    const h=await H();
+    // 1) adjuntos de apertura
+    for(const f of S.filesNew){
+      const nom=sanitizeName(f.name);
+      await gUpload(h,ruta+'/'+nom,f);
+      t.adjuntos.push({nombre:nom,tam:f.size,cuando:t.creado,por:S.me.mail,fase:'APERTURA'});
+    }
+    t.historial.push({cuando:t.creado, usuario:S.me.mail, accion:'APERTURA', status:'ABIERTO',
+      nota:t.descripcion, archivos:t.adjuntos.map(a=>a.nombre)});
+    // 2) ticket.json
+    await gPutJson(h,ruta+'/ticket.json',t);
+    // 3) índice + bitácora
+    await idxUpsert(t);
+    logEvent('TICKET_ABIERTO',id+' · '+t.cliente+' · '+t.localidad+' · '+t.prioridad);
+    toast('Ticket '+id+' creado.');
+    if($('#tMail').checked) abrirCorreo(t,'APERTURA');
+    limpiarApertura(); renderSeg(); renderDash();
+  }catch(e){ toast('Error al crear el ticket: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
+
+/* ---------------------- 14. SLA ---------------------- */
+/* Reloj de SLA: transcurrido desde la apertura MENOS el tiempo acumulado en "EN ESPERA". */
+function slaInfo(t){
+  const ini=dt(t.fechaAp,t.horaAp); if(!ini) return {pct:0,txt:'',cls:''};
+  const fin=(t.status==='CERRADO')? dt(t.fechaCie,t.horaCie) : new Date();
+  if(!fin) return {pct:0,txt:'',cls:''};
+  let ms=fin-ini-(t.esperaMs||0);
+  if(t.status==='EN ESPERA'&&t.esperaDesde) ms-=(Date.now()-new Date(t.esperaDesde).getTime());
+  if(ms<0) ms=0;
+  const lim=(t.slaHoras||slaHoras(t.prioridad))*3600000;
+  const pct=lim? ms/lim : 0;
+  const cls = t.status==='CERRADO' ? (pct>1?'sla-bad':'sla-ok') : (pct>1?'sla-bad':(pct>=0.7?'sla-warn':'sla-ok'));
+  const txt = durHMS(ms)+' / '+(t.slaHoras||slaHoras(t.prioridad))+'h'+(pct>1?' ⚠ VENCIDO':(pct>=0.7&&t.status!=='CERRADO'?' ⚠':''));
+  return {pct:pct,ms:ms,txt:txt,cls:cls,vencido:pct>1};
+}
+function alertasSLA(){
+  if(S.role==='cliente') return;
+  const v=S.idx.filter(t=>t.status!=='CERRADO'&&slaInfo(t).vencido);
+  const p=S.idx.filter(t=>{const s=slaInfo(t);return t.status!=='CERRADO'&&!s.vencido&&s.pct>=0.7;});
+  if(v.length) toast(v.length+' ticket(s) con SLA VENCIDO: '+v.slice(0,4).map(t=>t.id).join(', '),'err',12000);
+  if(p.length) toast(p.length+' ticket(s) por vencer SLA: '+p.slice(0,4).map(t=>t.id).join(', '),'warn',10000);
+}
+
+/* ---------------------- 15. MÓDULO 2 · SEGUIMIENTO ---------------------- */
+function leerFiltros(){
+  return {
+    id:$('#fId').value.trim().toLowerCase(), cliente:$('#fCliente').value, localidad:$('#fLocalidad').value,
+    piso:$('#fPiso').value, categoria:$('#fCategoria').value, subcategoria:$('#fSubcategoria').value,
+    tipo:$('#fTipo').value, prioridad:$('#fPrioridad').value, equipo:$('#fEquipo').value.trim().toLowerCase(),
+    status:$('#fStatus').value, respAp:$('#fRespAp').value, respCi:$('#fRespCi').value,
+    fa1:$('#fFecAp1').value, fa2:$('#fFecAp2').value, fc1:$('#fFecCi1').value, fc2:$('#fFecCi2').value
+  };
+}
+function filtrar(f){
+  return S.idx.filter(t=>{
+    if(f.id && String(t.id).toLowerCase().indexOf(f.id)===-1) return false;
+    if(f.cliente && t.clienteId!==f.cliente) return false;
+    if(f.localidad && t.localidadId!==f.localidad) return false;
+    if(f.piso && t.piso!==f.piso) return false;
+    if(f.categoria && t.categoria!==f.categoria) return false;
+    if(f.subcategoria && t.subcategoria!==f.subcategoria) return false;
+    if(f.tipo && t.tipo!==f.tipo) return false;
+    if(f.prioridad && t.prioridad!==f.prioridad) return false;
+    if(f.status && t.status!==f.status) return false;
+    if(f.respAp && t.respAp!==f.respAp) return false;
+    if(f.respCi && t.respCi!==f.respCi) return false;
+    if(f.equipo && (t.equipos||[]).join(' ').toLowerCase().indexOf(f.equipo)===-1) return false;
+    if(f.fa1 && (!t.fechaAp||t.fechaAp<f.fa1)) return false;
+    if(f.fa2 && (!t.fechaAp||t.fechaAp>f.fa2)) return false;
+    if(f.fc1 && (!t.fechaCie||t.fechaCie<f.fc1)) return false;
+    if(f.fc2 && (!t.fechaCie||t.fechaCie>f.fc2)) return false;
+    return true;
+  }).sort((a,b)=>String(b.fechaAp+b.horaAp).localeCompare(String(a.fechaAp+a.horaAp)));
+}
+function pillStatus(s){ const k=s==='EN ESPERA'?'ESPERA':s; return '<span class="pill s-'+k+'">'+esc(s)+'</span>'; }
+function pillPri(p){ return '<span class="pill pr-'+esc(p)+'">'+esc(p)+'</span>'; }
+
+function renderSeg(){
+  if(!S.cat) return;
+  const all=filtrar(S.filtro=Object.keys(S.filtro||{}).length?S.filtro:leerFiltros());
+  const pages=Math.max(1,Math.ceil(all.length/S.segSize));
+  if(S.segPage>pages) S.segPage=pages;
+  const rows=all.slice((S.segPage-1)*S.segSize,(S.segPage-1)*S.segSize+S.segSize);
+  $('#segCount').textContent='· '+all.length+' resultado(s)';
+  $('#tblSeg').tBodies[0].innerHTML = rows.length? rows.map(t=>{
+    const s=slaInfo(t);
+    return '<tr>'+
+      '<td class="mono">'+esc(t.id)+'</td>'+
+      '<td>'+pillStatus(t.status)+'</td>'+
+      '<td class="'+s.cls+'" style="white-space:nowrap;font-size:11.5px">'+esc(s.txt)+'</td>'+
+      '<td>'+pillPri(t.prioridad)+'</td>'+
+      '<td>'+esc(t.cliente)+'</td><td>'+esc(t.localidad)+'</td><td>'+esc(t.piso)+'</td>'+
+      '<td>'+esc(t.categoria)+'</td><td>'+esc(t.subcategoria)+'</td><td>'+esc(t.tipo)+'</td>'+
+      '<td>'+esc((t.equipos||[]).join(', '))+'</td>'+
+      '<td class="mono">'+esc(fechaHumana(t.fechaAp,t.horaAp))+'</td>'+
+      '<td class="mono">'+esc(fechaHumana(t.fechaCie,t.horaCie))+'</td>'+
+      '<td class="mono">'+esc(t.tFalla||'')+'</td><td class="mono">'+esc(t.tAfect||'')+'</td>'+
+      '<td>'+esc(t.respAp||'')+'</td><td>'+esc(t.respCi||'')+'</td>'+
+      '<td><button class="btn sec" style="padding:4px 10px" data-open="'+esc(t.id)+'">Abrir</button></td>'+
+    '</tr>';
+  }).join('') : '<tr><td colspan="18" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
+  $('#tblSeg').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirTicket(b.dataset.open));
+  // paginación
+  let p='<span>Filas</span><select id="segSize" style="width:70px;padding:3px">'+
+    [5,10,25,50].map(n=>'<option'+(n===S.segSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
+  p+='<button data-p="'+(S.segPage-1)+'"'+(S.segPage<=1?' disabled':'')+'>‹</button>';
+  for(let i=Math.max(1,S.segPage-2);i<=Math.min(pages,S.segPage+2);i++)
+    p+='<button data-p="'+i+'" class="'+(i===S.segPage?'on':'')+'">'+i+'</button>';
+  p+='<button data-p="'+(S.segPage+1)+'"'+(S.segPage>=pages?' disabled':'')+'>›</button>';
+  $('#segPag').innerHTML=p;
+  $('#segPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{S.segPage=Math.max(1,Math.min(pages,+b.dataset.p));renderSeg();});
+  const ss=$('#segSize'); if(ss) ss.onchange=()=>{S.segSize=+ss.value;S.segPage=1;renderSeg();};
+  poblarResponsables();
+}
+
+/* ---- Modal de ticket ---- */
+async function abrirTicket(id){
+  const e=S.idx.find(x=>x.id===id); if(!e) return;
+  $('#mSeg').classList.add('on');
+  $('#mId').textContent=id; $('#mResumen').innerHTML='<div class="f"><span class="spin"></span></div>';
+  try{
+    const h=await H();
+    const t=await gGetJson(h,(e.ruta||(P_CASOS+'/'+String(e.fechaAp).slice(0,7)+'/'+id))+'/ticket.json');
+    if(!t) throw new Error('No se encontró ticket.json en SharePoint.');
+    S.ticket=t; pintarTicket(t);
+  }catch(err){ $('#mResumen').innerHTML='<div class="note">'+esc(err.message)+'</div>'; }
+}
+function campo(l,v){ return '<div class="f"><label>'+esc(l)+'</label><input readonly value="'+esc(v==null?'':v)+'"></div>'; }
+function pintarTicket(t){
+  const s=slaInfo(t);
+  $('#mStatus').className='pill s-'+(t.status==='EN ESPERA'?'ESPERA':t.status); $('#mStatus').textContent=t.status;
+  $('#mPri').className='pill pr-'+t.prioridad; $('#mPri').textContent=t.prioridad;
+  $('#mSla').className=s.cls; $('#mSla').textContent='SLA '+s.txt;
+  $('#mResumen').innerHTML=[
+    campo('Cliente',t.cliente),campo('Localidad',t.localidad+' ['+t.localidadId+']'),campo('Piso',t.piso),
+    campo('Categoría',t.categoria),campo('Subcategoría',t.subcategoria),campo('Tipo de incidente',t.tipo),
+    campo('Prioridad',t.prioridad),campo('Equipo(s)',(t.equipos||[]).join(', ')),
+    campo('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', ')),
+    campo('Fecha de apertura',fechaHumana(t.fechaAp)),campo('Hora de apertura',from24(t.horaAp).t+' '+from24(t.horaAp).ap),
+    campo('Responsable de apertura',t.respAp)
+  ].join('');
+  $('#mDescBox').innerHTML = t.descripcion? '<label style="font-size:11.5px;color:var(--muted);font-weight:600">DESCRIPCIÓN INICIAL</label><div class="tl"><div class="it"><div class="bd">'+sanitizeHtml(t.descripcion)+'</div></div></div>':'';
+  // formulario
+  const cerrado = t.status==='CERRADO';
+  $('#sStatus').innerHTML = cerrado
+    ? '<option value="">Ticket cerrado (solo lectura)</option>'
+    : '<option value="">— sin cambio —</option><option>EN ESPERA</option><option>CERRADO</option>';
+  $$('#mSegForm input,#mSegForm select,#mSegForm textarea,#mSegForm button').forEach(el=>el.disabled=cerrado||S.role==='cliente');
+  $('#sImputable').value=t.imputable||''; $('#sCrq').value=t.crq||'';
+  $('#sFecRes').value=t.fechaRes||''; const hr=from24(t.horaRes); $('#sHoraRes').value=hr.t; $('#sAmPmRes').value=hr.ap;
+  $('#sFecCie').value=t.fechaCie||''; const hc=from24(t.horaCie); $('#sHoraCie').value=hc.t; $('#sAmPmCie').value=hc.ap;
+  $('#sTFalla').value=t.tFalla||''; $('#sTAfect').value=t.tAfect||'';
+  $('#sRespCi').value=t.respCi||(cerrado?'':S.me.name||S.me.mail);
+  $('#sNota').innerHTML=''; S.filesSeg=[]; renderFiles('#sFileList','filesSeg');
+  // historial
+  $('#mHist').innerHTML=(t.historial||[]).slice().reverse().map(h=>{
+    const d=new Date(h.cuando);
+    return '<div class="it"><div class="mt">'+esc(todayISO(d)+' '+hora12(d).t+' '+hora12(d).ap)+' · <b>'+esc(h.usuario)+'</b> · '+esc(h.accion)+
+      (h.status?' → '+esc(h.status):'')+'</div><div class="bd">'+sanitizeHtml(h.nota||'<i>(sin nota)</i>')+
+      ((h.archivos||[]).length?'<div class="files" style="margin-top:8px">'+h.archivos.map(a=>'<span class="file"><span class="ic">'+iconOf(a)+'</span>'+esc(a)+'</span>').join('')+'</div>':'')+
+      '</div></div>';
+  }).join('')||'<div class="it"><div class="bd">Sin movimientos.</div></div>';
+  pintarAdjuntos(t);
+}
+async function pintarAdjuntos(t){
+  const box=$('#mAdj');
+  box.innerHTML=(t.adjuntos||[]).map(a=>'<span class="file"><span class="ic">'+iconOf(a.nombre)+'</span>'+esc(a.nombre)+
+    ' <span style="color:var(--muted)">'+kb(a.tam||0)+'</span><a data-dl="'+esc(a.nombre)+'" href="#" style="margin-left:6px">↓</a></span>').join('')
+    ||'<span style="color:var(--muted);font-size:12.5px">Sin archivos.</span>';
+  box.querySelectorAll('[data-dl]').forEach(a=>a.onclick=async ev=>{
+    ev.preventDefault();
+    try{ const h=await H(); const m=await gGet(h,t.ruta+'/'+a.dataset.dl);
+      if(m&&m['@microsoft.graph.downloadUrl']) window.open(m['@microsoft.graph.downloadUrl'],'_blank','noopener');
+      else toast('Archivo no disponible.','err');
+    }catch(e){ toast(e.message,'err'); }
+  });
+}
+function recalcTiempos(){
+  const t=S.ticket; if(!t) return;
+  const ini=dt(t.fechaAp,t.horaAp);
+  const fc=dt($('#sFecCie').value,to24($('#sHoraCie').value,$('#sAmPmCie').value));
+  const fr=dt($('#sFecRes').value,to24($('#sHoraRes').value,$('#sAmPmRes').value));
+  $('#sTFalla').value = (ini&&fc)? durHMS(fc-ini) : '';
+  if(ini&&fr&&!$('#sTAfect').dataset.manual) $('#sTAfect').value=durHMS(fr-ini);
+}
+async function guardarSeguimiento(){
+  const t=S.ticket; if(!t) return;
+  if(S.role==='cliente'){ toast('Tu perfil es de solo lectura.','err'); return; }
+  const nuevo=$('#sStatus').value;
+  const notaHtml=sanitizeHtml($('#sNota').innerHTML);
+  if(!notaHtml.replace(/<[^>]*>/g,'').trim() && !S.filesSeg.length){
+    toast('Escribe una nota de actividad o adjunta evidencia.','err'); return; }
+  if(nuevo==='CERRADO'){
+    if(!$('#sFecCie').value||!to24($('#sHoraCie').value,$('#sAmPmCie').value)){ toast('Para cerrar, indica fecha y hora de cierre.','err'); return; }
+    if(!$('#sImputable').value){ toast('Para cerrar, indica el imputable.','err'); return; }
+  }
+  const btn=$('#btnGuardarSeg'); busy(btn,true);
+  try{
+    const h=await H(); const ahoraISO=new Date().toISOString();
+    const nuevos=[];
+    for(const f of S.filesSeg){
+      const nom=sanitizeName(f.name);
+      await gUpload(h,t.ruta+'/'+nom,f);
+      const a={nombre:nom,tam:f.size,cuando:ahoraISO,por:S.me.mail,fase:nuevo||'SEGUIMIENTO'};
+      t.adjuntos.push(a); nuevos.push(nom);
+    }
+    // control del reloj de espera
+    if(nuevo==='EN ESPERA' && t.status!=='EN ESPERA'){ t.esperaDesde=ahoraISO; }
+    if(t.status==='EN ESPERA' && nuevo && nuevo!=='EN ESPERA' && t.esperaDesde){
+      t.esperaMs=(t.esperaMs||0)+(Date.now()-new Date(t.esperaDesde).getTime()); t.esperaDesde='';
+    }
+    t.imputable=$('#sImputable').value; t.crq=$('#sCrq').value.trim();
+    t.fechaRes=$('#sFecRes').value; t.horaRes=to24($('#sHoraRes').value,$('#sAmPmRes').value);
+    t.fechaCie=$('#sFecCie').value; t.horaCie=to24($('#sHoraCie').value,$('#sAmPmCie').value);
+    recalcTiempos(); t.tFalla=$('#sTFalla').value; t.tAfect=$('#sTAfect').value;
+    if(nuevo){ t.status=nuevo; }
+    if(t.status==='CERRADO'){ t.respCi=S.me.name||S.me.mail; t.respCiMail=S.me.mail; }
+    t.actualizado=ahoraISO;
+    t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:nuevo?('CAMBIO A '+nuevo):'SEGUIMIENTO',
+      status:t.status,nota:notaHtml,archivos:nuevos});
+    await gPutJson(h,t.ruta+'/ticket.json',t);
+    await idxUpsert(t);
+    logEvent(nuevo==='CERRADO'?'TICKET_CERRADO':'TICKET_SEGUIMIENTO', t.id+' · status '+t.status);
+    toast('Seguimiento guardado en '+t.id+'.');
+    pintarTicket(t); renderSeg(); renderDash();
+    if($('#sMailAuto').checked) abrirCorreo(t, t.status==='CERRADO'?'CIERRE':'SEGUIMIENTO', notaHtml, nuevos);
+  }catch(e){ toast('Error al guardar: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
+
+/* ---------------------- 16. MÓDULO 3 · ESTADO / DASHBOARD ---------------------- */
+const DIMENSIONES=[
+  {k:'cliente',   t:'Tickets por cliente',        f:t=>t.cliente||'(sin cliente)', tipo:'bar'},
+  {k:'localidad', t:'Tickets por sede/localidad', f:t=>t.localidad||'(sin sede)',  tipo:'bar'},
+  {k:'piso',      t:'Tickets por piso',           f:t=>t.piso||'(sin piso)',       tipo:'bar'},
+  {k:'status',    t:'Tickets por status',         f:t=>t.status,                   tipo:'doughnut'},
+  {k:'prioridad', t:'Tickets por prioridad',      f:t=>t.prioridad,                tipo:'doughnut'},
+  {k:'categoria', t:'Tickets por categoría',      f:t=>t.categoria,                tipo:'doughnut'},
+  {k:'subcategoria',t:'Tickets por subcategoría', f:t=>t.subcategoria,             tipo:'bar'},
+  {k:'tipo',      t:'Tickets por tipo de incidente',f:t=>t.tipo,                   tipo:'bar'},
+  {k:'equipo',    t:'Tickets por equipo/hostname',f:t=>(t.equipos||['(sin equipo)']),tipo:'bar'},
+  {k:'dia',       t:'Tickets por día',            f:t=>t.fechaAp||'(sin fecha)',   tipo:'line'},
+  {k:'mes',       t:'Tickets por mes',            f:t=>String(t.fechaAp||'').slice(0,7),tipo:'bar'},
+  {k:'imputable', t:'Tickets por imputable',      f:t=>t.imputable||'(sin definir)',tipo:'doughnut'},
+  {k:'respAp',    t:'Tickets por responsable de apertura',f:t=>t.respAp||'(n/d)',  tipo:'bar'},
+  {k:'sla',       t:'Cumplimiento de SLA',        f:t=>slaInfo(t).vencido?'Fuera de SLA':'Dentro de SLA',tipo:'doughnut'}
+];
+const PALETA=['#00b2a9','#0e86d4','#f2a900','#e5484d','#3fb950','#7c3aed','#ff7ab6','#8ecae6','#fb8500','#219ebc','#adb5bd','#c77dff'];
+
+function dashFiltrado(){
+  return S.idx.filter(t=>{
+    const g=id=>$(id).value;
+    if(g('#dCliente')&&t.clienteId!==g('#dCliente')) return false;
+    if(g('#dLocalidad')&&t.localidadId!==g('#dLocalidad')) return false;
+    if(g('#dPiso')&&t.piso!==g('#dPiso')) return false;
+    if(g('#dCategoria')&&t.categoria!==g('#dCategoria')) return false;
+    if(g('#dPrioridad')&&t.prioridad!==g('#dPrioridad')) return false;
+    if(g('#dStatus')&&t.status!==g('#dStatus')) return false;
+    if(g('#dF1')&&(!t.fechaAp||t.fechaAp<g('#dF1'))) return false;
+    if(g('#dF2')&&(!t.fechaAp||t.fechaAp>g('#dF2'))) return false;
+    return true;
+  });
+}
+function agrupar(data,fn){
+  const m={};
+  data.forEach(t=>{ let k=fn(t); (Array.isArray(k)?k:[k]).forEach(x=>{ x=String(x||'(n/d)'); m[x]=(m[x]||0)+1; }); });
+  return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,20).map(k=>({k:k,n:m[k]}));
+}
+function renderKPIs(d){
+  const ab=d.filter(t=>t.status==='ABIERTO').length, es=d.filter(t=>t.status==='EN ESPERA').length,
+        ce=d.filter(t=>t.status==='CERRADO').length, ven=d.filter(t=>slaInfo(t).vencido).length;
+  const p1=d.filter(t=>t.prioridad==='P1').length;
+  const cerr=d.filter(t=>t.status==='CERRADO'&&hmsToMs(t.tFalla)!=null);
+  const prom=cerr.length? durHMS(cerr.reduce((a,t)=>a+hmsToMs(t.tFalla),0)/cerr.length) : '—';
+  const cump=d.length? Math.round((d.length-ven)/d.length*100)+'%' : '—';
+  const K=[['Total',d.length,''],['Abiertos',ab,'color:#0e86d4'],['En espera',es,'color:var(--warn)'],
+    ['Cerrados',ce,''],['P1 (Alta)',p1,'color:var(--p1)'],['Fuera de SLA',ven,'color:var(--p1)'],
+    ['Cumplimiento SLA',cump,'color:var(--p3)'],['MTTR promedio',prom,'']];
+  $('#kpis').innerHTML=K.map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
+}
+function renderDash(){
+  if(!S.cat||typeof Chart==='undefined') return;
+  const d=dashFiltrado();
+  renderKPIs(d);
+  if(!S.chartDefs.length) S.chartDefs=['status','cliente','localidad','prioridad','dia','tipo'];
+  S.charts.forEach(c=>{try{c.destroy();}catch(e){}}); S.charts=[];
+  $('#charts').innerHTML='';
+  S.chartDefs.forEach((k,i)=>{
+    const dim=DIMENSIONES.find(x=>x.k===k); if(!dim) return;
+    const box=document.createElement('div'); box.className='chartbox';
+    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button><h3>'+esc(dim.t)+'</h3><canvas></canvas>';
+    $('#charts').appendChild(box);
+    const g=agrupar(d,dim.f);
+    const cv=box.querySelector('canvas');
+    const cols=g.map((_,j)=>PALETA[j%PALETA.length]);
+    S.charts.push(new Chart(cv,{
+      type:dim.tipo,
+      data:{labels:g.map(x=>x.k),datasets:[{label:'Tickets',data:g.map(x=>x.n),
+        backgroundColor:dim.tipo==='line'?'rgba(0,178,169,.25)':cols,
+        borderColor:dim.tipo==='line'?'#00b2a9':'rgba(0,0,0,.15)',borderWidth:1,fill:dim.tipo==='line',tension:.3}]},
+      options:{responsive:true,maintainAspectRatio:true,animation:false,
+        plugins:{legend:{display:dim.tipo!=='bar',position:'bottom',labels:{color:'#93aec4',boxWidth:12,font:{size:11}}}},
+        scales:dim.tipo==='doughnut'?{}:{x:{ticks:{color:'#93aec4',font:{size:10},maxRotation:60,minRotation:0}},
+          y:{beginAtZero:true,ticks:{color:'#93aec4',precision:0}},}}
+    }));
+  });
+  $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.chartDefs.splice(+b.dataset.rm,1);renderDash();});
+}
+
+/* ---------------------- 17. EXPORTACIÓN ---------------------- */
+const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad'],['cliente','Cliente'],
+  ['localidad','Localidad'],['piso','Piso'],['categoria','Categoría'],['subcategoria','Subcategoría'],
+  ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['colaterales','Colaterales'],
+  ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
+  ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
+  ['imputable','Imputable'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
+const celda=(t,k)=>Array.isArray(t[k])?t[k].join(', '):(t[k]==null?'':String(t[k]));
+
+async function exportExcel(data,nombre){
+  if(typeof ExcelJS==='undefined'){ toast('ExcelJS no disponible.','err'); return; }
+  const wb=new ExcelJS.Workbook(); wb.creator='Sipnology · Sistema de Tickets NOC'; wb.created=new Date();
+  const ws=wb.addWorksheet('Tickets',{views:[{state:'frozen',ySplit:1}]});
+  ws.columns=COLS.map(c=>({header:c[1],key:c[0],width:Math.max(14,Math.min(38,c[1].length+8))}));
+  data.forEach(t=>ws.addRow(COLS.reduce((o,c)=>{o[c[0]]=celda(t,c[0]);return o;},{})));
+  ws.getRow(1).font={bold:true,color:{argb:'FF04121A'}};
+  ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF00B2A9'}};
+  ws.autoFilter={from:'A1',to:{row:1,column:COLS.length}};
+  // hoja resumen
+  const rs=wb.addWorksheet('Resumen');
+  rs.addRow(['Dimensión','Valor','Tickets']);
+  rs.getRow(1).font={bold:true};
+  ['status','prioridad','cliente','localidad','imputable'].forEach(k=>{
+    const dim=DIMENSIONES.find(x=>x.k===k);
+    agrupar(data,dim.f).forEach(g=>rs.addRow([dim.t,g.k,g.n]));
+  });
+  const buf=await wb.xlsx.writeBuffer();
+  bajar(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),nombre+'.xlsx');
+  logEvent('EXPORT_EXCEL',nombre+' · '+data.length+' filas');
+}
+function bajar(blob,nombre){
+  const u=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=u; a.download=nombre; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+async function exportPDF(data,nombre,conGraficas){
+  if(!window.jspdf){ toast('jsPDF no disponible.','err'); return; }
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4'});
+  const W=doc.internal.pageSize.getWidth();
+  doc.setFillColor(13,27,42); doc.rect(0,0,W,54,'F');
+  doc.setTextColor(0,178,169); doc.setFontSize(16); doc.text('SIPNOLOGY',34,26);
+  doc.setTextColor(255); doc.setFontSize(11); doc.text('Sistema de Tickets NOC · '+nombre,34,44);
+  doc.setFontSize(9); doc.text('Generado: '+fechaHumana(todayISO())+'  ·  Usuario: '+S.me.mail+'  ·  Registros: '+data.length, W-34,44,{align:'right'});
+  let y=74;
+  if(conGraficas){
+    const boxes=$$('#charts .chartbox canvas');
+    for(let i=0;i<boxes.length;i++){
+      const img=boxes[i].toDataURL('image/png',1.0);
+      const w=(W-88)/2, h=w*0.55;
+      const x=34+(i%2)*(w+20);
+      if(i%2===0 && y+h>doc.internal.pageSize.getHeight()-40){ doc.addPage(); y=44; }
+      doc.setTextColor(60); doc.setFontSize(9);
+      doc.text(boxes[i].closest('.chartbox').querySelector('h3').textContent,x,y-4);
+      doc.addImage(img,'PNG',x,y,w,h);
+      if(i%2===1) y+=h+34;
+    }
+    if(boxes.length%2===1) y+=(W-88)/2*0.55+34;
+    doc.addPage(); y=44;
+  }
+  if(doc.autoTable){
+    doc.autoTable({
+      startY:y, styles:{fontSize:6.5,cellPadding:2.5,overflow:'linebreak'},
+      headStyles:{fillColor:[0,178,169],textColor:[4,18,26],fontStyle:'bold'},
+      alternateRowStyles:{fillColor:[244,248,251]},
+      head:[COLS.map(c=>c[1])],
+      body:data.map(t=>COLS.map(c=>celda(t,c[0])))
+    });
+  }
+  doc.save(nombre.replace(/[^\w\-]+/g,'_')+'.pdf');
+  logEvent('EXPORT_PDF',nombre+' · '+data.length+' filas');
+}
+
+/* ---------------------- 18. CORREO ENRIQUECIDO (Graph Mail.Send) ---------------------- */
+function correoHTML(t,fase,nota){
+  const C={APERTURA:['#0e86d4','APERTURA DE TICKET'],SEGUIMIENTO:['#f2a900','ACTUALIZACIÓN DE TICKET'],CIERRE:['#3fb950','CIERRE DE TICKET']}[fase]||['#00b2a9','TICKET'];
+  const fila=(l,v)=>v?'<tr><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;color:#5b7385;font-size:12px;width:190px">'+esc(l)+'</td><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;font-size:13px;color:#12263a"><b>'+esc(v)+'</b></td></tr>':'';
+  return '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;border:1px solid #dfe7ee;border-radius:10px;overflow:hidden">'+
+   '<div style="background:#0d1b2a;padding:16px 20px"><span style="color:#00b2a9;font-size:19px;font-weight:800;letter-spacing:1px">SIPNOLOGY</span>'+
+   '<span style="color:#93aec4;font-size:12px;margin-left:10px">Sistema de Tickets · NOC</span></div>'+
+   '<div style="background:'+C[0]+';color:#fff;padding:10px 20px;font-weight:700;font-size:13px;letter-spacing:.5px">'+C[1]+' · '+esc(t.id)+'</div>'+
+   '<table style="width:100%;border-collapse:collapse;background:#fff">'+
+     fila('Status',t.status)+fila('Prioridad',t.prioridad)+fila('Cliente',t.cliente)+
+     fila('Localidad / Piso',t.localidad+' · '+t.piso)+fila('Categoría',t.categoria+' / '+t.subcategoria)+
+     fila('Tipo de incidente',t.tipo)+fila('Equipo(s) afectado(s)',(t.equipos||[]).join(', '))+
+     fila('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', '))+
+     fila('Apertura',fechaHumana(t.fechaAp,t.horaAp)+' — '+t.respAp)+
+     fila('Restablecimiento',t.fechaRes?fechaHumana(t.fechaRes,t.horaRes):'')+
+     fila('Cierre',t.fechaCie?fechaHumana(t.fechaCie,t.horaCie)+(t.respCi?' — '+t.respCi:''):'')+
+     fila('Tiempo de falla',t.tFalla)+fila('Tiempo de afectación',t.tAfect)+
+     fila('Imputable',t.imputable)+fila('Ticket del cliente',t.crq)+
+   '</table>'+
+   (nota?'<div style="padding:14px 20px;background:#f7fafc;border-top:1px solid #dfe7ee"><div style="color:#5b7385;font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:6px">NOTAS Y ACTIVIDADES</div><div style="font-size:13px;color:#12263a;line-height:1.5">'+sanitizeHtml(nota)+'</div></div>':'')+
+   '<div style="padding:12px 20px;background:#0d1b2a;color:#93aec4;font-size:11px">Correo generado automáticamente por el Sistema de Tickets NOC de Sipnology. No responder a esta dirección.</div>'+
+  '</div>';
+}
+function abrirCorreo(t,fase,nota,archivos){
+  S._mail={t:t,fase:fase,nota:nota||t.descripcion,archivos:archivos||(t.adjuntos||[]).map(a=>a.nombre)};
+  const cli=(S.cat.clientes||[]).find(c=>c.id===t.clienteId)||{};
+  $('#mmTo').value=(cli.correosNotif||[]).join('; ');
+  $('#mmCc').value=S.me.mail;
+  $('#mmSubj').value='['+fase+'] Ticket '+t.id+' · '+t.cliente+' · '+t.localidad+' · '+t.prioridad;
+  $('#mmBody').innerHTML='';
+  $('#mmPrev').innerHTML='<label style="font-size:11.5px;color:var(--muted);font-weight:600">VISTA PREVIA</label>'+
+    '<div style="background:#fff;border-radius:8px;padding:6px;max-height:300px;overflow:auto">'+correoHTML(t,fase,S._mail.nota)+'</div>';
+  $('#mMail').classList.add('on');
+}
+async function enviarCorreo(){
+  const m=S._mail; if(!m) return;
+  const to=$('#mmTo').value.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+  if(!to.length){ toast('Indica al menos un destinatario.','err'); return; }
+  const btn=$('#mmSend'); busy(btn,true);
+  try{
+    const h=await H();
+    const extra=sanitizeHtml($('#mmBody').innerHTML);
+    const body=(extra?'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto 14px;font-size:13px;color:#12263a">'+extra+'</div>':'')+correoHTML(m.t,m.fase,m.nota);
+    const att=[];
+    if($('#mmAdj').checked){
+      for(const nom of (m.archivos||[])){
+        try{
+          const meta=await gGet(h,m.t.ruta+'/'+nom); if(!meta) continue;
+          if((meta.size||0)>MAIL_ADJ_MB*1048576){ toast('«'+nom+'» excede '+MAIL_ADJ_MB+' MB; se omite del correo.','warn',7000); continue; }
+          const b=await (await fetch(meta['@microsoft.graph.downloadUrl'])).blob();
+          const b64=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(',')[1]);fr.readAsDataURL(b);});
+          att.push({'@odata.type':'#microsoft.graph.fileAttachment',name:nom,contentType:b.type||'application/octet-stream',contentBytes:b64});
+        }catch(e){}
+      }
+    }
+    const cc=$('#mmCc').value.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+    const r=await fetch('https://graph.microsoft.com/v1.0/me/sendMail',{method:'POST',
+      headers:Object.assign({'Content-Type':'application/json'},h),
+      body:JSON.stringify({message:{subject:$('#mmSubj').value,
+        body:{contentType:'HTML',content:body},
+        toRecipients:to.map(a=>({emailAddress:{address:a}})),
+        ccRecipients:cc.map(a=>({emailAddress:{address:a}})),
+        attachments:att},saveToSentItems:true})});
+    if(!r.ok) throw new Error('Graph sendMail '+r.status+' — '+(await r.text()).slice(0,200));
+    toast('Correo enviado a '+to.join(', ')+'.');
+    logEvent('CORREO_ENVIADO',m.t.id+' · '+m.fase+' · '+to.join(','));
+    $('#mMail').classList.remove('on');
+  }catch(e){ toast('No se pudo enviar: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
+
+/* ---------------------- 19. CATÁLOGOS (solo administrador) ---------------------- */
+const ESQUEMAS={
+  clientes:{titulo:'Clientes',cols:[['id','ID',10],['nombre','Nombre',22],['dominios','Dominios de correo (coma)',26],['correosNotif','Correos de notificación (coma)',30]],lista:['dominios','correosNotif']},
+  localidades:{titulo:'Localidades / Sedes',cols:[['id','ID (2 dígitos)',12],['clienteId','Cliente',12],['nombre','Nombre',26]],
+    nota:'El ID de 2 dígitos es el prefijo del folio. Ej.: sede 98 → ticket 98090826-01.'},
+  prioridades:{titulo:'Prioridades y SLA',cols:[['id','ID',8],['nombre','Nombre visible',22],['slaHoras','SLA (horas)',10]],num:['slaHoras']},
+  equipos:{titulo:'Equipos / Dispositivos',cols:[['hostname','Hostname',26],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Localidad',12],['piso','Piso',10]]},
+  clientesExternos:{titulo:'Usuarios cliente (acceso externo)',cols:[['correo','Correo (invitado B2B)',30],['nombre','Nombre',22],['clienteId','Cliente que puede ver',14]],
+    nota:'Estos usuarios deben existir como INVITADOS en Microsoft Entra (B2B). Aquí solo se declara qué cliente puede ver cada uno; el acceso real lo aplican los permisos de SharePoint.'}
+};
+const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',admins:'Administradores (correo por línea)'};
+
+function renderCat(){
+  const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
+  $('#btnCatSave').disabled=ro;
+  if(ESQUEMAS[k]) return renderTabla(k,ESQUEMAS[k],box,ro);
+  if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
+  if(k==='pisos') return renderPisos(box,ro);
+  if(k==='categorias') return renderMapa(box,ro,'categorias','Categoría','Subcategorías (una por línea)');
+  if(k==='tipos') return renderMapa(box,ro,'tipos','Subcategoría','Tipos de incidente (uno por línea)');
+}
+function renderTabla(k,esq,box,ro){
+  const arr=S.cat[k]||(S.cat[k]=[]);
+  box.innerHTML=(esq.nota?'<div class="note">'+esc(esq.nota)+'</div>':'')+
+   '<div class="tw" style="max-height:52vh"><table><thead><tr>'+esq.cols.map(c=>'<th>'+esc(c[1])+'</th>').join('')+'<th></th></tr></thead><tbody>'+
+   arr.map((o,i)=>'<tr>'+esq.cols.map(c=>'<td><input data-i="'+i+'" data-c="'+c[0]+'" value="'+
+     esc(Array.isArray(o[c[0]])?o[c[0]].join(', '):(o[c[0]]==null?'':o[c[0]]))+'"'+(ro?' disabled':'')+'></td>').join('')+
+     '<td><button class="btn dan" style="padding:3px 9px" data-del="'+i+'"'+(ro?' disabled':'')+'>×</button></td></tr>').join('')+
+   '</tbody></table></div><div class="row" style="margin-top:10px"><button class="btn sec" id="catAdd"'+(ro?' disabled':'')+'>+ Agregar fila</button></div>';
+  box.querySelectorAll('input[data-c]').forEach(inp=>inp.onchange=()=>{
+    const o=arr[+inp.dataset.i], c=inp.dataset.c;
+    o[c]= (esq.lista||[]).indexOf(c)>=0 ? inp.value.split(',').map(s=>s.trim()).filter(Boolean)
+        : ((esq.num||[]).indexOf(c)>=0 ? (+inp.value||0) : inp.value.trim());
+  });
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ if(confirm('¿Eliminar la fila?')){arr.splice(+b.dataset.del,1);renderCat();} });
+  const add=box.querySelector('#catAdd'); if(add) add.onclick=()=>{ arr.push({}); renderCat(); };
+}
+function renderLista(k,titulo,box,ro){
+  box.innerHTML='<div class="f"><label>'+esc(titulo)+'</label><textarea id="catTxt" style="min-height:260px"'+(ro?' disabled':'')+'>'+
+    esc((S.cat[k]||[]).join('\n'))+'</textarea></div>';
+  box.querySelector('#catTxt').onchange=e=>S.cat[k]=e.target.value.split('\n').map(s=>s.trim()).filter(Boolean);
+}
+function renderPisos(box,ro){
+  const locs=S.cat.localidades||[];
+  box.innerHTML='<div class="row"><select id="pLoc" style="width:300px">'+locs.map(l=>'<option value="'+esc(l.id)+'">'+esc(l.nombre)+' ['+esc(l.id)+']</option>').join('')+'</select></div>'+
+    '<div class="f" style="margin-top:10px"><label>Pisos (uno por línea)</label><textarea id="pTxt" style="min-height:240px"'+(ro?' disabled':'')+'></textarea></div>';
+  const sel=box.querySelector('#pLoc'), txt=box.querySelector('#pTxt');
+  const pinta=()=>{ const l=locs.find(x=>x.id===sel.value)||{}; txt.value=(l.pisos||[]).join('\n'); };
+  sel.onchange=pinta; pinta();
+  txt.onchange=()=>{ const l=locs.find(x=>x.id===sel.value); if(l) l.pisos=txt.value.split('\n').map(s=>s.trim()).filter(Boolean); };
+}
+function renderMapa(box,ro,key,lblK,lblV){
+  const m=S.cat[key]||(S.cat[key]={}); const ks=Object.keys(m);
+  box.innerHTML='<div class="row"><select id="mK" style="width:340px">'+ks.map(k=>'<option>'+esc(k)+'</option>').join('')+'</select>'+
+    '<input id="mNew" placeholder="Nueva '+esc(lblK.toLowerCase())+'" style="width:230px"'+(ro?' disabled':'')+'>'+
+    '<button class="btn sec" id="mAdd"'+(ro?' disabled':'')+'>+ Agregar</button>'+
+    '<button class="btn dan" id="mDel"'+(ro?' disabled':'')+'>Eliminar</button></div>'+
+    '<div class="f" style="margin-top:10px"><label>'+esc(lblV)+'</label><textarea id="mTxt" style="min-height:300px"'+(ro?' disabled':'')+'></textarea></div>';
+  const sel=box.querySelector('#mK'), txt=box.querySelector('#mTxt');
+  const pinta=()=>{ txt.value=(m[sel.value]||[]).join('\n'); };
+  sel.onchange=pinta; pinta();
+  txt.onchange=()=>{ m[sel.value]=txt.value.split('\n').map(s=>s.trim()).filter(Boolean); };
+  box.querySelector('#mAdd').onclick=()=>{ const v=box.querySelector('#mNew').value.trim(); if(!v) return;
+    if(!m[v]) m[v]=[]; renderCat(); };
+  box.querySelector('#mDel').onclick=()=>{ if(confirm('¿Eliminar «'+sel.value+'» y su contenido?')){ delete m[sel.value]; renderCat(); } };
+}
+
+/* ---------------------- 20. BITÁCORA (render) ---------------------- */
+function renderBit(){
+  const q=($('#bitQ')?$('#bitQ').value:'').toLowerCase();
+  const size=+($('#bitSize')?$('#bitSize').value:10);
+  const all=S.bit.filter(b=>!q||JSON.stringify(b).toLowerCase().indexOf(q)!==-1);
+  const pages=Math.max(1,Math.ceil(all.length/size));
+  if(S.bitPage>pages) S.bitPage=pages;
+  const rows=all.slice((S.bitPage-1)*size,(S.bitPage-1)*size+size);
+  const tb=$('#tblBit'); if(!tb) return;
+  tb.tBodies[0].innerHTML=rows.map(b=>'<tr><td class="mono">'+esc(b.fecha)+'</td><td class="mono">'+esc(b.hora)+
+    '</td><td>'+esc(b.usuario)+'</td><td><b>'+esc(b.evento)+'</b></td><td>'+esc(b.detalle)+'</td></tr>').join('')
+    ||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Sin registros</td></tr>';
+  let p='<button data-p="'+(S.bitPage-1)+'"'+(S.bitPage<=1?' disabled':'')+'>‹</button>';
+  for(let i=Math.max(1,S.bitPage-2);i<=Math.min(pages,S.bitPage+2);i++)
+    p+='<button data-p="'+i+'" class="'+(i===S.bitPage?'on':'')+'">'+i+'</button>';
+  p+='<button data-p="'+(S.bitPage+1)+'"'+(S.bitPage>=pages?' disabled':'')+'>›</button>';
+  $('#bitPag').innerHTML=p;
+  $('#bitPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{S.bitPage=Math.max(1,Math.min(pages,+b.dataset.p));renderBit();});
+}
+
+/* ---------------------- 21. NAVEGACIÓN Y EVENTOS ---------------------- */
+function irA(v){
+  $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  $$('.view').forEach(s=>s.classList.toggle('on',s.id===v));
+  if(v==='vEstado') renderDash();
+  if(v==='vCatalogos') renderCat();
+  if(v==='vBitacora') renderBit();
+}
+function enlazarEventos(){
+  $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
+  $('#btnLogout').onclick=async()=>{ localStorage.removeItem('sip_tkt_auth_at');
+    try{ await msalApp().logoutPopup(); }catch(e){} location.reload(); };
+
+  // Apertura
+  enlazarCascadas(); enlazarRTE();
+  enlazarDrop('#tDrop','#tFiles','#tFileList','filesNew');
+  enlazarDrop('#sDrop','#sFiles','#sFileList','filesSeg');
+  $('#btnAhora').onclick=ahora;
+  $('#btnEqAdd').onclick=()=>{const v=$('#tEquipoSel').value; if(v&&_equipos.indexOf(v)===-1){_equipos.push(v);renderChips();}};
+  $('#btnEqLibre').onclick=()=>{const v=$('#tEqLibre').value.trim(); if(v&&_equipos.indexOf(v)===-1){_equipos.push(v);$('#tEqLibre').value='';renderChips();}};
+  $('#btnColAdd').onclick=()=>{const t=$('#tColTipo').value,c=+$('#tColCant').value||1;
+    if(t){_colaterales.push({tipo:t,cant:c});renderChips();}};
+  $('#btnCrear').onclick=crearTicket;
+  $('#btnLimpiar').onclick=()=>{ if(confirm('¿Limpiar el formulario?')) limpiarApertura(); };
+
+  // Seguimiento
+  $('#btnFiltrar').onclick=()=>{S.filtro=leerFiltros();S.segPage=1;renderSeg();};
+  $('#btnLimpiaF').onclick=()=>{ $$('#vSeguimiento input').forEach(i=>i.value='');
+    $$('#vSeguimiento select').forEach(s=>{if(s.id!=='segSize')s.selectedIndex=0;});
+    S.filtro={};S.segPage=1;renderSeg(); };
+  $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
+  $('#btnExpXlsSeg').onclick=()=>exportExcel(filtrar(leerFiltros()),'Tickets_'+todayISO());
+  $('#btnExpPdfSeg').onclick=()=>exportPDF(filtrar(leerFiltros()),'Reporte de tickets',false);
+  $('#mClose').onclick=$('#mClose2').onclick=()=>{$('#mSeg').classList.remove('on');S.ticket=null;};
+  $('#btnGuardarSeg').onclick=guardarSeguimiento;
+  $('#btnMail').onclick=()=>{ if(S.ticket) abrirCorreo(S.ticket,S.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',sanitizeHtml($('#sNota').innerHTML)||S.ticket.descripcion); };
+  ['sFecCie','sHoraCie','sAmPmCie','sFecRes','sHoraRes','sAmPmRes'].forEach(id=>$('#'+id).addEventListener('change',recalcTiempos));
+  $('#sTAfect').addEventListener('input',function(){this.dataset.manual='1';});
+  $('#sStatus').addEventListener('change',function(){
+    if(this.value==='CERRADO'&&!$('#sFecCie').value){ const d=new Date(); $('#sFecCie').value=todayISO(d);
+      const h=hora12(d); $('#sHoraCie').value=h.t; $('#sAmPmCie').value=h.ap; recalcTiempos(); }
+  });
+
+  // Dashboard
+  $('#btnDash').onclick=renderDash;
+  $('#btnDashClr').onclick=()=>{ $$('#vEstado input').forEach(i=>i.value=''); $$('#vEstado select').forEach(s=>s.selectedIndex=0); renderDash(); };
+  $('#btnAddChart').onclick=()=>{ const k=$('#dNuevo').value; if(k&&S.chartDefs.indexOf(k)===-1){S.chartDefs.push(k);renderDash();} };
+  $('#dExport').onchange=async function(){
+    const v=this.value; this.selectedIndex=0; if(!v) return;
+    const d=dashFiltrado();
+    if(v==='xlsx'||v==='both') await exportExcel(d,'Dashboard_Tickets_'+todayISO());
+    if(v==='pdf'||v==='both')  await exportPDF(d,'Tablero de tickets',true);
+  };
+
+  // Catálogos
+  $('#catSel').onchange=renderCat;
+  $('#btnCatReload').onclick=async()=>{ await catalogoPull(); renderCat(); };
+  $('#btnCatSave').onclick=async function(){ busy(this,true);
+    try{ if(await catalogoPush()){ toast('Catálogo guardado.'); poblarCatalogosUI(); } }
+    catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
+    finally{ busy(this,false); } };
+
+  // Bitácora / correo
+  $('#bitQ').oninput=()=>{S.bitPage=1;renderBit();};
+  $('#bitSize').onchange=()=>{S.bitPage=1;renderBit();};
+  $('#btnBitRef').onclick=bitPull;
+  $('#mmClose').onclick=$('#mmCancel').onclick=()=>$('#mMail').classList.remove('on');
+  $('#mmSend').onclick=enviarCorreo;
+
+  // cierre de modales con Escape
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ $('#mMail').classList.remove('on'); $('#mSeg').classList.remove('on'); } });
+}
+
+/* ---------------------- 22. ARRANQUE ---------------------- */
+window.addEventListener('DOMContentLoaded',function(){
+  ahora(); enlazarEventos();
+  initAuthGate();
+  setInterval(()=>{ if(S.idx.length) alertasSLA(); }, 15*60*1000);   // recordatorio de SLA cada 15 min
+});
+
+/* Exponer para pruebas automatizadas (jsdom) */
+window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
+  durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
+  slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
+  correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT};
+</script>
+</body>
+</html>
