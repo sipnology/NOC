@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://alcdn.msauth.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.sharepoint.com https://graph.microsoft.com; font-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.sharepoint.com; frame-src https://login.microsoftonline.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.sharepoint.com https://graph.microsoft.com; font-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.sharepoint.com; frame-src https://login.microsoftonline.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Sipnology · Sistema de Tickets NOC</title>
 <style>
 :root{
@@ -474,13 +474,13 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <!--
   ================= SRI / INTEGRIDAD =================
   Antes de publicar, agrega a CADA <script> de CDN su atributo integrity="sha512-..."
-  ExcelJS 4.4.0, jsPDF 2.5.1, html2canvas 1.4.1, jspdf-autotable 3.8.2 y MSAL 3.7.1 son
-  LAS MISMAS VERSIONES del Cotizador: copia los hashes desde su index.html.
-  Para Chart.js 4.4.1 obtén el hash en https://cdnjs.com (boton "Copy Script tag" con SRI).
-  Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, seccion 8.
+  OJO: el Cotizador NO tiene SRI (se verifico su index.html en produccion), asi que no hay
+  hashes que copiar. Obtenlos en cdnjs.com (boton "Copy Script tag" -> opcion SRI) y en
+  jsdelivr.com para msal-browser 3.7.1. Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, seccion 8.
+  MSAL se carga desde jsDelivr: cdnjs NO publica @azure/msal-browser.
   ====================================================
 -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/msal/3.7.1/msal-browser.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.7.1/lib/msal-browser.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
