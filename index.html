@@ -349,6 +349,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <option value="imputables">Imputables</option>
       <option value="clientesExternos">Usuarios cliente (acceso externo)</option>
       <option value="admins">Administradores</option>
+      <option value="historico">⬆ Importar histórico de tickets</option>
     </select>
       <button class="btn" id="btnCatSave" class="right">Guardar cambios</button>
       <button class="btn sec" id="btnCatReload">↻ Recargar</button>
@@ -1538,7 +1539,8 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',ad
 function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
   $('#btnCatSave').disabled=ro;
-  if(ESQUEMAS[k]) return renderTabla(k,ESQUEMAS[k],box,ro);
+  if(k==='historico') return renderHistorico(box,ro);
+  if(ESQUEMAS[k]){ renderTabla(k,ESQUEMAS[k],box,ro); if(k==='equipos') barraEquipos(box,ro); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='pisos') return renderPisos(box,ro);
   if(k==='categorias') return renderMapa(box,ro,'categorias','Categoría','Subcategorías (una por línea)');
@@ -1588,6 +1590,345 @@ function renderMapa(box,ro,key,lblK,lblV){
   box.querySelector('#mAdd').onclick=()=>{ const v=box.querySelector('#mNew').value.trim(); if(!v) return;
     if(!m[v]) m[v]=[]; renderCat(); };
   box.querySelector('#mDel').onclick=()=>{ if(confirm('¿Eliminar «'+sel.value+'» y su contenido?')){ delete m[sel.value]; renderCat(); } };
+}
+
+/* ---------------------- 19bis. IMPORTAR / EXPORTAR XLSX ---------------------- */
+/* Normaliza encabezados: minúsculas, sin acentos, sin signos ni espacios */
+function normEnc(s){
+  return String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]/g,'');
+}
+function celdaTexto(v){
+  if(v==null) return '';
+  if(v instanceof Date) return v;
+  if(typeof v==='object'){
+    if(v.text!=null) return String(v.text);
+    if(v.result!=null) return String(v.result);
+    if(Array.isArray(v.richText)) return v.richText.map(r=>r.text).join('');
+    return '';
+  }
+  return String(v).trim();
+}
+/* Lee la primera hoja y devuelve [{encabezadoNormalizado: valor}] */
+async function leerXlsx(file){
+  if(typeof ExcelJS==='undefined') throw new Error('ExcelJS no está disponible.');
+  const wb=new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  const ws=wb.worksheets[0];
+  if(!ws) throw new Error('El archivo no tiene hojas.');
+  let hdrRow=1, hdr=[];
+  for(let r=1;r<=Math.min(ws.rowCount,10);r++){
+    const vals=(ws.getRow(r).values||[]).slice(1).map(celdaTexto);
+    if(vals.filter(Boolean).length>=3){ hdrRow=r; hdr=vals; break; }
+  }
+  if(!hdr.length) throw new Error('No se encontró la fila de encabezados.');
+  const keys=hdr.map(normEnc);
+  const filas=[];
+  for(let r=hdrRow+1;r<=ws.rowCount;r++){
+    const vals=(ws.getRow(r).values||[]).slice(1);
+    const o={_fila:r}; let vacia=true;
+    keys.forEach((k,i)=>{ if(!k) return; const v=celdaTexto(vals[i]); o[k]=v; if(v!=='') vacia=false; });
+    if(!vacia) filas.push(o);
+  }
+  return filas;
+}
+/* Escribe un libro con hojas [{nombre,cols:[[clave,titulo,ancho]],filas:[obj],nota}] */
+async function escribirXlsx(nombre,hojas){
+  const wb=new ExcelJS.Workbook(); wb.creator='Sipnology · Sistema de Tickets NOC'; wb.created=new Date();
+  hojas.forEach(h=>{
+    const ws=wb.addWorksheet(h.nombre,{views:[{state:'frozen',ySplit:1}]});
+    ws.columns=h.cols.map(c=>({header:c[1],key:c[0],width:c[2]||20}));
+    (h.filas||[]).forEach(f=>ws.addRow(f));
+    const r1=ws.getRow(1);
+    r1.font={bold:true,color:{argb:'FFFFFFFF'}};
+    r1.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE9662D'}};
+    r1.alignment={vertical:'middle',wrapText:true}; r1.height=28;
+    ws.autoFilter={from:'A1',to:{row:1,column:h.cols.length}};
+    (h.oblig||[]).forEach(k=>{ const i=h.cols.findIndex(c=>c[0]===k); if(i>=0) r1.getCell(i+1).font={bold:true,color:{argb:'FFFFF3B0'}}; });
+  });
+  const buf=await wb.xlsx.writeBuffer();
+  bajar(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),nombre+'.xlsx');
+}
+
+/* ---- Dispositivos ---- */
+const COLS_DISP=[['hostname','Hostname *',26],['tipo','Tipo *',18],['modelo','Modelo',20],
+  ['localidadId','ID Localidad *',14],['localidad','Localidad (referencia)',24],['piso','Piso',10]];
+function filasReferencia(){
+  const ref=[];
+  (S.cat.localidades||[]).forEach(l=>ref.push({a:'Localidad',b:l.id,c:l.nombre,d:(l.pisos||[]).join(', ')}));
+  (S.cat.tiposDispositivo||[]).forEach(t=>ref.push({a:'Tipo de dispositivo',b:'',c:t,d:''}));
+  (S.cat.clientes||[]).forEach(c=>ref.push({a:'Cliente',b:c.id,c:c.nombre,d:''}));
+  Object.keys(S.cat.categorias||{}).forEach(k=>ref.push({a:'Categoría',b:'',c:k,d:(S.cat.categorias[k]||[]).join(' | ')}));
+  (S.cat.prioridades||[]).forEach(p=>ref.push({a:'Prioridad',b:p.id,c:p.nombre,d:'SLA '+p.slaHoras+' h'}));
+  (S.cat.imputables||[]).forEach(i=>ref.push({a:'Imputable',b:'',c:i,d:''}));
+  (S.cat.estatus||[]).forEach(e=>ref.push({a:'Status',b:'',c:e,d:''}));
+  return ref;
+}
+const HOJA_REF={nombre:'Referencias',cols:[['a','Catálogo',22],['b','ID',12],['c','Valor',34],['d','Detalle',70]]};
+async function plantillaDispositivos(conDatos){
+  const filas = conDatos ? (S.cat.equipos||[]).map(e=>({hostname:e.hostname,tipo:e.tipo,modelo:e.modelo,
+      localidadId:e.localidadId,localidad:nombreLoc(e.localidadId),piso:e.piso}))
+    : [{hostname:'SW94071-IDF1-Tecno',tipo:'Switch',modelo:'C9300-48P',localidadId:'98',localidad:'Tecno Parque',piso:'P02'}];
+  await escribirXlsx(conDatos?('Dispositivos_Sipnology_'+todayISO()):'Plantilla_Dispositivos_Sipnology',
+    [{nombre:'Dispositivos',cols:COLS_DISP,filas:filas,oblig:['hostname','tipo','localidadId']},
+     Object.assign({filas:filasReferencia()},HOJA_REF)]);
+  logEvent(conDatos?'EXPORT_DISPOSITIVOS':'PLANTILLA_DISPOSITIVOS',String(filas.length)+' fila(s)');
+}
+async function importarDispositivos(file,modo){
+  const filas=await leerXlsx(file);
+  const tipos=(S.cat.tiposDispositivo||[]), locs=(S.cat.localidades||[]).map(l=>l.id);
+  const ok=[], err=[];
+  filas.forEach(f=>{
+    const host=String(f.hostname||'').trim();
+    const tipo=String(f.tipo||'').trim();
+    const loc =String(f.localidadid||f.idlocalidad||'').trim();
+    if(!host){ err.push('Fila '+f._fila+': falta Hostname.'); return; }
+    if(!tipo){ err.push('Fila '+f._fila+': falta Tipo.'); return; }
+    if(tipo && tipos.indexOf(tipo)===-1) err.push('Fila '+f._fila+': tipo «'+tipo+'» no está en el catálogo (se agregará igual).');
+    if(loc && locs.indexOf(loc)===-1) err.push('Fila '+f._fila+': ID de localidad «'+loc+'» no existe.');
+    ok.push({hostname:host,tipo:tipo,modelo:String(f.modelo||'').trim(),
+             localidadId:loc,piso:String(f.piso||'').trim()});
+  });
+  const dup=ok.map(e=>e.hostname).filter((h,i,a)=>a.indexOf(h)!==i);
+  if(dup.length) err.push('Hostnames repetidos en el archivo: '+[...new Set(dup)].join(', '));
+  return {ok:ok,err:err,modo:modo};
+}
+function barraEquipos(box,ro){
+  const d=document.createElement('div'); d.style.marginTop='14px';
+  d.innerHTML='<hr class="sep"><div class="row">'+
+    '<button class="btn sec" id="eqTpl">⬇ Descargar plantilla</button>'+
+    '<button class="btn sec" id="eqExp">⬇ Exportar dispositivos actuales</button>'+
+    '<label class="btn sec" style="cursor:'+(ro?'not-allowed':'pointer')+';opacity:'+(ro?'.45':'1')+'">⬆ Cargar archivo'+
+      '<input type="file" id="eqFile" accept=".xlsx" class="hide"'+(ro?' disabled':'')+'></label>'+
+    '<select id="eqModo" style="width:230px"'+(ro?' disabled':'')+'>'+
+      '<option value="merge">Actualizar y agregar (por hostname)</option>'+
+      '<option value="replace">Reemplazar todo el catálogo</option></select>'+
+    '</div><div id="eqRep"></div>';
+  box.appendChild(d);
+  d.querySelector('#eqTpl').onclick=()=>plantillaDispositivos(false).catch(e=>toast(e.message,'err'));
+  d.querySelector('#eqExp').onclick=()=>plantillaDispositivos(true).catch(e=>toast(e.message,'err'));
+  const inp=d.querySelector('#eqFile');
+  inp.onchange=async()=>{
+    const f=inp.files[0]; inp.value=''; if(!f) return;
+    const rep=d.querySelector('#eqRep'); rep.innerHTML='<div class="note"><span class="spin"></span> Leyendo…</div>';
+    try{
+      const r=await importarDispositivos(f,d.querySelector('#eqModo').value);
+      rep.innerHTML='<div class="note"><b>'+r.ok.length+' dispositivo(s) listos</b> · modo '+
+        (r.modo==='replace'?'reemplazar todo':'actualizar y agregar')+
+        (r.err.length?'<br><br><b style="color:var(--warn)">Avisos ('+r.err.length+'):</b><br>'+r.err.slice(0,25).map(esc).join('<br>')+
+          (r.err.length>25?'<br>… y '+(r.err.length-25)+' más':''):'')+
+        '</div><button class="btn" id="eqGo">Aplicar al catálogo</button>';
+      rep.querySelector('#eqGo').onclick=async function(){
+        busy(this,true);
+        try{
+          if(r.modo==='replace') S.cat.equipos=r.ok;
+          else{
+            const m={}; (S.cat.equipos||[]).forEach(e=>m[e.hostname]=e);
+            r.ok.forEach(e=>m[e.hostname]=e);
+            S.cat.equipos=Object.keys(m).map(k=>m[k]);
+          }
+          r.ok.forEach(e=>{ if(e.tipo && (S.cat.tiposDispositivo||[]).indexOf(e.tipo)===-1) S.cat.tiposDispositivo.push(e.tipo); });
+          if(await catalogoPush()){ toast(r.ok.length+' dispositivo(s) guardados.'); poblarCatalogosUI(); renderCat(); }
+        }catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
+        finally{ busy(this,false); }
+      };
+    }catch(e){ rep.innerHTML='<div class="note" style="border-left-color:var(--p1)">'+esc(e.message)+'</div>'; }
+  };
+}
+
+/* ---- Histórico de tickets (mismo formato del REPORTE DE INCIDENTES v4) ---- */
+const COLS_HIST=[['id','# de Ticket',16],['cliente','Cliente',14],['localidad','Localidad',20],['piso','Piso',9],
+  ['categoria','Categoría',16],['subcategoria','Sub Categoría',18],['tipo','Tipo de incidente',30],
+  ['prioridad','Prioridad',14],['equipos','Equipo Principal afectado',26],['colaterales','Colaterales Afectados',26],
+  ['fechaAp','Fecha de apertura',16],['horaAp','Hora de apertura',15],['tFalla','Tiempo de Falla',14],
+  ['tAfect','Tiempo de afectacion',16],['horaRes','Hora de reestablecimiento',20],['fechaCie','Fecha de cierre',15],
+  ['horaCie','Hora de cierre',13],['imputable','Imputable a:',16],['notas','Notas y Actividades',44],
+  ['observaciones','Observaciones',34],['respAp','Responsable Apertura',22],['respCi','Respolsable Cierre',22],
+  ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24]];
+async function plantillaHistorico(){
+  await escribirXlsx('Plantilla_Historico_Tickets_Sipnology',
+    [{nombre:'Tickets',cols:COLS_HIST,oblig:['cliente','localidad','categoria','prioridad','fechaAp','status'],
+      filas:[{id:'98090824-01',cliente:'BBVA',localidad:'Tecno Parque',piso:'P02',categoria:'Falla',
+        subcategoria:'Dispositivo',tipo:'Falla de configuración',prioridad:'Baja (P3)',
+        equipos:'SW94071-IDF1-Tecno',colaterales:'Apagado controlado de equipos',
+        fechaAp:'09/08/2024',horaAp:'08:33:00 PM',tFalla:'1:02:00',tAfect:'0:00:00',horaRes:'09:35:00 PM',
+        fechaCie:'09/08/2024',horaCie:'09:35:00 PM',imputable:'Cliente',
+        notas:'Apagado controlado de equipos por mantenimiento eléctrico.',observaciones:'Al finalizar se encienden equipos.',
+        respAp:'Maximiliano Barrera',respCi:'Maximiliano Barrera',status:'CERRADO',fechaRes:'09/08/2024',crq:''}]},
+     Object.assign({filas:filasReferencia()},HOJA_REF)]);
+  logEvent('PLANTILLA_HISTORICO','descargada');
+}
+/* dd/mm/aaaa · aaaa-mm-dd · Date de Excel  ->  aaaa-mm-dd */
+function parseFecha(v){
+  if(!v) return '';
+  if(v instanceof Date && !isNaN(v)) return todayISO(v);
+  const t=String(v).trim();
+  let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(t); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+  m=/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(t);
+  if(m){ let a=m[3]; if(a.length===2) a=(+a>70?'19':'20')+a; return a+'-'+pad2(+m[2])+'-'+pad2(+m[1]); }
+  const d=new Date(t); return isNaN(d)?'':todayISO(d);
+}
+/* "20:33:00" · "08:33:00 PM" · Date de Excel  ->  "HH:MM:SS" 24 h */
+function parseHora(v){
+  if(!v) return '';
+  if(v instanceof Date && !isNaN(v)) return pad2(v.getUTCHours())+':'+pad2(v.getUTCMinutes())+':'+pad2(v.getUTCSeconds());
+  const t=String(v).trim();
+  const ap=/\b(a\.?m\.?|p\.?m\.?)\b/i.exec(t);
+  const hm=/(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(t); if(!hm) return '';
+  let h=+hm[1]; const mi=+hm[2], se=+(hm[3]||0);
+  if(ap){ const pm=/p/i.test(ap[1]); if(pm&&h!==12) h+=12; if(!pm&&h===12) h=0; }
+  if(h>23||mi>59||se>59) return '';
+  return pad2(h)+':'+pad2(mi)+':'+pad2(se);
+}
+function buscarPri(v){
+  const t=String(v||'').trim().toLowerCase(); if(!t) return '';
+  const p=(S.cat.prioridades||[]).find(x=>x.id.toLowerCase()===t||x.nombre.toLowerCase()===t
+    ||t.indexOf('('+x.id.toLowerCase()+')')!==-1||t===x.nombre.toLowerCase().split(' ')[0]);
+  return p?p.id:'';
+}
+function buscarCliente(v){
+  const t=String(v||'').trim().toLowerCase(); if(!t) return null;
+  return (S.cat.clientes||[]).find(c=>c.id.toLowerCase()===t||c.nombre.toLowerCase()===t)||null;
+}
+function buscarLoc(v){
+  const t=String(v||'').trim().toLowerCase(); if(!t) return null;
+  return (S.cat.localidades||[]).find(l=>l.id.toLowerCase()===t
+    ||l.nombre.toLowerCase()===t||l.nombre.toLowerCase().replace(/[\s_-]+/g,'')===t.replace(/[\s_-]+/g,''))||null;
+}
+function normStatus(v){
+  const t=String(v||'').trim().toUpperCase().replace(/\s+/g,' ');
+  if(t==='ABIERTO'||t==='EN ESPERA'||t==='CERRADO') return t;
+  if(t==='ESPERA') return 'EN ESPERA';
+  return '';
+}
+/* Folio: convierte SS+DDMMAA+NN -> SS DDMMAA-NN. Si no calza, lo conserva y avisa. */
+function normFolio(v,locId,fechaISO,usados,avisos,fila){
+  const t=String(v||'').trim();
+  if(/^\d{8}-\d{2,}$/.test(t)) return t;
+  if(/^\d{10}$/.test(t)) return t.slice(0,8)+'-'+t.slice(8);
+  if(t){ avisos.push('Fila '+fila+': el folio «'+t+'» no sigue el formato SS+DDMMAA-NN; se conserva tal cual.'); return t; }
+  const base=baseFolio(locId,fechaISO); if(!base) return '';
+  let n=1; while(usados.indexOf(base+'-'+pad2(n))!==-1) n++;
+  avisos.push('Fila '+fila+': sin folio; se generó '+base+'-'+pad2(n)+'.');
+  return base+'-'+pad2(n);
+}
+async function analizarHistorico(file){
+  const filas=await leerXlsx(file);
+  const ok=[], err=[], avisos=[];
+  const usados=S.idx.map(t=>t.id).slice();
+  filas.forEach(f=>{
+    const L=f._fila;
+    const g=(...ks)=>{ for(const k of ks){ if(f[k]!=null&&f[k]!=='') return f[k]; } return ''; };
+    const cli=buscarCliente(g('cliente'));
+    const loc=buscarLoc(g('localidad'));
+    const fap=parseFecha(g('fechadeapertura','fechaapertura'));
+    const pri=buscarPri(g('prioridad'));
+    const st =normStatus(g('estatus','status'));
+    const cat=String(g('categoria')||'').trim();
+    const problemas=[];
+    if(!cli) problemas.push('cliente «'+g('cliente')+'» no existe en el catálogo');
+    if(!loc) problemas.push('localidad «'+g('localidad')+'» no existe en el catálogo');
+    if(!fap) problemas.push('fecha de apertura inválida');
+    if(!pri) problemas.push('prioridad «'+g('prioridad')+'» no reconocida');
+    if(!st)  problemas.push('estatus «'+g('estatus','status')+'» no reconocido');
+    if(cat && !(S.cat.categorias||{})[cat]) avisos.push('Fila '+L+': categoría «'+cat+'» no está en el catálogo.');
+    if(problemas.length){ err.push('Fila '+L+': '+problemas.join('; ')+'.'); return; }
+    const hap=parseHora(g('horadeapertura','horaapertura'))||'00:00:00';
+    const fcie=parseFecha(g('fechadecierre','fechacierre'));
+    const hcie=parseHora(g('horadecierre','horacierre'));
+    const fres=parseFecha(g('fechadereestablecimientoopcional','fechadereestablecimiento','fecharestablecimiento'));
+    const hres=parseHora(g('horadereestablecimiento','horarestablecimiento'));
+    if(st==='CERRADO'&&!fcie) avisos.push('Fila '+L+': ticket cerrado sin fecha de cierre.');
+    const id=normFolio(g('deticket','numerodeticket','ticket','id'),loc.id,fap,usados,avisos,L);
+    if(!id){ err.push('Fila '+L+': no se pudo determinar el folio.'); return; }
+    if(usados.indexOf(id)!==-1){ err.push('Fila '+L+': el folio '+id+' ya existe; se omite para no sobrescribir.'); return; }
+    usados.push(id);
+    const notas=[String(g('notasyactividades')||'').trim(),String(g('observaciones')||'').trim()]
+      .filter(Boolean).map(x=>'<p>'+esc(x)+'</p>').join('');
+    const equipos=String(g('equipoprincipalafectado','equipoafectado','equipos')||'')
+      .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
+    const colTxt=String(g('colateralesafectados','colaterales')||'').trim();
+    const ini=dt(fap,hap), fin=dt(fcie,hcie);
+    ok.push({
+      id:id, ruta:P_CASOS+'/'+fap.slice(0,7)+'/'+sanitizeName(id), folioOriginal:String(g('deticket','ticket','id')||''),
+      clienteId:cli.id, cliente:cli.nombre, localidadId:loc.id, localidad:loc.nombre,
+      piso:String(g('piso')||'').trim(), categoria:cat, subcategoria:String(g('subcategoria')||'').trim(),
+      tipo:String(g('tipodeincidente','tipo')||'').trim(), prioridad:pri, slaHoras:slaHoras(pri),
+      equipos:equipos, colaterales:[], colateralNota:colTxt,
+      fechaAp:fap, horaAp:hap, respAp:String(g('responsableapertura')||'').trim(), respApMail:'',
+      status:st, imputable:String(g('imputablea','imputable')||'').trim(),
+      fechaRes:fres, horaRes:hres, fechaCie:fcie, horaCie:hcie,
+      tFalla:String(g('tiempodefalla')||'').trim()||((ini&&fin)?durHMS(fin-ini):''),
+      tAfect:String(g('tiempodeafectacion')||'').trim(),
+      respCi:String(g('respolsablecierre','responsablecierre')||'').trim(), respCiMail:'',
+      crq:String(g('ticketclientecrqopcional','ticketcliente','crq')||'').trim(),
+      descripcion:sanitizeHtml(notas), adjuntos:[], importado:true,
+      historial:[{cuando:new Date().toISOString(),usuario:S.me.mail,accion:'IMPORTADO DEL HISTÓRICO',
+        status:st,nota:sanitizeHtml(notas)||'<i>(sin notas)</i>',archivos:[]}],
+      creado:new Date().toISOString(), actualizado:new Date().toISOString()
+    });
+  });
+  return {ok:ok,err:err,avisos:avisos,total:filas.length};
+}
+async function ejecutarImportacion(lista,progreso){
+  const h=await H(); let n=0;
+  for(const t of lista){
+    await gPutJson(h,t.ruta+'/ticket.json',t);
+    n++; if(progreso) progreso(n,lista.length);
+  }
+  let a=await gGetJson(h,P_IDX); a=Array.isArray(a)?a:[];
+  lista.forEach(t=>{ const e=idxEntry(t); const i=a.findIndex(x=>x.id===e.id); if(i>=0) a[i]=e; else a.unshift(e); });
+  await gPutJson(h,P_IDX,a);
+  S.idx=a; aplicarScopeCliente();
+  logEvent('HISTORICO_IMPORTADO',lista.length+' ticket(s)');
+  return n;
+}
+function renderHistorico(box,ro){
+  box.innerHTML='<div class="note">Carga tickets antiguos con el <b>mismo formato del REPORTE DE INCIDENTES v4</b>. '+
+    'Puedes pegar tal cual las columnas de tu Excel. Cada ticket se crea como expediente completo '+
+    '(<code>Casos/AAAA-MM/&lt;ID&gt;/ticket.json</code>), así que después puedes abrirlo, adjuntarle evidencias y darle seguimiento.<br><br>'+
+    '<b>Nunca se sobrescribe un ticket existente:</b> si el folio ya está en el sistema, esa fila se omite y te lo aviso.</div>'+
+    '<div class="row">'+
+      '<button class="btn sec" id="hTpl">⬇ Descargar plantilla</button>'+
+      '<label class="btn sec" style="cursor:'+(ro?'not-allowed':'pointer')+';opacity:'+(ro?'.45':'1')+'">⬆ Seleccionar archivo'+
+        '<input type="file" id="hFile" accept=".xlsx" class="hide"'+(ro?' disabled':'')+'></label>'+
+    '</div><div id="hRep" style="margin-top:14px"></div>';
+  box.querySelector('#hTpl').onclick=()=>plantillaHistorico().catch(e=>toast(e.message,'err'));
+  const inp=box.querySelector('#hFile');
+  inp.onchange=async()=>{
+    const f=inp.files[0]; inp.value=''; if(!f) return;
+    const rep=box.querySelector('#hRep');
+    rep.innerHTML='<div class="note"><span class="spin"></span> Analizando «'+esc(f.name)+'»…</div>';
+    try{
+      const r=await analizarHistorico(f);
+      const lista=(arr,color)=>arr.length? '<br><br><b style="color:'+color+'">'+arr.length+' aviso(s):</b><br>'+
+        arr.slice(0,30).map(esc).join('<br>')+(arr.length>30?'<br>… y '+(arr.length-30)+' más':'') : '';
+      rep.innerHTML='<div class="note"><b>'+r.total+' fila(s) leídas · '+r.ok.length+' listas para importar · '+
+        r.err.length+' con error</b>'+
+        lista(r.err,'var(--p1)').replace('aviso(s)','error(es)')+lista(r.avisos,'var(--warn)')+'</div>'+
+        (r.ok.length? '<div class="tw" style="max-height:280px"><table><thead><tr><th>ID</th><th>Status</th><th>Pri</th>'+
+          '<th>Cliente</th><th>Localidad</th><th>Piso</th><th>Categoría</th><th>Apertura</th><th>Cierre</th></tr></thead><tbody>'+
+          r.ok.map(t=>'<tr><td class="mono">'+esc(t.id)+'</td><td>'+pillStatus(t.status)+'</td><td>'+pillPri(t.prioridad)+
+            '</td><td>'+esc(t.cliente)+'</td><td>'+esc(t.localidad)+'</td><td>'+esc(t.piso)+'</td><td>'+esc(t.categoria)+
+            '</td><td class="mono">'+esc(fechaHumana(t.fechaAp,t.horaAp))+'</td><td class="mono">'+esc(fechaHumana(t.fechaCie,t.horaCie))+
+            '</td></tr>').join('')+'</tbody></table></div>'+
+          '<div class="row" style="margin-top:12px"><button class="btn" id="hGo">Importar '+r.ok.length+' ticket(s)</button>'+
+          '<span id="hProg" style="color:var(--muted);font-size:12.5px"></span></div>' : '');
+      const go=rep.querySelector('#hGo'); if(!go) return;
+      go.onclick=async function(){
+        if(!confirm('Se crearán '+r.ok.length+' expedientes en SharePoint. ¿Continuar?')) return;
+        busy(this,true);
+        const pr=rep.querySelector('#hProg');
+        try{
+          await ejecutarImportacion(r.ok,(n,t)=>{ pr.textContent=n+' / '+t; });
+          toast(r.ok.length+' ticket(s) importados.');
+          renderSeg(); renderDash(); poblarCatalogosUI();
+          rep.innerHTML='<div class="note"><b>Importación completa:</b> '+r.ok.length+' ticket(s). Revísalos en Seguimiento.</div>';
+        }catch(e){ toast('Falló la importación: '+e.message,'err',10000); pr.textContent='Detenido en '+pr.textContent; }
+        finally{ busy(this,false); }
+      };
+    }catch(e){ rep.innerHTML='<div class="note" style="border-left-color:var(--p1)">'+esc(e.message)+'</div>'; }
+  };
 }
 
 /* ---------------------- 20. BITÁCORA (render) ---------------------- */
@@ -1694,7 +2035,10 @@ window.addEventListener('DOMContentLoaded',function(){
 window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
-  correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT};
+  correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
+  parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
+  buscarPri:buscarPri,buscarCliente:buscarCliente,buscarLoc:buscarLoc,normStatus:normStatus,
+  COLS_HIST:COLS_HIST,COLS_DISP:COLS_DISP};
 </script>
 </body>
 </html>
