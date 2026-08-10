@@ -7,25 +7,27 @@
 <title>Sipnology · Sistema de Tickets NOC</title>
 <style>
 :root{
-  --bg:#0d1b2a; --panel:#12263a; --panel2:#183048; --line:#26445f;
-  --txt:#e8f1f8; --muted:#93aec4; --brand:#00b2a9; --brand2:#0e86d4;
-  --p1:#e5484d; --p2:#f2a900; --p3:#3fb950; --warn:#ff9f1c;
+  --bg:#0f172a; --panel:#111c33; --panel2:#16213e; --line:#26314f;
+  --txt:#e8edf7; --muted:#93a0bd;
+  --brand:#e9662d;      /* naranja del logo Sipnology  rgb(233,102,45) */
+  --brand2:#3b82f6;     /* azul de accion, igual que el Cotizador */
+  --p1:#ef4444; --p2:#f59e0b; --p3:#22c55e; --warn:#f59e0b;
   --radius:10px; --sh:0 6px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
-body{margin:0;background:linear-gradient(160deg,#0a1622,#0d1b2a 40%,#0b1e30);color:var(--txt);
+body{margin:0;background:var(--bg);color:var(--txt);
  font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;min-height:100vh}
 h1,h2,h3{margin:0 0 10px;font-weight:600}
 a{color:var(--brand2)}
 /* ---------- Auth gate ---------- */
 #authGate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
- background:radial-gradient(1200px 600px at 50% -10%,#12384d,#08121c 70%)}
+ background:linear-gradient(180deg,#0f1e3d,#0f172a)}
 #authGate .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 38px;
  width:min(420px,92vw);text-align:center;box-shadow:var(--sh)}
 .logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:6px}
-.logo .mark{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));
- display:grid;place-items:center;font-weight:800;color:#04121a;font-size:19px}
-.logo .name{font-size:20px;font-weight:700;letter-spacing:.5px}
+.logo .mark{width:38px;height:38px;border-radius:9px;background:var(--brand);
+ display:grid;place-items:center;font-weight:800;color:#fff;font-size:19px}
+.logo .name{font-size:20px;font-weight:800;letter-spacing:.3px;color:var(--brand)}
 .logo .name span{color:var(--brand)}
 .sub{color:var(--muted);font-size:12.5px;margin-bottom:20px}
 /* ---------- Layout ---------- */
@@ -35,15 +37,15 @@ nav.tabs{display:flex;gap:4px;flex:1;flex-wrap:wrap}
 nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:8px 14px;
  border-radius:8px;cursor:pointer;font-size:13.5px;font-weight:500}
 nav.tabs button:hover{background:var(--panel2);color:var(--txt)}
-nav.tabs button.on{background:var(--brand);color:#04121a;font-weight:700}
+nav.tabs button.on{background:var(--brand2);color:#fff;font-weight:700}
 .who{font-size:12px;color:var(--muted);text-align:right;line-height:1.3}
 .who b{color:var(--txt);display:block;font-size:12.5px}
 .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
-.b-admin{background:#7c3aed;color:#fff}.b-op{background:var(--brand);color:#04121a}.b-cli{background:#334e68;color:#cfe3f5}
+.b-admin{background:#7c3aed;color:#fff}.b-op{background:var(--brand2);color:#fff}.b-cli{background:#334e68;color:#cfe3f5}
 main{padding:18px;max-width:1500px;margin:0 auto}
 .view{display:none}.view.on{display:block}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
-.panel>h2{font-size:15px;color:var(--brand);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
+.panel>h2{font-size:15px;color:var(--brand2);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
 .grid.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
 .f{display:flex;flex-direction:column;gap:5px}
@@ -51,11 +53,11 @@ main{padding:18px;max-width:1500px;margin:0 auto}
 .f label .req{color:var(--p1)}
 input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
  padding:8px 10px;font:inherit;font-size:13px;width:100%}
-input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:-1px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brand2);outline-offset:-1px}
 input[readonly],input:disabled,select:disabled,textarea:disabled{opacity:.65;cursor:not-allowed}
 textarea{min-height:80px;resize:vertical}
 select[multiple]{min-height:120px}
-.btn{background:var(--brand);color:#04121a;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
+.btn{background:var(--brand2);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
  cursor:pointer;font-size:13px}
 .btn:hover{filter:brightness(1.08)}
 .btn.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line);font-weight:600}
@@ -70,10 +72,10 @@ table{border-collapse:collapse;width:100%;font-size:12.5px}
 th{position:sticky;top:0;background:var(--panel2);color:var(--muted);text-align:left;padding:9px 10px;
  font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;z-index:2}
 td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top}
-tbody tr:hover{background:rgba(0,178,169,.07)}
+tbody tr:hover{background:rgba(59,130,246,.09)}
 td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:nowrap}
 .pill{padding:2px 9px;border-radius:99px;font-size:10.5px;font-weight:700;white-space:nowrap;display:inline-block}
-.s-ABIERTO{background:#0e86d4;color:#fff}.s-ESPERA{background:var(--warn);color:#2b1600}.s-CERRADO{background:#2f4b60;color:#b9d2e6}
+.s-ABIERTO{background:#3b82f6;color:#fff}.s-ESPERA{background:var(--warn);color:#2b1600}.s-CERRADO{background:#2f4b60;color:#b9d2e6}
 .pr-P1{background:var(--p1);color:#fff}.pr-P2{background:var(--p2);color:#2b1a00}.pr-P3{background:var(--p3);color:#04220c}
 .sla-ok{color:var(--p3)}.sla-warn{color:var(--warn);font-weight:700}.sla-bad{color:var(--p1);font-weight:800}
 /* ---------- Cards / KPI ---------- */
@@ -103,12 +105,12 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .rte-tb button:hover{background:var(--panel);color:var(--txt)}
 .rte{min-height:130px;max-height:320px;overflow:auto;background:var(--panel2);border:1px solid var(--line);
  border-radius:0 0 8px 8px;padding:10px;font-size:13px}
-.rte:focus{outline:2px solid var(--brand);outline-offset:-1px}
+.rte:focus{outline:2px solid var(--brand2);outline-offset:-1px}
 .rte img{max-width:100%;border-radius:6px}
 /* ---------- Adjuntos ---------- */
 .drop{border:1.5px dashed var(--line);border-radius:8px;padding:16px;text-align:center;color:var(--muted);
  font-size:12.5px;cursor:pointer}
-.drop.hot{border-color:var(--brand);background:rgba(0,178,169,.08);color:var(--txt)}
+.drop.hot{border-color:var(--brand2);background:rgba(59,130,246,.10);color:var(--txt)}
 .files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .file{display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);
  border-radius:7px;padding:5px 9px;font-size:12px}
@@ -118,12 +120,12 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .tl{border-left:2px solid var(--line);margin-left:8px;padding-left:16px}
 .tl .it{position:relative;padding-bottom:16px}
 .tl .it:before{content:"";position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;
- background:var(--brand);border:2px solid var(--panel)}
+ background:var(--brand2);border:2px solid var(--panel)}
 .tl .mt{font-size:11px;color:var(--muted);margin-bottom:3px}
 .tl .bd{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
 /* ---------- Misc ---------- */
 .toast{position:fixed;right:18px;bottom:18px;z-index:999;display:flex;flex-direction:column;gap:8px}
-.toast div{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--brand);
+.toast div{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--brand2);
  border-radius:8px;padding:11px 16px;font-size:13px;box-shadow:var(--sh);max-width:380px}
 .toast div.err{border-left-color:var(--p1)}
 .toast div.warn{border-left-color:var(--warn)}
@@ -132,12 +134,12 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .pag{display:flex;gap:5px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
 .pag button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;
  padding:4px 10px;cursor:pointer;font-size:12px}
-.pag button.on{background:var(--brand);color:#04121a;font-weight:700;border-color:var(--brand)}
+.pag button.on{background:var(--brand2);color:#fff;font-weight:700;border-color:var(--brand2)}
 .hide{display:none!important}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .chip{background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:11.5px;display:flex;gap:6px;align-items:center}
 .chip .rm{background:transparent;border:0;color:var(--p1);cursor:pointer;font-size:13px;line-height:1}
-.spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;
+.spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand2);border-radius:50%;
  display:inline-block;animation:sp .8s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:760px){main{padding:12px}.modal .mb{max-height:70vh}}
@@ -1315,7 +1317,7 @@ const DIMENSIONES=[
   {k:'respAp',    t:'Tickets por responsable de apertura',f:t=>t.respAp||'(n/d)',  tipo:'bar'},
   {k:'sla',       t:'Cumplimiento de SLA',        f:t=>slaInfo(t).vencido?'Fuera de SLA':'Dentro de SLA',tipo:'doughnut'}
 ];
-const PALETA=['#00b2a9','#0e86d4','#f2a900','#e5484d','#3fb950','#7c3aed','#ff7ab6','#8ecae6','#fb8500','#219ebc','#adb5bd','#c77dff'];
+const PALETA=['#e9662d','#3b82f6','#f59e0b','#22c55e','#ef4444','#7c3aed','#0ea5e9','#ec4899','#84cc16','#14b8a6','#f97316','#94a3b8'];
 
 function dashFiltrado(){
   return S.idx.filter(t=>{
@@ -1343,7 +1345,7 @@ function renderKPIs(d){
   const cerr=d.filter(t=>t.status==='CERRADO'&&hmsToMs(t.tFalla)!=null);
   const prom=cerr.length? durHMS(cerr.reduce((a,t)=>a+hmsToMs(t.tFalla),0)/cerr.length) : '—';
   const cump=d.length? Math.round((d.length-ven)/d.length*100)+'%' : '—';
-  const K=[['Total',d.length,''],['Abiertos',ab,'color:#0e86d4'],['En espera',es,'color:var(--warn)'],
+  const K=[['Total',d.length,''],['Abiertos',ab,'color:#3b82f6'],['En espera',es,'color:var(--warn)'],
     ['Cerrados',ce,''],['P1 (Alta)',p1,'color:var(--p1)'],['Fuera de SLA',ven,'color:var(--p1)'],
     ['Cumplimiento SLA',cump,'color:var(--p3)'],['MTTR promedio',prom,'']];
   $('#kpis').innerHTML=K.map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
@@ -1366,12 +1368,12 @@ function renderDash(){
     S.charts.push(new Chart(cv,{
       type:dim.tipo,
       data:{labels:g.map(x=>x.k),datasets:[{label:'Tickets',data:g.map(x=>x.n),
-        backgroundColor:dim.tipo==='line'?'rgba(0,178,169,.25)':cols,
-        borderColor:dim.tipo==='line'?'#00b2a9':'rgba(0,0,0,.15)',borderWidth:1,fill:dim.tipo==='line',tension:.3}]},
+        backgroundColor:dim.tipo==='line'?'rgba(233,102,45,.25)':cols,
+        borderColor:dim.tipo==='line'?'#e9662d':'rgba(0,0,0,.15)',borderWidth:1,fill:dim.tipo==='line',tension:.3}]},
       options:{responsive:true,maintainAspectRatio:true,animation:false,
-        plugins:{legend:{display:dim.tipo!=='bar',position:'bottom',labels:{color:'#93aec4',boxWidth:12,font:{size:11}}}},
-        scales:dim.tipo==='doughnut'?{}:{x:{ticks:{color:'#93aec4',font:{size:10},maxRotation:60,minRotation:0}},
-          y:{beginAtZero:true,ticks:{color:'#93aec4',precision:0}},}}
+        plugins:{legend:{display:dim.tipo!=='bar',position:'bottom',labels:{color:'#93a0bd',boxWidth:12,font:{size:11}}}},
+        scales:dim.tipo==='doughnut'?{}:{x:{ticks:{color:'#93a0bd',font:{size:10},maxRotation:60,minRotation:0}},
+          y:{beginAtZero:true,ticks:{color:'#93a0bd',precision:0}},}}
     }));
   });
   $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.chartDefs.splice(+b.dataset.rm,1);renderDash();});
@@ -1392,8 +1394,8 @@ async function exportExcel(data,nombre){
   const ws=wb.addWorksheet('Tickets',{views:[{state:'frozen',ySplit:1}]});
   ws.columns=COLS.map(c=>({header:c[1],key:c[0],width:Math.max(14,Math.min(38,c[1].length+8))}));
   data.forEach(t=>ws.addRow(COLS.reduce((o,c)=>{o[c[0]]=celda(t,c[0]);return o;},{})));
-  ws.getRow(1).font={bold:true,color:{argb:'FF04121A'}};
-  ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF00B2A9'}};
+  ws.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
+  ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE9662D'}};
   ws.autoFilter={from:'A1',to:{row:1,column:COLS.length}};
   // hoja resumen
   const rs=wb.addWorksheet('Resumen');
@@ -1417,8 +1419,8 @@ async function exportPDF(data,nombre,conGraficas){
   const {jsPDF}=window.jspdf;
   const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4'});
   const W=doc.internal.pageSize.getWidth();
-  doc.setFillColor(13,27,42); doc.rect(0,0,W,54,'F');
-  doc.setTextColor(0,178,169); doc.setFontSize(16); doc.text('SIPNOLOGY',34,26);
+  doc.setFillColor(15,23,42); doc.rect(0,0,W,54,'F');
+  doc.setTextColor(233,102,45); doc.setFontSize(16); doc.text('SIPNOLOGY',34,26);
   doc.setTextColor(255); doc.setFontSize(11); doc.text('Sistema de Tickets NOC · '+nombre,34,44);
   doc.setFontSize(9); doc.text('Generado: '+fechaHumana(todayISO())+'  ·  Usuario: '+S.me.mail+'  ·  Registros: '+data.length, W-34,44,{align:'right'});
   let y=74;
@@ -1440,7 +1442,7 @@ async function exportPDF(data,nombre,conGraficas){
   if(doc.autoTable){
     doc.autoTable({
       startY:y, styles:{fontSize:6.5,cellPadding:2.5,overflow:'linebreak'},
-      headStyles:{fillColor:[0,178,169],textColor:[4,18,26],fontStyle:'bold'},
+      headStyles:{fillColor:[233,102,45],textColor:[255,255,255],fontStyle:'bold'},
       alternateRowStyles:{fillColor:[244,248,251]},
       head:[COLS.map(c=>c[1])],
       body:data.map(t=>COLS.map(c=>celda(t,c[0])))
@@ -1452,11 +1454,11 @@ async function exportPDF(data,nombre,conGraficas){
 
 /* ---------------------- 18. CORREO ENRIQUECIDO (Graph Mail.Send) ---------------------- */
 function correoHTML(t,fase,nota){
-  const C={APERTURA:['#0e86d4','APERTURA DE TICKET'],SEGUIMIENTO:['#f2a900','ACTUALIZACIÓN DE TICKET'],CIERRE:['#3fb950','CIERRE DE TICKET']}[fase]||['#00b2a9','TICKET'];
-  const fila=(l,v)=>v?'<tr><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;color:#5b7385;font-size:12px;width:190px">'+esc(l)+'</td><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;font-size:13px;color:#12263a"><b>'+esc(v)+'</b></td></tr>':'';
+  const C={APERTURA:['#3b82f6','APERTURA DE TICKET'],SEGUIMIENTO:['#f59e0b','ACTUALIZACIÓN DE TICKET'],CIERRE:['#22c55e','CIERRE DE TICKET']}[fase]||['#e9662d','TICKET'];
+  const fila=(l,v)=>v?'<tr><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;color:#7d8aa8;font-size:12px;width:190px">'+esc(l)+'</td><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;font-size:13px;color:#16213e"><b>'+esc(v)+'</b></td></tr>':'';
   return '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;border:1px solid #dfe7ee;border-radius:10px;overflow:hidden">'+
-   '<div style="background:#0d1b2a;padding:16px 20px"><span style="color:#00b2a9;font-size:19px;font-weight:800;letter-spacing:1px">SIPNOLOGY</span>'+
-   '<span style="color:#93aec4;font-size:12px;margin-left:10px">Sistema de Tickets · NOC</span></div>'+
+   '<div style="background:#0f172a;padding:16px 20px"><span style="color:#e9662d;font-size:19px;font-weight:800;letter-spacing:1px">SIPNOLOGY</span>'+
+   '<span style="color:#93a0bd;font-size:12px;margin-left:10px">Sistema de Tickets · NOC</span></div>'+
    '<div style="background:'+C[0]+';color:#fff;padding:10px 20px;font-weight:700;font-size:13px;letter-spacing:.5px">'+C[1]+' · '+esc(t.id)+'</div>'+
    '<table style="width:100%;border-collapse:collapse;background:#fff">'+
      fila('Status',t.status)+fila('Prioridad',t.prioridad)+fila('Cliente',t.cliente)+
@@ -1469,8 +1471,8 @@ function correoHTML(t,fase,nota){
      fila('Tiempo de falla',t.tFalla)+fila('Tiempo de afectación',t.tAfect)+
      fila('Imputable',t.imputable)+fila('Ticket del cliente',t.crq)+
    '</table>'+
-   (nota?'<div style="padding:14px 20px;background:#f7fafc;border-top:1px solid #dfe7ee"><div style="color:#5b7385;font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:6px">NOTAS Y ACTIVIDADES</div><div style="font-size:13px;color:#12263a;line-height:1.5">'+sanitizeHtml(nota)+'</div></div>':'')+
-   '<div style="padding:12px 20px;background:#0d1b2a;color:#93aec4;font-size:11px">Correo generado automáticamente por el Sistema de Tickets NOC de Sipnology. No responder a esta dirección.</div>'+
+   (nota?'<div style="padding:14px 20px;background:#f7fafc;border-top:1px solid #dfe7ee"><div style="color:#7d8aa8;font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:6px">NOTAS Y ACTIVIDADES</div><div style="font-size:13px;color:#16213e;line-height:1.5">'+sanitizeHtml(nota)+'</div></div>':'')+
+   '<div style="padding:12px 20px;background:#0f172a;color:#93a0bd;font-size:11px">Correo generado automáticamente por el Sistema de Tickets NOC de Sipnology. No responder a esta dirección.</div>'+
   '</div>';
 }
 function abrirCorreo(t,fase,nota,archivos){
@@ -1492,7 +1494,7 @@ async function enviarCorreo(){
   try{
     const h=await H();
     const extra=sanitizeHtml($('#mmBody').innerHTML);
-    const body=(extra?'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto 14px;font-size:13px;color:#12263a">'+extra+'</div>':'')+correoHTML(m.t,m.fase,m.nota);
+    const body=(extra?'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto 14px;font-size:13px;color:#16213e">'+extra+'</div>':'')+correoHTML(m.t,m.fase,m.nota);
     const att=[];
     if($('#mmAdj').checked){
       for(const nom of (m.archivos||[])){
