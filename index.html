@@ -829,7 +829,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-11 · r23';
+const APP_VER = '2026-08-11 · r24';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -1330,7 +1330,8 @@ async function cargarDatos(silent){
   if(moduloActivo('crq')) await crqPull(true); else { S.crq=[]; }
   if(moduloActivo('sit')) await sitPull(true); else { S.sit=[]; }
   await repPull(true);
-  poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT(); renderRepModulos(null); renderReportes();
+  poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT();
+  renderRepModulos(null); pintarLocsReporte([]); renderReportes();
   if(!silent) toast('Datos actualizados.');
 }
 /* Migración desde las rutas anteriores. Los expedientes NO se mueven: cada ticket guarda
@@ -1460,7 +1461,9 @@ function msSet(el,items,sel){
   el._ms.sel=(sel!==undefined?sel:el._ms.sel).filter(v=>validos.indexOf(v)!==-1);
   msPintar(el); return el._ms.sel;
 }
-function msVal(el){ el=typeof el==='string'?$(el):el; return el._ms.sel.slice(); }
+/* Defensivo a propósito: si se consulta antes de inicializar el menú, devuelve vacío
+   en lugar de lanzar. Un error aquí tumbaba el render completo de la vista. */
+function msVal(el){ el=typeof el==='string'?$(el):el; return (el&&el._ms)? el._ms.sel.slice() : []; }
 function msLimpiar(el){ el=typeof el==='string'?$(el):el; el._ms.sel=[]; msPintar(el); }
 function msDisabled(el,v){ el=typeof el==='string'?$(el):el; el.querySelector('.ms-btn').disabled=!!v; }
 document.addEventListener('click',()=>$$('.ms.on').forEach(x=>x.classList.remove('on')));
@@ -4470,7 +4473,8 @@ function pintarLocsReporte(sel){
   const el=$('#repLocs'); if(!el) return;
   if(!el._ms) msInit(el,'Todas las localidades',()=>{});
   const locs=(S.cat.localidades||[]).filter(l=>!S.cliente||!l.clienteId||l.clienteId===S.cliente);
-  msSet(el,locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),sel||[]);
+  /* Sin argumento se respeta lo ya elegido; msSet descarta lo que dejó de existir. */
+  msSet(el,locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),sel);
 }
 function renderRepModulos(sel){
   const cont=$('#repModulos'); if(!cont) return;
@@ -4730,7 +4734,7 @@ function renderReportes(){
   const puede=S.role!=='cliente';
   ['repGuardar','repGuardarComo','repBorrar'].forEach(id=>{ const b=$('#'+id); if(b) b.disabled=!puede||!S.cliente; });
   if(!$('#repModulos').innerHTML) renderRepModulos(null);
-  pintarLocsReporte(msVal('#repLocs'));
+  pintarLocsReporte();
   pintarPlantillas();
 }
 async function generarReporte(){
@@ -5027,6 +5031,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
+  pintarLocsReporte:pintarLocsReporte,renderReportes:()=>renderReportes(),
   idDesdeNombre:idDesdeNombre,cliBloqueado:cliBloqueado,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
   dsFiltrar:dsFiltrar,dsEst:dsEst,dsNormRegistro:dsNormRegistro,textoPlano:textoPlano};
 </script>
