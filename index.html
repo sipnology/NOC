@@ -108,6 +108,22 @@ th.orden:hover{color:var(--txt)}
 th.orden .fl{color:var(--brand);margin-left:4px;font-size:10px}
 tr.filtros th{padding:4px 6px;background:var(--panel2)}
 tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
+/* ---------- Columnas ajustables ---------- */
+#tblSeg{table-layout:fixed}
+#tblSeg th{position:relative;overflow:hidden;text-overflow:ellipsis}
+#tblSeg td{overflow:hidden;text-overflow:ellipsis}
+#tblSeg td.wrap{white-space:normal;word-break:break-word}
+.rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:3}
+.rz:hover,.rz.act{background:var(--brand2)}
+.colpanel{position:absolute;right:0;top:calc(100% + 6px);z-index:150;background:var(--panel);
+ border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh);padding:10px;width:330px}
+.colpanel .lista{max-height:300px;overflow:auto;margin:8px 0}
+.colpanel .it{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;font-size:12.5px}
+.colpanel .it:hover{background:var(--panel2)}
+.colpanel .it input{width:auto;margin:0;accent-color:var(--brand2)}
+.colpanel .it .mv{margin-left:auto;display:flex;gap:2px}
+.colpanel .it .mv button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+ border-radius:4px;width:20px;height:20px;font-size:9px;cursor:pointer;padding:0}
 /* ---------- Barra flotante de edición masiva ---------- */
 .bulk{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:180;
  background:var(--panel);border:1px solid var(--brand2);border-radius:12px;box-shadow:var(--sh);
@@ -363,6 +379,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <button class="btn sec" id="btnLimpiaF">Limpiar</button>
       <button class="btn sec" id="btnRefrescar">↻ Refrescar desde SharePoint</button>
       <span class="right row" style="gap:8px">
+        <span style="position:relative"><button class="btn sec" id="btnCols">⚙ Columnas</button></span>
         <button class="btn sec" id="btnExpXlsSeg">Exportar Excel</button>
         <button class="btn sec" id="btnExpPdfSeg">Exportar PDF</button>
       </span>
@@ -370,12 +387,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
   <div class="panel">
     <h2>Tickets <span id="segCount" style="color:var(--muted);font-weight:400"></span></h2>
-    <div class="tw"><table id="tblSeg">
-      <thead><tr>
-        <th>ID</th><th>Status</th><th>SLA</th><th>Pri</th><th>Cliente</th><th>Localidad</th><th>Piso</th>
-        <th>Categoría</th><th>Subcategoría</th><th>Tipo de incidente</th><th>Equipo</th><th>No. de serie</th>
-        <th>Apertura</th><th>Cierre</th><th>T. Falla</th><th>T. Afect.</th><th>Resp. Ap.</th><th>Resp. Ci.</th><th></th>
-      </tr></thead><tbody></tbody></table></div>
+    <div class="tw"><table id="tblSeg"><colgroup></colgroup><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="segPag"></div>
   </div>
 </section>
@@ -514,8 +526,11 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     </div>
     <div class="mb">
       <div class="panel" style="margin:0 0 14px">
-        <h2>Datos de apertura (no editables)</h2>
+        <h2 id="mResTit">Datos de apertura</h2>
+        <div class="row" id="mAdminBar" style="margin-bottom:10px"></div>
+        <div id="mReabrirBox"></div>
         <div class="grid" id="mResumen"></div>
+        <div id="mEditBox" class="hide"></div>
         <div id="mDescBox" style="margin-top:12px"></div>
       </div>
 
@@ -656,7 +671,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r13';
+const APP_VER = '2026-08-10 · r14';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -1462,6 +1477,47 @@ function filtrar(f){
     return true;
   }).sort((a,b)=>String(b.fechaAp+b.horaAp).localeCompare(String(a.fechaAp+a.horaAp)));
 }
+/* Registro de columnas de la bandeja. `v` devuelve el HTML de la celda. */
+const COLSEG=[
+  {k:'id',    t:'ID',                a:130, cls:'mono', v:t=>esc(t.id)},
+  {k:'status',t:'Status',            a:95,  v:t=>pillStatus(t.status)},
+  {k:'sla',   t:'SLA',               a:120, v:t=>{const s=slaInfo(t);return '<span class="'+s.cls+'" style="font-size:11.5px">'+esc(s.txt)+'</span>';}},
+  {k:'prioridad',t:'Pri',            a:60,  v:t=>pillPri(t.prioridad)},
+  {k:'cliente',t:'Cliente',          a:100, v:t=>esc(t.cliente)},
+  {k:'localidad',t:'Localidad',      a:150, v:t=>esc(t.localidad)},
+  {k:'piso',  t:'Piso',              a:80,  v:t=>esc(t.piso)},
+  {k:'categoria',t:'Categoría',      a:130, v:t=>esc(t.categoria)},
+  {k:'subcategoria',t:'Subcategoría',a:150, v:t=>esc(t.subcategoria)},
+  {k:'tipo',  t:'Tipo de incidente', a:230, v:t=>esc(t.tipo)},
+  {k:'equipos',t:'Equipo',           a:190, v:t=>esc((t.equipos||[]).join(', '))},
+  {k:'series',t:'No. de serie',      a:150, cls:'mono', v:t=>esc((t.series||[]).join(', '))},
+  {k:'colaterales',t:'Colaterales',  a:170, def:false, v:t=>esc((t.colaterales||[]).join(', '))},
+  {k:'apertura',t:'Apertura',        a:150, cls:'mono', v:t=>esc(fechaHumana(t.fechaAp,t.horaAp))},
+  {k:'restablecimiento',t:'Restablecimiento',a:150, cls:'mono', def:false, v:t=>esc(fechaHumana(t.fechaRes,t.horaRes))},
+  {k:'cierre',t:'Cierre',            a:150, cls:'mono', v:t=>esc(fechaHumana(t.fechaCie,t.horaCie))},
+  {k:'tFalla',t:'T. Falla',          a:95,  cls:'mono', v:t=>esc(t.tFalla||'')},
+  {k:'tAfect',t:'T. Afect.',         a:95,  cls:'mono', v:t=>esc(t.tAfect||'')},
+  {k:'imputable',t:'Imputable',      a:120, def:false, v:t=>esc(t.imputable||'')},
+  {k:'observaciones',t:'Observaciones',a:260, def:false, wrap:true, v:t=>esc(t.observaciones||'')},
+  {k:'crq',   t:'CRQ / Ticket cliente',a:160, def:false, cls:'mono', v:t=>esc(t.crq||'')},
+  {k:'respAp',t:'Resp. Ap.',         a:150, v:t=>esc(t.respAp||'')},
+  {k:'respCi',t:'Resp. Ci.',         a:150, v:t=>esc(t.respCi||'')},
+  {k:'reaperturas',t:'Reaperturas',  a:110, def:false, v:t=>t.reaperturas? '<b style="color:var(--warn)">'+t.reaperturas+'</b>':''}
+];
+const PREF_COLS='sip_tkt_cols';
+let _cols=null;
+function cargarCols(){
+  if(_cols) return _cols;
+  let g=null;
+  try{ g=JSON.parse(localStorage.getItem(PREF_COLS)||'null'); }catch(e){}
+  const validas=COLSEG.map(c=>c.k);
+  const vis=(g&&Array.isArray(g.orden)? g.orden.filter(k=>validas.indexOf(k)!==-1) : null)
+    || COLSEG.filter(c=>c.def!==false).map(c=>c.k);
+  _cols={orden:vis, anchos:Object.assign({},(g&&g.anchos)||{})};
+  return _cols;
+}
+function guardarCols(){ try{ localStorage.setItem(PREF_COLS,JSON.stringify(_cols)); }catch(e){} }
+function anchoCol(k){ const c=COLSEG.find(x=>x.k===k)||{}; return cargarCols().anchos[k]||c.a||120; }
 function pillStatus(s){ const k=s==='EN ESPERA'?'ESPERA':s; return '<span class="pill s-'+k+'">'+esc(s)+'</span>'; }
 function pillPri(p){ return '<span class="pill pr-'+esc(p)+'">'+esc(p)+'</span>'; }
 
@@ -1472,24 +1528,17 @@ function renderSeg(){
   if(S.segPage>pages) S.segPage=pages;
   const rows=all.slice((S.segPage-1)*S.segSize,(S.segPage-1)*S.segSize+S.segSize);
   $('#segCount').textContent='· '+all.length+' resultado(s)';
-  $('#tblSeg').tBodies[0].innerHTML = rows.length? rows.map(t=>{
-    const s=slaInfo(t);
-    return '<tr>'+
-      '<td class="mono">'+esc(t.id)+'</td>'+
-      '<td>'+pillStatus(t.status)+'</td>'+
-      '<td class="'+s.cls+'" style="white-space:nowrap;font-size:11.5px">'+esc(s.txt)+'</td>'+
-      '<td>'+pillPri(t.prioridad)+'</td>'+
-      '<td>'+esc(t.cliente)+'</td><td>'+esc(t.localidad)+'</td><td>'+esc(t.piso)+'</td>'+
-      '<td>'+esc(t.categoria)+'</td><td>'+esc(t.subcategoria)+'</td><td>'+esc(t.tipo)+'</td>'+
-      '<td>'+esc((t.equipos||[]).join(', '))+'</td>'+
-      '<td class="mono">'+esc((t.series||[]).join(', '))+'</td>'+
-      '<td class="mono">'+esc(fechaHumana(t.fechaAp,t.horaAp))+'</td>'+
-      '<td class="mono">'+esc(fechaHumana(t.fechaCie,t.horaCie))+'</td>'+
-      '<td class="mono">'+esc(t.tFalla||'')+'</td><td class="mono">'+esc(t.tAfect||'')+'</td>'+
-      '<td>'+esc(t.respAp||'')+'</td><td>'+esc(t.respCi||'')+'</td>'+
+  const cols=cargarCols().orden.map(k=>COLSEG.find(c=>c.k===k)).filter(Boolean);
+  const tb=$('#tblSeg');
+  tb.querySelector('colgroup').innerHTML=cols.map(c=>'<col style="width:'+anchoCol(c.k)+'px">').join('')+'<col style="width:78px">';
+  tb.querySelector('thead').querySelector('tr').innerHTML=
+    cols.map(c=>'<th title="'+esc(c.t)+'">'+esc(c.t)+'<span class="rz" data-rz="'+c.k+'"></span></th>').join('')+'<th></th>';
+  tb.tBodies[0].innerHTML = rows.length? rows.map(t=>'<tr>'+
+      cols.map(c=>'<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(String(c.v(t)).replace(/<[^>]*>/g,''))+'">'+c.v(t)+'</td>').join('')+
       '<td><button class="btn sec" style="padding:4px 10px" data-open="'+esc(t.id)+'">Abrir</button></td>'+
-    '</tr>';
-  }).join('') : '<tr><td colspan="19" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
+    '</tr>').join('')
+    : '<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
+  habilitarResize(tb);
   $('#tblSeg').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirTicket(b.dataset.open));
   // paginación
   let p='<span>Filas</span><select id="segSize" style="width:70px;padding:3px">'+
@@ -1502,6 +1551,58 @@ function renderSeg(){
   $('#segPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{S.segPage=Math.max(1,Math.min(pages,+b.dataset.p));renderSeg();});
   const ss=$('#segSize'); if(ss) ss.onchange=()=>{S.segSize=+ss.value;S.segPage=1;renderSeg();};
   poblarResponsables();
+}
+
+/* Arrastre del borde derecho del encabezado para cambiar el ancho. */
+function habilitarResize(tb){
+  tb.querySelectorAll('[data-rz]').forEach(h=>{
+    h.onmousedown=e=>{
+      e.preventDefault(); e.stopPropagation();
+      const k=h.dataset.rz, x0=e.clientX, a0=anchoCol(k);
+      h.classList.add('act');
+      const mover=ev=>{ const a=Math.max(50,a0+(ev.clientX-x0));
+        cargarCols().anchos[k]=a;
+        const i=cargarCols().orden.indexOf(k);
+        const col=tb.querySelector('colgroup').childNodes.filter(n=>n.nodeType===1)[i];
+        if(col) col.setAttribute('style','width:'+a+'px');
+      };
+      const soltar=()=>{ h.classList.remove('act'); guardarCols();
+        document.removeEventListener('mousemove',mover); document.removeEventListener('mouseup',soltar); };
+      document.addEventListener('mousemove',mover); document.addEventListener('mouseup',soltar);
+    };
+  });
+}
+function panelColumnas(){
+  const previo=$('#colPanel'); if(previo){ previo.remove(); return; }
+  const c=cargarCols();
+  const d=document.createElement('div'); d.id='colPanel'; d.className='colpanel';
+  const fila=(col,vis,i,total)=>'<label class="it"><input type="checkbox" data-c="'+col.k+'"'+(vis?' checked':'')+'>'+
+    esc(col.t)+(vis?'<span class="mv"><button data-up="'+i+'"'+(i===0?' disabled':'')+'>▲</button>'+
+    '<button data-down="'+i+'"'+(i===total-1?' disabled':'')+'>▼</button></span>':'')+'</label>';
+  const visibles=c.orden.map(k=>COLSEG.find(x=>x.k===k)).filter(Boolean);
+  const ocultas=COLSEG.filter(x=>c.orden.indexOf(x.k)===-1);
+  d.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Visibles · arrastra el borde del encabezado para el ancho</div>'+
+    '<div class="lista">'+visibles.map((col,i)=>fila(col,true,i,visibles.length)).join('')+
+    (ocultas.length?'<div style="font-size:12px;color:var(--muted);margin:8px 0 4px">Disponibles</div>'+
+      ocultas.map(col=>fila(col,false)).join(''):'')+'</div>'+
+    '<div class="row"><button class="btn sec" id="colReset" style="padding:4px 10px;font-size:12px">Restablecer</button>'+
+    '<button class="btn sec right" id="colCerrar" style="padding:4px 10px;font-size:12px">Cerrar</button></div>';
+  $('#btnCols').parentNode.appendChild(d);
+  d.onclick=e=>e.stopPropagation();
+  d.querySelectorAll('[data-c]').forEach(chk=>chk.onchange=()=>{
+    const k=chk.dataset.c;
+    if(chk.checked){ if(c.orden.indexOf(k)===-1) c.orden.push(k); }
+    else{ if(c.orden.length<=1){ toast('Deja al menos una columna visible.','err'); chk.checked=true; return; }
+      c.orden=c.orden.filter(x=>x!==k); }
+    guardarCols(); renderSeg(); d.remove(); panelColumnas();
+  });
+  d.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.up;
+    c.orden.splice(i-1,0,c.orden.splice(i,1)[0]); guardarCols(); renderSeg(); d.remove(); panelColumnas(); });
+  d.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.down;
+    c.orden.splice(i+1,0,c.orden.splice(i,1)[0]); guardarCols(); renderSeg(); d.remove(); panelColumnas(); });
+  d.querySelector('#colReset').onclick=()=>{ _cols={orden:COLSEG.filter(x=>x.def!==false).map(x=>x.k),anchos:{}};
+    guardarCols(); renderSeg(); d.remove(); panelColumnas(); };
+  d.querySelector('#colCerrar').onclick=()=>d.remove();
 }
 
 /* ---- Modal de ticket ---- */
@@ -1532,6 +1633,9 @@ function pintarTicket(t){
     campo('Fecha de apertura',fechaHumana(t.fechaAp)),campo('Hora de apertura',from24(t.horaAp).t+' '+from24(t.horaAp).ap),
     campo('Responsable de apertura',t.respAp)
   ].join('');
+  barraAdmin(t);
+  $('#mEditBox').classList.add('hide'); $('#mEditBox').innerHTML='';
+  $('#mResTit').textContent = isAdmin()? 'Datos de apertura' : 'Datos de apertura (no editables)';
   $('#mDescBox').innerHTML = t.descripcion? '<label style="font-size:11.5px;color:var(--muted);font-weight:600">DESCRIPCIÓN INICIAL</label><div class="tl"><div class="it"><div class="bd">'+sanitizeHtml(t.descripcion)+'</div></div></div>':'';
   // formulario
   const cerrado = t.status==='CERRADO';
@@ -1570,6 +1674,158 @@ async function pintarAdjuntos(t){
       else toast('Archivo no disponible.','err');
     }catch(e){ toast(e.message,'err'); }
   });
+}
+/* ---- Reapertura y edición de apertura (solo administrador) ---- */
+const EDITABLES=[
+  ['clienteId','Cliente','sel',()=>(S.cat.clientes||[]).map(c=>({v:c.id,t:c.nombre}))],
+  ['localidadId','Localidad','sel',t=>(S.cat.localidades||[]).filter(l=>!l.clienteId||l.clienteId===t.clienteId).map(l=>({v:l.id,t:locLabel(l.id)}))],
+  ['pisos','Piso(s) (coma)','txt'],
+  ['categoria','Categoría','sel',()=>Object.keys(S.cat.categorias||{})],
+  ['subcategoria','Subcategoría','sel',t=>subsDe(t.categoria)],
+  ['tipo','Tipo de incidente','sel',t=>tiposDe(t.subcategoria)],
+  ['prioridad','Prioridad','sel',()=>(S.cat.prioridades||[]).map(p=>({v:p.id,t:p.nombre}))],
+  ['equipos','Equipos (hostname · serie, uno por línea)','area'],
+  ['colaterales','Colaterales (tipo x cantidad, uno por línea)','area'],
+  ['fechaAp','Fecha de apertura','date'],
+  ['horaAp','Hora de apertura (24 h)','txt'],
+  ['respAp','Responsable de apertura','txt'],
+  ['imputable','Imputable','sel',()=>S.cat.imputables||[]],
+  ['fechaRes','Fecha de restablecimiento','date'],
+  ['horaRes','Hora de restablecimiento (24 h)','txt'],
+  ['fechaCie','Fecha de cierre','date'],
+  ['horaCie','Hora de cierre (24 h)','txt'],
+  ['tAfect','Tiempo de afectación','txt'],
+  ['respCi','Responsable de cierre','txt'],
+  ['crq','Ticket del cliente (CRQ)','txt'],
+  ['observaciones','Observaciones','area']
+];
+function valorEditable(t,k){
+  if(k==='pisos') return (t.pisos&&t.pisos.length?t.pisos:(t.piso?[t.piso]:[])).join(', ');
+  if(k==='equipos') return (t.equipos||[]).map(e=>eqLabel(e)).join('\n');
+  if(k==='colaterales') return (t.colaterales||[]).map(c=>c.tipo+' x '+c.cant).join('\n');
+  return t[k]==null?'':String(t[k]);
+}
+function aplicarEditable(t,k,v){
+  v=String(v==null?'':v).trim();
+  if(k==='pisos'){ t.pisos=v.split(/\s*,\s*/).filter(Boolean); t.piso=t.pisos.join(', '); return; }
+  if(k==='equipos'){ t.equipos=v.split(/\n+/).map(x=>x.trim()).filter(Boolean).map(eqNorm); return; }
+  if(k==='colaterales'){ t.colaterales=v.split(/\n+/).map(x=>x.trim()).filter(Boolean).map(x=>{
+      const m=/^(.*?)\s*[x×]\s*(\d+)$/i.exec(x); return m?{tipo:m[1].trim(),cant:+m[2]}:{tipo:x,cant:1}; }); return; }
+  if(k==='clienteId'){ const c=(S.cat.clientes||[]).find(x=>x.id===v)||{}; t.clienteId=v; t.cliente=c.nombre||v; return; }
+  if(k==='localidadId'){ t.localidadId=v; t.localidad=nombreLoc(v); return; }
+  if(k==='prioridad'){ t.prioridad=v; t.slaHoras=slaHoras(v); return; }
+  t[k]=v;
+}
+function barraAdmin(t){
+  const bar=$('#mAdminBar'), box=$('#mReabrirBox');
+  bar.innerHTML=''; box.innerHTML='';
+  if(!isAdmin()) return;
+  if(t.status==='CERRADO'){
+    bar.innerHTML='<button class="btn sec" id="btnReabrir">↺ Reabrir ticket</button>'+
+      '<span style="color:var(--muted);font-size:12px">Como administrador puedes reabrirlo, corregir cualquier campo y volver a cerrarlo.</span>';
+    bar.querySelector('#btnReabrir').onclick=()=>{
+      box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+        '<b>Motivo de la reapertura</b> (queda en el historial y es obligatorio)'+
+        '<textarea id="txtMotivo" style="margin-top:8px" placeholder="Ej. El cierre se registró con la hora equivocada"></textarea>'+
+        '<div class="row" style="margin-top:8px"><button class="btn" id="okReabrir">Reabrir</button>'+
+        '<button class="btn sec" id="noReabrir">Cancelar</button></div></div>';
+      box.querySelector('#noReabrir').onclick=()=>box.innerHTML='';
+      box.querySelector('#okReabrir').onclick=function(){ reabrirTicket(t,box.querySelector('#txtMotivo').value.trim(),this); };
+    };
+  }else{
+    bar.innerHTML='<button class="btn sec" id="btnEditAp">✎ Editar datos del ticket</button>'+
+      (t.reaperturas?'<span style="color:var(--warn);font-size:12px">Reabierto '+t.reaperturas+' vez(ces)</span>':'');
+    bar.querySelector('#btnEditAp').onclick=()=>editarApertura(t);
+  }
+}
+async function reabrirTicket(t,motivo,btn){
+  if(!motivo){ toast('El motivo de la reapertura es obligatorio.','err'); return; }
+  busy(btn,true);
+  try{
+    const ahoraISO=new Date().toISOString();
+    /* El reloj de SLA no debe contar el tiempo que el ticket estuvo cerrado. */
+    const cierre=dt(t.fechaCie,t.horaCie);
+    if(cierre) t.esperaMs=(t.esperaMs||0)+Math.max(0,Date.now()-cierre.getTime());
+    const cerrado={fechaCie:t.fechaCie,horaCie:t.horaCie,respCi:t.respCi,tFalla:t.tFalla};
+    t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:'REAPERTURA',status:'ABIERTO',
+      nota:'<p><b>Motivo:</b> '+esc(motivo)+'</p><p>Cierre anterior: '+
+        esc(fechaHumana(cerrado.fechaCie,cerrado.horaCie)||'—')+' por '+esc(cerrado.respCi||'—')+
+        ' · tiempo de falla '+esc(cerrado.tFalla||'—')+'</p>',archivos:[]});
+    t.status='ABIERTO'; t.reaperturas=(t.reaperturas||0)+1;
+    t.fechaCie=''; t.horaCie=''; t.respCi=''; t.respCiMail=''; t.tFalla='';
+    t.actualizado=ahoraISO;
+    const h=await H();
+    await gPutJson(h,t.ruta+'/ticket.json',t);
+    await idxUpsert(t);
+    logEvent('TICKET_REABIERTO',t.id+' · '+motivo.slice(0,160));
+    toast('Ticket '+t.id+' reabierto.');
+    pintarTicket(t); renderSeg(); renderDash();
+  }catch(e){ toast('No se pudo reabrir: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
+function editarApertura(t){
+  const box=$('#mEditBox');
+  if(!box.classList.contains('hide')){ box.classList.add('hide'); box.innerHTML=''; return; }
+  box.classList.remove('hide');
+  const campo=c=>{
+    const [k,lbl,tipo,ops]=c; const val=valorEditable(t,k);
+    if(tipo==='sel'){
+      const lista=(typeof ops==='function'?ops(t):ops)||[];
+      const nor=lista.map(o=>(typeof o==='object')?o:{v:o,t:o});
+      const hay=nor.some(o=>String(o.v)===val);
+      return '<div class="f"><label>'+esc(lbl)+'</label><select data-ed="'+k+'">'+
+        (hay?'':'<option value="'+esc(val)+'" selected>'+esc(val||'—')+'</option>')+
+        nor.map(o=>'<option value="'+esc(o.v)+'"'+(String(o.v)===val?' selected':'')+'>'+esc(o.t)+'</option>').join('')+
+        '</select></div>';
+    }
+    if(tipo==='area') return '<div class="f"><label>'+esc(lbl)+'</label><textarea data-ed="'+k+'">'+esc(val)+'</textarea></div>';
+    return '<div class="f"><label>'+esc(lbl)+'</label><input '+(tipo==='date'?'type="date" ':'')+'data-ed="'+k+'" value="'+esc(val)+'"></div>';
+  };
+  box.innerHTML='<hr class="sep"><div class="note" style="border-left-color:var(--warn)">'+
+    'Estás editando un ticket ya abierto. Cada campo que cambies queda registrado en el historial con su valor anterior. '+
+    'El folio, las evidencias y la fecha de creación no se tocan.</div>'+
+    '<div class="grid">'+EDITABLES.map(campo).join('')+'</div>'+
+    '<div class="row" style="margin-top:12px"><button class="btn" id="edGuardar">Guardar cambios del ticket</button>'+
+    '<button class="btn sec" id="edCancel">Cancelar</button></div>';
+  box.querySelectorAll('[data-ed]').forEach(el=>el.onchange=()=>{
+    if(['clienteId','categoria','subcategoria'].indexOf(el.dataset.ed)!==-1){
+      const copia=JSON.parse(JSON.stringify(t));
+      box.querySelectorAll('[data-ed]').forEach(x=>aplicarEditable(copia,x.dataset.ed,x.value));
+      box.classList.add('hide'); box.innerHTML=''; editarApertura(Object.assign(t,{
+        clienteId:copia.clienteId,cliente:copia.cliente,categoria:copia.categoria,subcategoria:copia.subcategoria}));
+    }
+  });
+  box.querySelector('#edCancel').onclick=()=>{ box.classList.add('hide'); box.innerHTML=''; pintarTicket(t); };
+  box.querySelector('#edGuardar').onclick=function(){ guardarEdicion(t,box,this); };
+}
+async function guardarEdicion(t,box,btn){
+  const antes=JSON.parse(JSON.stringify(t));
+  box.querySelectorAll('[data-ed]').forEach(el=>aplicarEditable(t,el.dataset.ed,el.value));
+  const cambios=[];
+  EDITABLES.forEach(([k,lbl])=>{
+    const a=valorEditable(antes,k), b=valorEditable(t,k);
+    if(a!==b) cambios.push(lbl+': «'+(a||'—')+'» → «'+(b||'—')+'»');
+  });
+  if(!cambios.length){ toast('No cambiaste nada.','warn'); return; }
+  if(t.horaAp&&!/^\d{2}:\d{2}:\d{2}$/.test(t.horaAp)){ toast('La hora de apertura debe ir en formato HH:MM:SS de 24 h.','err',8000);
+    Object.assign(t,antes); return; }
+  if(!confirm('Se registrarán '+cambios.length+' cambio(s) en el historial del ticket. ¿Continuar?')){
+    Object.assign(t,antes); return; }
+  busy(btn,true);
+  try{
+    const ahoraISO=new Date().toISOString();
+    t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:'EDICIÓN DE DATOS',status:t.status,
+      nota:'<p><b>Campos modificados:</b></p><ul>'+cambios.map(c=>'<li>'+esc(c)+'</li>').join('')+'</ul>',archivos:[]});
+    t.actualizado=ahoraISO;
+    const h=await H();
+    await gPutJson(h,t.ruta+'/ticket.json',t);
+    await idxUpsert(t);
+    logEvent('TICKET_EDITADO',t.id+' · '+cambios.join(' · ').slice(0,400));
+    toast(cambios.length+' cambio(s) guardados en '+t.id+'.');
+    box.classList.add('hide'); box.innerHTML='';
+    pintarTicket(t); renderSeg(); renderDash();
+  }catch(e){ Object.assign(t,antes); toast('No se pudo guardar: '+e.message,'err',9000); pintarTicket(t); }
+  finally{ busy(btn,false); }
 }
 function recalcTiempos(){
   const t=S.ticket; if(!t) return;
@@ -3094,6 +3350,8 @@ function enlazarEventos(){
     $$('#vSeguimiento select').forEach(s=>{if(s.id!=='segSize')s.selectedIndex=0;});
     S.filtro={};S.segPage=1;renderSeg(); };
   $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
+  $('#btnCols').onclick=e=>{ e.stopPropagation(); panelColumnas(); };
+  document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove(); });
   $('#btnExpXlsSeg').onclick=()=>exportExcel(filtrar(leerFiltros()),'Tickets_'+todayISO());
   $('#btnExpPdfSeg').onclick=()=>exportPDF(filtrar(leerFiltros()),'Reporte de tickets',false);
   $('#mClose').onclick=$('#mClose2').onclick=()=>{$('#mSeg').classList.remove('on');S.ticket=null;};
@@ -3183,9 +3441,11 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   puedeEditarInventario:puedeEditarInventario,opciones:opciones,
   nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,modalNuevos:modalNuevos,
   locLabel:locLabel,pisosDeSede:pisosDeSede,CAMPOS_BULK:CAMPOS_BULK,seleccionados:seleccionados,
+  COLSEG:COLSEG,cargarCols:cargarCols,guardarCols:guardarCols,anchoCol:anchoCol,
   mapearColumnas:mapearColumnas,SINONIMOS:SINONIMOS,
   invConfirmado:invConfirmado,invDescartar:invDescartar,
-  cambios:()=>_invCambios.slice()};
+  cambios:()=>_invCambios.slice(),
+  EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable};
 </script>
 </body>
 </html>
