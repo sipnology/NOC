@@ -209,7 +209,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <div id="authGate">
   <div class="card">
     <div class="logo"><div class="mark">S</div><div class="name">SIP<span>NOLOGY</span></div></div>
-    <div class="sub">Sistema de Control de Tickets · NOC</div>
+    <div class="sub">Sistema de Control de Tickets · NOC<br><span id="verGate" style="font-size:11px;opacity:.7"></span></div>
     <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.</div>
     <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
     <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
@@ -220,7 +220,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 
 <!-- ============ HEADER ============ -->
 <header class="top hide" id="topBar">
-  <div class="logo" style="margin:0"><div class="mark">S</div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div></div>
+  <div class="logo" style="margin:0"><div class="mark">S</div>
+    <div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div>
+    <div id="verTop" style="font-size:10px;color:var(--muted);letter-spacing:.3px"></div></div></div>
   <nav class="tabs" id="tabs">
     <button data-v="vApertura" class="on">Apertura de ticket</button>
     <button data-v="vSeguimiento">Seguimiento</button>
@@ -617,6 +619,9 @@ const cfg = {
   scopes   : ['Sites.ReadWrite.All','Mail.Send','User.Read'],
   remitenteNotif : 'noc@sipnology.com.mx'               // solo informativo para pie de correo
 };
+/* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
+   publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
+const APP_VER = '2026-08-10 · r8';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2864,6 +2869,9 @@ window.addEventListener('beforeunload',function(e){
   if(invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
 });
 window.addEventListener('DOMContentLoaded',function(){
+  const v1=$('#verGate'), v2=$('#verTop');
+  if(v1) v1.textContent='versión '+APP_VER;
+  if(v2) v2.textContent='v '+APP_VER;
   ahora(); enlazarEventos();
   initAuthGate();
   setInterval(()=>{ if(S.idx.length) alertasSLA(); }, 15*60*1000);   // recordatorio de SLA cada 15 min
