@@ -103,6 +103,11 @@ tr.destino td{border-top:2px dashed var(--brand)}
  width:22px;height:22px;cursor:pointer;font-size:10px;line-height:1;padding:0}
 .ord button:hover:not(:disabled){color:var(--txt);border-color:var(--brand2)}
 .ord button:disabled{opacity:.3;cursor:not-allowed}
+th.orden{cursor:pointer;user-select:none}
+th.orden:hover{color:var(--txt)}
+th.orden .fl{color:var(--brand);margin-left:4px;font-size:10px}
+tr.filtros th{padding:4px 6px;background:var(--panel2)}
+tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 /* ---------- Barra flotante de edición masiva ---------- */
 .bulk{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:180;
  background:var(--panel);border:1px solid var(--brand2);border-radius:12px;box-shadow:var(--sh);
@@ -558,6 +563,19 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </div>
 
+<!-- ============ MODAL: ALTAS DE CATÁLOGO DESDE INVENTARIO ============ -->
+<div class="mask" id="mCat">
+  <div class="modal" style="width:min(920px,96vw)">
+    <div class="mh"><h2>Valores nuevos detectados en el inventario</h2><button class="close" id="mcX">×</button></div>
+    <div class="mb" id="mcBody"></div>
+    <div class="mf">
+      <button class="btn" id="mcTodo">Actualizar catálogo y guardar</button>
+      <button class="btn sec" id="mcSolo">Guardar solo el inventario</button>
+      <button class="btn sec" id="mcCancel">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ MODAL DE CORREO ============ -->
 <div class="mask" id="mMail">
   <div class="modal" style="width:min(760px,96vw)">
@@ -621,7 +639,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r8';
+const APP_VER = '2026-08-10 · r10';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -896,6 +914,9 @@ function clienteDeEquipo(e){
 }
 function normEquipo(e){
   const o=Object.assign({hostname:'',serie:'',tipo:'',modelo:'',localidadId:'',piso:'',firmware:''},e||{});
+  /* Excel entrega los IDs numéricos sin ceros a la izquierda: 05 llega como 5. */
+  o.localidadId=String(o.localidadId==null?'':o.localidadId).trim();
+  if(/^\d$/.test(o.localidadId)) o.localidadId='0'+o.localidadId;
   o.clienteId=clienteDeEquipo(o);
   return o;
 }
@@ -1808,7 +1829,8 @@ const ESQUEMAS={
   localidades:{titulo:'Localidades / Sedes',cols:[['id','ID (2 dígitos)',12],['clienteId','Cliente',12],['nombre','Nombre',26]],
     nota:'El ID de 2 dígitos es el prefijo del folio. Ej.: sede 98 → ticket 98090826-01.'},
   prioridades:{titulo:'Prioridades y SLA',cols:[['id','ID',8],['nombre','Nombre visible',22],['slaHoras','SLA (horas)',10]],num:['slaHoras']},
-  equipos:{titulo:'Equipos / Dispositivos',cols:[['clienteId','Cliente',12],['hostname','Hostname',24],['serie','No. de serie',20],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Localidad',12],['piso','Piso',10],['firmware','Versión firmware',18]],
+  equipos:{titulo:'Equipos / Dispositivos',cols:[['clienteId','Cliente',12],['hostname','Hostname',24],['serie','No. de serie',20],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Loc.',9],['localidad','Localidad',20],['piso','Piso',10],['firmware','Versión firmware',18]],
+    derivadas:{localidad:e=>nombreLoc(e.localidadId)},
     nota:'El inventario se guarda en Inventario/_inventario.json y lo pueden editar los operadores del NOC, no solo el administrador. El número de serie identifica al equipo físico: los miembros de un stack comparten hostname y modelo, así que van como filas distintas con el mismo hostname y series diferentes. Si dejas el cliente vacío, se hereda de la localidad.'},
   clientesExternos:{titulo:'Usuarios cliente (acceso externo)',cols:[['correo','Correo (invitado B2B)',30],['nombre','Nombre',22],['clienteId','Cliente que puede ver',14]],
     nota:'Estos usuarios deben existir como INVITADOS en Microsoft Entra (B2B). Aquí solo se declara qué cliente puede ver cada uno; el acceso real lo aplican los permisos de SharePoint.'}
@@ -1830,21 +1852,66 @@ function moverFila(arr,de,a){
   if(a<0||a>=arr.length||de===a) return false;
   arr.splice(a,0,arr.splice(de,1)[0]); return true;
 }
+let _catOrden={tabla:null,col:null,dir:1}, _catFiltros={};
 function renderTabla(k,esq,box,ro){
   const arr = k==='equipos' ? S.inv : (S.cat[k]||(S.cat[k]=[]));
   if(k==='equipos') ro = !puedeEditarInventario();
+  if(_catOrden.tabla!==k){ _catOrden={tabla:k,col:null,dir:1}; _catFiltros={}; }
+  const deriv=esq.derivadas||{};
+  const valor=(o,c)=> deriv[c]? String(deriv[c](o)||'')
+    : (Array.isArray(o[c])? o[c].join(', ') : (o[c]==null?'':String(o[c])));
+  /* Se conserva el índice real: el orden y los filtros solo cambian lo que se ve. */
+  let vista=arr.map((o,i)=>({o:o,i:i}));
+  const activos=Object.keys(_catFiltros).filter(c=>_catFiltros[c]);
+  activos.forEach(c=>{ const q=_catFiltros[c].toLowerCase();
+    vista=vista.filter(x=>valor(x.o,c).toLowerCase().indexOf(q)!==-1); });
+  if(_catOrden.col){
+    const c=_catOrden.col, d=_catOrden.dir;
+    vista.sort((a,b)=>{
+      const x=valor(a.o,c), y=valor(b.o,c);
+      const nx=parseFloat(x), ny=parseFloat(y);
+      if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===x.trim()&&String(ny)===y.trim()) return (nx-ny)*d;
+      return x.localeCompare(y,'es',{numeric:true,sensitivity:'base'})*d;
+    });
+  }
+  const alterado=!!(_catOrden.col||activos.length);
+  const flecha=c=> _catOrden.col===c? '<span class="fl">'+(_catOrden.dir>0?'▲':'▼')+'</span>' : '';
   box.innerHTML=(esq.nota?'<div class="note">'+esc(esq.nota)+'</div>':'')+
-   (ro?'':'<div class="note">Arrastra una fila por el asa <b>⠿</b> o usa ▲▼ para cambiar su orden.</div>')+
+   (ro?'':'<div class="note">Haz clic en un encabezado para ordenar y usa la fila de abajo para filtrar. '+
+     'Para reordenar con <b>⠿</b> o ▲▼ hay que quitar antes el orden y los filtros.'+
+     (alterado?' <b style="color:var(--warn)">Vista alterada: reordenar está deshabilitado.</b> '+
+       '<button class="btn sec" id="catReset" style="padding:2px 10px;font-size:11px;margin-left:6px">Restablecer vista</button>':'')+'</div>')+
    '<div class="tw" style="max-height:52vh"><table><thead><tr><th style="width:1%"></th><th style="width:1%">Orden</th>'+
-   esq.cols.map(c=>'<th>'+esc(c[1])+'</th>').join('')+'<th></th></tr></thead><tbody>'+
-   arr.map((o,i)=>'<tr data-fila="'+i+'"'+(ro?'':' draggable="true"')+'>'+
-     '<td class="grip" title="Arrastrar para reordenar">⠿</td>'+
-     '<td><div class="ord"><button data-up="'+i+'"'+(ro||i===0?' disabled':'')+' title="Subir">▲</button>'+
-       '<button data-down="'+i+'"'+(ro||i===arr.length-1?' disabled':'')+' title="Bajar">▼</button></div></td>'+
-     esq.cols.map(c=>'<td><input data-i="'+i+'" data-c="'+c[0]+'" value="'+
-       esc(Array.isArray(o[c[0]])?o[c[0]].join(', '):(o[c[0]]==null?'':o[c[0]]))+'"'+(ro?' disabled':'')+'></td>').join('')+
-     '<td><button class="btn dan" style="padding:3px 9px" data-del="'+i+'"'+(ro?' disabled':'')+'>×</button></td></tr>').join('')+
-   '</tbody></table></div><div class="row" style="margin-top:10px"><button class="btn sec" id="catAdd"'+(ro?' disabled':'')+'>+ Agregar fila</button></div>';
+   esq.cols.map(c=>'<th class="orden" data-sort="'+c[0]+'" title="Ordenar por '+esc(c[1])+'">'+esc(c[1])+flecha(c[0])+'</th>').join('')+'<th></th></tr>'+
+   '<tr class="filtros"><th></th><th></th>'+
+   esq.cols.map(c=>'<th><input data-f="'+c[0]+'" value="'+esc(_catFiltros[c[0]]||'')+'" placeholder="filtrar"></th>').join('')+'<th></th></tr>'+
+   '</thead><tbody>'+
+   (vista.length? vista.map(({o,i})=>'<tr data-fila="'+i+'"'+((ro||alterado)?'':' draggable="true"')+'>'+
+     '<td class="grip" title="'+(alterado?'Quita el orden y los filtros para reordenar':'Arrastrar para reordenar')+'">⠿</td>'+
+     '<td><div class="ord"><button data-up="'+i+'"'+(ro||alterado||i===0?' disabled':'')+' title="Subir">▲</button>'+
+       '<button data-down="'+i+'"'+(ro||alterado||i===arr.length-1?' disabled':'')+' title="Bajar">▼</button></div></td>'+
+     esq.cols.map(c=> deriv[c[0]]
+       ? '<td style="color:var(--muted)">'+esc(valor(o,c[0]))+'</td>'
+       : '<td><input data-i="'+i+'" data-c="'+c[0]+'" value="'+esc(valor(o,c[0]))+'"'+(ro?' disabled':'')+'></td>').join('')+
+     '<td><button class="btn dan" style="padding:3px 9px" data-del="'+i+'"'+(ro?' disabled':'')+'>×</button></td></tr>').join('')
+    : '<tr><td colspan="'+(esq.cols.length+3)+'" style="text-align:center;color:var(--muted);padding:20px">Sin coincidencias</td></tr>')+
+   '</tbody></table></div>'+
+   '<div class="row" style="margin-top:10px"><button class="btn sec" id="catAdd"'+(ro?' disabled':'')+'>+ Agregar fila</button>'+
+   '<span style="color:var(--muted);font-size:12px">'+vista.length+' de '+arr.length+' fila(s)</span></div>';
+  box.querySelectorAll('[data-sort]').forEach(th=>th.onclick=()=>{
+    const c=th.dataset.sort;
+    if(_catOrden.col===c) _catOrden.dir=-_catOrden.dir; else { _catOrden.col=c; _catOrden.dir=1; }
+    renderCat();
+  });
+  box.querySelectorAll('[data-f]').forEach(inp=>{
+    inp.onclick=e=>e.stopPropagation();
+    inp.oninput=()=>{ _catFiltros[inp.dataset.f]=inp.value; const pos=inp.selectionStart;
+      renderCat();
+      const n=document.querySelector('#catBody [data-f="'+inp.dataset.f+'"]');
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} } };
+  });
+  const reset=box.querySelector('#catReset');
+  if(reset) reset.onclick=()=>{ _catOrden={tabla:k,col:null,dir:1}; _catFiltros={}; renderCat(); };
   if(k==='equipos') box.addEventListener('change',()=>{ if(!invSucio()) invMarcar('Edición desde Catálogos'); });
   box.querySelectorAll('input[data-c]').forEach(inp=>{
     inp.dataset.antes=inp.value;
@@ -1993,6 +2060,7 @@ async function leerXlsx(file){
   if(!hdr.length) throw new Error('No se encontró la fila de encabezados.');
   const keys=hdr.map(normEnc);
   const filas=[];
+  filas.encabezados=hdr.filter(x=>String(x||'').trim()!=='');
   for(let r=hdrRow+1;r<=ws.rowCount;r++){
     const vals=(ws.getRow(r).values||[]).slice(1);
     const o={_fila:r}; let vacia=true;
@@ -2017,6 +2085,40 @@ async function escribirXlsx(nombre,hojas){
   });
   const buf=await wb.xlsx.writeBuffer();
   bajar(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),nombre+'.xlsx');
+}
+
+/* Sinónimos de encabezado. `exactos` se compara contra el encabezado normalizado;
+   `contiene` es la red de seguridad para variantes que no anticipamos. */
+const SINONIMOS=[
+  {campo:'cliente',   exactos:['cliente','client','customer','razonsocial'], contiene:[/^cliente/]},
+  {campo:'hostname',  exactos:['hostname','host','nombredeequipo','nombreequipo','nombredelequipo','nombre','equipo','dispositivo','nombrehost','devicename'],
+                      contiene:[/hostname/,/nombre.*equipo/,/equipo.*nombre/]},
+  {campo:'serie',     exactos:['nodeserie','numerodeserie','noserie','numserie','nserie','nrodeserie','nroserie',
+                               'serie','serial','serialnumber','serialno','sn','numeroserie','numerodeseriesn'],
+                      contiene:[/serie/,/serial/,/^sn$/]},
+  {campo:'tipo',      exactos:['tipo','tipodedispositivo','tipodispositivo','tipodeequipo','type','devicetype'],
+                      contiene:[/^tipo/]},
+  {campo:'modelo',    exactos:['modelo','model','modelodeequipo','plataforma','platform'], contiene:[/modelo/,/model/]},
+  {campo:'localidadId',exactos:['idlocalidad','localidadid','idsede','sedeid','idlocalidadsede','idubicacion','idsitio'],
+                      contiene:[/^id.*(localidad|sede|sitio|ubicacion)/,/(localidad|sede|sitio)\s*id$/]},
+  {campo:'localidad', exactos:['localidad','sede','ubicacion','sitio','site','edificio','localidadreferencia','localidadsede'],
+                      contiene:[/localidad/,/^sede/,/ubicacion/,/edificio/]},
+  {campo:'piso',      exactos:['piso','nivel','floor','pisonivel'], contiene:[/^piso/,/^nivel/,/floor/]},
+  {campo:'firmware',  exactos:['versionfirmware','firmware','firmwareversion','version','versionso','versionsw',
+                               'versiondesoftware','softwareversion','ios','versionios','sw','so'],
+                      contiene:[/firmware/,/version/,/^ios/]}
+];
+/* Devuelve { mapa: {campo: encabezadoNormalizado}, usados:{campo:encabezadoOriginal}, ignoradas:[...] } */
+function mapearColumnas(encabezados){
+  const norm=(encabezados||[]).map(h=>({orig:h,n:normEnc(h)}));
+  const mapa={}, usados={}, tomados=new Set();
+  SINONIMOS.forEach(sin=>{
+    let c=norm.find(h=>!tomados.has(h.n)&&sin.exactos.indexOf(h.n)!==-1);
+    if(!c) c=norm.find(h=>!tomados.has(h.n)&&(sin.contiene||[]).some(re=>re.test(h.n)));
+    if(c){ mapa[sin.campo]=c.n; usados[sin.campo]=c.orig; tomados.add(c.n); }
+  });
+  const ignoradas=norm.filter(h=>!tomados.has(h.n)).map(h=>h.orig);
+  return {mapa:mapa,usados:usados,ignoradas:ignoradas};
 }
 
 /* ---- Dispositivos ---- */
@@ -2049,17 +2151,26 @@ async function plantillaDispositivos(conDatos){
 }
 async function importarDispositivos(file,modo){
   const filas=await leerXlsx(file);
+  const cols=mapearColumnas(filas.encabezados);
+  const V=(f,campo)=>{ const k=cols.mapa[campo]; return k? String(f[k]==null?'':f[k]).trim() : ''; };
   const tipos=(S.cat.tiposDispositivo||[]), locs=(S.cat.localidades||[]).map(l=>l.id);
   const buscaCli=v=>{ const t=String(v||'').trim().toLowerCase(); if(!t) return '';
     const c=(S.cat.clientes||[]).find(x=>x.id.toLowerCase()===t||x.nombre.toLowerCase()===t); return c?c.id:null; };
   const ok=[], err=[];
   filas.forEach(f=>{
-    const host=String(f.hostname||'').trim();
-    const serie=String(f.nodeserie||f.numerodeserie||f.serie||'').trim();
-    const tipo=String(f.tipo||'').trim();
-    const loc =String(f.localidadid||f.idlocalidad||'').trim();
-    const fw  =String(f.versionfirmware||f.firmware||'').trim();
-    const cliRaw=String(f.cliente||'').trim();
+    const host=V(f,'hostname');
+    const serie=V(f,'serie');
+    const tipo=V(f,'tipo');
+    let   loc =V(f,'localidadId');
+    const fw  =V(f,'firmware');
+    const cliRaw=V(f,'cliente');
+    const nomLoc=V(f,'localidad');
+    /* Si no vino el ID de sede pero sí su nombre, se resuelve contra el catálogo. */
+    if(!loc){ const nom=nomLoc;
+      const l=nom?(S.cat.localidades||[]).find(x=>x.nombre.toLowerCase()===nom.toLowerCase()
+        ||('['+x.id+'] - '+x.nombre).toLowerCase()===nom.toLowerCase()):null;
+      if(l) loc=l.id;
+      else if(nom){ const m=/^\[?(\d{2})\]?/.exec(nom); if(m) loc=m[1]; } }
     const cli=buscaCli(cliRaw);
     if(cli===null) err.push('Fila '+f._fila+': cliente «'+cliRaw+'» no existe en el catálogo; se deducirá de la localidad.');
     if(!host){ err.push('Fila '+f._fila+': falta Hostname.'); return; }
@@ -2067,14 +2178,18 @@ async function importarDispositivos(file,modo){
     if(!serie) err.push('Fila '+f._fila+': sin número de serie. Se identificará solo por hostname, así que no podrás distinguir miembros de un stack.');
     if(tipo && tipos.indexOf(tipo)===-1) err.push('Fila '+f._fila+': tipo «'+tipo+'» no está en el catálogo (se agregará igual).');
     if(loc && locs.indexOf(loc)===-1) err.push('Fila '+f._fila+': ID de localidad «'+loc+'» no existe.');
-    ok.push(normEquipo({clienteId:cli||'',hostname:host,serie:serie,tipo:tipo,
-             modelo:String(f.modelo||'').trim(),localidadId:loc,
-             piso:String(f.piso||'').trim(),firmware:fw}));
+    const eq=normEquipo({clienteId:cli||'',hostname:host,serie:serie,tipo:tipo,
+             modelo:V(f,'modelo'),localidadId:loc,
+             piso:V(f,'piso'),firmware:fw});
+    /* Se recuerda el nombre que traía el archivo por si hay que dar de alta la sede. */
+    if(nomLoc && !(S.cat.localidades||[]).some(l=>l.id===eq.localidadId))
+      eq.localidadNombre=nomLoc.replace(/^\[\d+\]\s*-\s*/,'').trim();
+    ok.push(eq);
   });
   const ser=ok.map(e=>e.serie).filter(Boolean);
   const dup=ser.filter((h,i,a)=>a.indexOf(h)!==i);
   if(dup.length) err.push('Números de serie repetidos en el archivo: '+[...new Set(dup)].join(', ')+'. Cada equipo físico debe aparecer una sola vez.');
-  return {ok:ok,err:err,modo:modo};
+  return {ok:ok,err:err,modo:modo,cols:cols,total:filas.length};
 }
 /* Panel de conflictos: una decisión por elemento repetido, con opción de aplicar a todos.
    filas: [{clave,titulo,actual,nuevo}]  ·  opciones: [[valor,etiqueta,ayuda]] */
@@ -2122,7 +2237,21 @@ function barraEquipos(box,ro){
         e.firmware?'fw '+e.firmware:''].filter(Boolean).join(' · ');
       const choques=r.modo==='replace'? [] : r.ok.filter(e=>actuales[eqClave(e)])
         .map(e=>({clave:eqClave(e),titulo:e.serie||e.hostname,actual:desc(actuales[eqClave(e)]),nuevo:desc(e)}));
-      rep.innerHTML='<div class="note"><b>'+r.ok.length+' dispositivo(s) leídos</b> · modo '+
+      const ESP={cliente:'Cliente',hostname:'Hostname',serie:'No. de serie',tipo:'Tipo',modelo:'Modelo',
+        localidadId:'ID Localidad',localidad:'Localidad',piso:'Piso',firmware:'Versión firmware'};
+      const faltan=['hostname','serie','tipo','firmware'].filter(k=>!r.cols.usados[k]);
+      const mapaHtml='<div class="note"'+(faltan.length?' style="border-left-color:var(--warn)"':'')+'>'+
+        '<b>Columnas detectadas en tu archivo</b><div class="tw" style="max-height:200px;margin-top:8px">'+
+        '<table><thead><tr><th>Campo del sistema</th><th>Columna de tu archivo</th></tr></thead><tbody>'+
+        Object.keys(ESP).map(k=>'<tr><td>'+esc(ESP[k])+'</td><td'+(r.cols.usados[k]?'':' style="color:var(--p1)"')+'>'+
+          (r.cols.usados[k]?esc(r.cols.usados[k]):'— no encontrada —')+'</td></tr>').join('')+
+        '</tbody></table></div>'+
+        (r.cols.ignoradas.length?'<div style="margin-top:8px;font-size:12px;color:var(--muted)">Columnas ignoradas: '+
+          r.cols.ignoradas.map(esc).join(' · ')+'</div>':'')+
+        (faltan.length?'<div style="margin-top:8px;color:var(--warn)"><b>Ojo:</b> no se reconoció '+
+          faltan.map(k=>ESP[k]).join(', ')+'. Si tu archivo sí la trae, renombra el encabezado o dime cómo se llama.</div>':'')+
+        '</div>';
+      rep.innerHTML=mapaHtml+'<div class="note"><b>'+r.ok.length+' dispositivo(s) leídos</b> · modo '+
         (r.modo==='replace'?'reemplazar todo':'actualizar y agregar')+
         (choques.length?' · <b style="color:var(--warn)">'+choques.length+' ya existen</b>':'')+
         (r.err.length?'<br><br><b style="color:var(--warn)">Avisos ('+r.err.length+'):</b><br>'+r.err.slice(0,25).map(esc).join('<br>')+
@@ -2437,41 +2566,109 @@ function nuevosParaCatalogo(){
     if((l.pisos||[]).indexOf(e.piso)===-1 && !pisos.some(p=>p.locId===e.localidadId&&p.piso===e.piso))
       pisos.push({locId:e.localidadId,nombre:l.nombre,piso:e.piso});
   });
-  const sedes=[...new Set(S.inv.map(e=>e.localidadId).filter(id=>id&&!(S.cat.localidades||[]).some(l=>l.id===id)))];
+  const sedesIds=[...new Set(S.inv.map(e=>e.localidadId).filter(id=>id&&!(S.cat.localidades||[]).some(l=>l.id===id)))];
+  const sedes=sedesIds.map(id=>({
+    id:id,
+    nombre:(S.inv.find(e=>e.localidadId===id&&e.localidadNombre)||{}).localidadNombre||'',
+    pisos:[...new Set(S.inv.filter(e=>e.localidadId===id).map(e=>e.piso).filter(Boolean))].sort(),
+    equipos:S.inv.filter(e=>e.localidadId===id).length
+  }));
   const clientes=[...new Set(S.inv.map(e=>e.clienteId).filter(id=>id&&!(S.cat.clientes||[]).some(c=>c.id===id)))];
-  return {tipos:tipos,pisos:pisos,sedes:sedes,clientes:clientes};
+  /* Los pisos de sedes que aún no existen se gestionan junto con el alta de la sede. */
+  const pisosDeSedesConocidas=pisos.filter(p=>!sedesIds.some(id=>id===p.locId));
+  return {tipos:tipos,pisos:pisosDeSedesConocidas,sedes:sedes,clientes:clientes};
+}
+/* Diálogo de altas: sedes, clientes, tipos y pisos que el inventario usa y el catálogo no tiene. */
+function modalNuevos(n){
+  return new Promise(res=>{
+    const admin=isAdmin();
+    const seccion=(titulo,cuerpo,vacio)=> cuerpo? '<div class="panel" style="margin:0 0 14px"><h2>'+esc(titulo)+'</h2>'+cuerpo+'</div>' : '';
+    const chks=(clase,items)=> '<div class="row" style="gap:6px;margin-bottom:8px">'+
+        '<button class="btn sec" type="button" data-all="'+clase+'" style="padding:3px 10px;font-size:11px">Todos</button>'+
+        '<button class="btn sec" type="button" data-none="'+clase+'" style="padding:3px 10px;font-size:11px">Ninguno</button></div>'+
+      '<div style="max-height:190px;overflow:auto">'+items+'</div>';
+    let html='';
+    if(n.clientes.length) html+=seccion('Clientes que no existen ('+n.clientes.length+')',
+      chks('cli',n.clientes.map(id=>'<label class="ms-item"><input type="checkbox" class="cli" value="'+esc(id)+'" checked>'+
+        '<span><span class="l1">'+esc(id)+'</span><br><input class="nomcli" data-id="'+esc(id)+'" placeholder="Nombre del cliente" value="'+esc(id)+'" style="margin-top:4px"></span></label>').join('')));
+    if(n.sedes.length) html+=seccion('Sedes / localidades que no existen ('+n.sedes.length+')',
+      chks('sede',n.sedes.map(sd=>'<label class="ms-item"><input type="checkbox" class="sede" value="'+esc(sd.id)+'" checked>'+
+        '<span><span class="l1">['+esc(sd.id)+']</span> <span class="l2">'+sd.equipos+' equipo(s) · pisos: '+esc(sd.pisos.join(', ')||'—')+'</span>'+
+        '<div class="row" style="gap:6px;margin-top:5px">'+
+        '<input class="nomsede" data-id="'+esc(sd.id)+'" placeholder="Nombre de la sede" value="'+esc(sd.nombre)+'" style="flex:2">'+
+        '<select class="clisede" data-id="'+esc(sd.id)+'" style="flex:1">'+
+          (S.cat.clientes||[]).map(c=>'<option value="'+esc(c.id)+'">'+esc(c.nombre)+'</option>').join('')+
+          n.clientes.map(id=>'<option value="'+esc(id)+'">'+esc(id)+' (nuevo)</option>').join('')+
+        '</select></div></span></label>').join('')));
+    if(n.tipos.length) html+=seccion('Tipos de dispositivo nuevos ('+n.tipos.length+')',
+      chks('tipo',n.tipos.map(t=>'<label class="ms-item"><input type="checkbox" class="tipo" value="'+esc(t)+'" checked>'+
+        '<span class="l1">'+esc(t)+'</span></label>').join('')));
+    if(n.pisos.length) html+=seccion('Pisos nuevos en sedes existentes ('+n.pisos.length+')',
+      chks('piso',n.pisos.map((pp,i)=>'<label class="ms-item"><input type="checkbox" class="piso" value="'+i+'" checked>'+
+        '<span><span class="l1">'+esc(pp.piso)+'</span> <span class="l2">'+esc(pp.nombre)+' ['+esc(pp.locId)+']</span></span></label>').join('')));
+    $('#mcBody').innerHTML=(admin?'':'<div class="note" style="border-left-color:var(--warn)">Solo el administrador puede dar de alta estos valores. '+
+        'Puedes guardar el inventario y pedirle a Fernando que los agregue.</div>')+
+      '<div class="note">Los equipos se guardan igual. Esto solo decide si además se dan de alta en el catálogo maestro. '+
+      'Una sede sin nombre no se crea.</div>'+html;
+    $('#mcTodo').classList.toggle('hide',!admin);
+    $('#mCat').classList.add('on');
+    const body=$('#mcBody');
+    body.querySelectorAll('[data-all]').forEach(b=>b.onclick=e=>{e.preventDefault();
+      body.querySelectorAll('.'+b.dataset.all).forEach(c=>c.checked=true);});
+    body.querySelectorAll('[data-none]').forEach(b=>b.onclick=e=>{e.preventDefault();
+      body.querySelectorAll('.'+b.dataset.none).forEach(c=>c.checked=false);});
+    const cerrar=v=>{ $('#mCat').classList.remove('on'); res(v); };
+    const leer=()=>{
+      const val=(sel,f)=>[...body.querySelectorAll(sel)].filter(c=>c.checked).map(f);
+      const nom=(clase,id)=>{ const e=body.querySelector('.'+clase+'[data-id="'+id+'"]'); return e?e.value.trim():''; };
+      return {
+        accion:'catalogo',
+        clientes:val('.cli',c=>({id:c.value,nombre:nom('nomcli',c.value)||c.value})),
+        sedes:val('.sede',c=>{ const sd=n.sedes.find(x=>x.id===c.value)||{};
+          const sel=body.querySelector('.clisede[data-id="'+c.value+'"]');
+          return {id:c.value,nombre:nom('nomsede',c.value),clienteId:sel?sel.value:'',pisos:sd.pisos||[]}; }),
+        tipos:val('.tipo',c=>c.value),
+        pisos:val('.piso',c=>n.pisos[+c.value])
+      };
+    };
+    $('#mcTodo').onclick=()=>{ const r=leer();
+      const sinNombre=r.sedes.filter(x=>!x.nombre);
+      if(sinNombre.length){ toast('Ponle nombre a la(s) sede(s): '+sinNombre.map(x=>x.id).join(', '),'err',7000); return; }
+      cerrar(r); };
+    $('#mcSolo').onclick=()=>cerrar({accion:'solo'});
+    $('#mcCancel').onclick=$('#mcX').onclick=()=>cerrar({accion:'cancelar'});
+  });
 }
 /* Guarda el inventario y, si hay valores nuevos, ofrece reflejarlos en el catálogo maestro. */
 async function guardarInventario(detalle){
   const n=nuevosParaCatalogo();
-  let tocarCatalogo=false;
-  const hayAltas=n.tipos.length||n.pisos.length;
-  if(hayAltas){
-    let m='En el inventario hay valores que aún no existen en el catálogo:\n\n';
-    if(n.tipos.length) m+='Tipos de dispositivo:\n  · '+n.tipos.join('\n  · ')+'\n\n';
-    if(n.pisos.length) m+='Pisos:\n'+n.pisos.map(p=>'  · '+p.piso+' en '+p.nombre+' ['+p.locId+']').join('\n')+'\n\n';
-    if(isAdmin()) m+='¿Deseas actualizar también el catálogo con estos valores?\n\n'+
-      'Aceptar: se guardan el inventario y el catálogo.\nCancelar: solo se guarda el inventario.';
-    else m+='Solo el administrador puede darlos de alta en el catálogo.\n'+
-      'Se guardará el inventario; pídele a Fernando que los agregue.\n\n¿Continuar?';
-    if(!confirm(m)){ if(!isAdmin()) return false; }
-    else tocarCatalogo=isAdmin();
+  let alta=null;
+  if(n.tipos.length||n.pisos.length||n.sedes.length||n.clientes.length){
+    const r=await modalNuevos(n);
+    if(r.accion==='cancelar') return false;
+    if(r.accion==='catalogo') alta=r;
   }
-  if(n.sedes.length) toast('Hay equipos con sedes que no existen en el catálogo: '+n.sedes.join(', '),'warn',9000);
-  if(n.clientes.length) toast('Hay equipos con clientes que no existen en el catálogo: '+n.clientes.join(', '),'warn',9000);
   if(!await invPush(detalle||(_invCambios.length+' cambio(s)'))) return false;
-  if(tocarCatalogo){
-    n.tipos.forEach(t=>S.cat.tiposDispositivo.push(t));
-    n.pisos.forEach(p=>{ const l=(S.cat.localidades||[]).find(x=>x.id===p.locId);
-      if(l){ l.pisos=l.pisos||[]; l.pisos.push(p.piso); l.pisos.sort(); } });
+  if(alta && isAdmin()){
+    alta.clientes.forEach(c=>{ if(!(S.cat.clientes||[]).some(x=>x.id===c.id))
+      S.cat.clientes.push({id:c.id,nombre:c.nombre,dominios:[],correosNotif:[]}); });
+    alta.sedes.forEach(sd=>{ if(!(S.cat.localidades||[]).some(x=>x.id===sd.id))
+      S.cat.localidades.push({id:sd.id,clienteId:sd.clienteId,nombre:sd.nombre,pisos:(sd.pisos||[]).slice()}); });
+    alta.tipos.forEach(t=>{ if((S.cat.tiposDispositivo||[]).indexOf(t)===-1) S.cat.tiposDispositivo.push(t); });
+    alta.pisos.forEach(pp=>{ const l=(S.cat.localidades||[]).find(x=>x.id===pp.locId);
+      if(l){ l.pisos=l.pisos||[]; if(l.pisos.indexOf(pp.piso)===-1){ l.pisos.push(pp.piso); l.pisos.sort(); } } });
+    S.cat.localidades.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
     try{
       if(await catalogoPush()){
-        toast('Catálogo actualizado: '+n.tipos.length+' tipo(s) y '+n.pisos.length+' piso(s).');
+        toast('Catálogo actualizado: '+alta.clientes.length+' cliente(s), '+alta.sedes.length+' sede(s), '+
+              alta.tipos.length+' tipo(s) y '+alta.pisos.length+' piso(s).',null,8000);
         logEvent('CATALOGO_DESDE_INVENTARIO',
-          'tipos: '+(n.tipos.join(', ')||'—')+' · pisos: '+(n.pisos.map(p=>p.piso+'@'+p.locId).join(', ')||'—'));
+          'clientes: '+(alta.clientes.map(c=>c.id).join(', ')||'—')+' · sedes: '+(alta.sedes.map(x=>x.id+'='+x.nombre).join(', ')||'—')+
+          ' · tipos: '+(alta.tipos.join(', ')||'—')+' · pisos: '+(alta.pisos.map(p=>p.piso+'@'+p.locId).join(', ')||'—'));
       }
     }catch(e){ toast('El inventario se guardó, pero el catálogo no: '+e.message,'err',10000); }
   }
+  S.inv=S.inv.map(e=>{ const o=normEquipo(e); delete o.localidadNombre; return o; });
   invConfirmado(); poblarCatalogosUI(); renderInv(); renderCat();
   return true;
 }
@@ -2887,8 +3084,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   COLS_HIST:COLS_HIST,COLS_DISP:COLS_DISP,eqNorm:eqNorm,eqLabel:eqLabel,eqClave:eqClave,moverFila:moverFila,equiposDe:equiposDe,
   normEquipo:normEquipo,clienteDeEquipo:clienteDeEquipo,invFiltrado:invFiltrado,invVisible:invVisible,
   puedeEditarInventario:puedeEditarInventario,opciones:opciones,
-  nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,
+  nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,modalNuevos:modalNuevos,
   locLabel:locLabel,pisosDeSede:pisosDeSede,CAMPOS_BULK:CAMPOS_BULK,
+  mapearColumnas:mapearColumnas,SINONIMOS:SINONIMOS,
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice()};
 </script>
