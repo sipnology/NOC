@@ -282,14 +282,16 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         </div>
         <div class="note" style="margin:6px 0 0">En un stack los miembros comparten hostname y modelo: el <b>número de serie</b> identifica al equipo exacto.</div>
       </div>
-      <div class="f"><label>Colaterales afectados</label>
+      <div class="f"><label>Colaterales afectados <span class="req">*</span></label>
         <div class="row" style="gap:6px">
           <select id="tColTipo" style="flex:1"></select>
           <input id="tColCant" type="text" inputmode="numeric" value="1" style="width:80px;text-align:center" title="Cantidad">
           <button class="btn sec" id="btnColAdd" type="button">+</button>
         </div>
         <div class="chips" id="tColaterales"></div>
-        <textarea id="tColNota" placeholder="Detalle de la afectación colateral (opcional)"></textarea>
+        <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted);margin-top:6px">
+          <input type="checkbox" id="tSinCol" style="width:auto"> Sin afectación colateral</label>
+        <textarea id="tColNota" placeholder="Detalle de la afectación colateral"></textarea>
       </div>
     </div>
     <hr class="sep">
@@ -522,19 +524,19 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <div class="grid">
           <div class="f"><label>Nuevo status <span class="req">*</span></label>
             <select id="sStatus"><option value="">— sin cambio —</option><option>EN ESPERA</option><option>CERRADO</option></select></div>
-          <div class="f"><label>Imputable</label><select id="sImputable"></select></div>
-          <div class="f"><label>Fecha de restablecimiento</label><input type="date" id="sFecRes"></div>
-          <div class="f"><label>Hora de restablecimiento</label>
+          <div class="f"><label>Imputable a <span class="req">*</span></label><select id="sImputable"></select></div>
+          <div class="f"><label>Fecha de restablecimiento <span class="req">*</span></label><input type="date" id="sFecRes"></div>
+          <div class="f"><label>Hora de restablecimiento <span class="req">*</span></label>
             <div class="row" style="gap:6px"><input id="sHoraRes" placeholder="hh:mm:ss" style="flex:1">
             <select id="sAmPmRes" style="width:78px"><option>AM</option><option>PM</option></select></div></div>
-          <div class="f"><label>Fecha de cierre</label><input type="date" id="sFecCie"></div>
-          <div class="f"><label>Hora de cierre</label>
+          <div class="f"><label>Fecha de cierre <span class="req">*</span></label><input type="date" id="sFecCie"></div>
+          <div class="f"><label>Hora de cierre <span class="req">*</span></label>
             <div class="row" style="gap:6px"><input id="sHoraCie" placeholder="hh:mm:ss" style="flex:1">
             <select id="sAmPmCie" style="width:78px"><option>AM</option><option>PM</option></select></div></div>
           <div class="f"><label>Tiempo de falla/incidente (hh:mm:ss)</label>
             <input id="sTFalla" readonly title="Calculado: cierre − apertura"></div>
-          <div class="f"><label>Tiempo de afectación (hh:mm:ss)</label>
-            <input id="sTAfect" placeholder="0:00:00" title="Restablecimiento − apertura (editable)"></div>
+          <div class="f"><label>Tiempo de afectación (hh:mm:ss) <span class="req">*</span></label>
+            <input id="sTAfect" placeholder="0:00:00" title="Restablecimiento − apertura (editable). Usa 0:00:00 si no hubo afectación."></div>
           <div class="f"><label>Responsable del cierre</label><input id="sRespCi" readonly></div>
           <div class="f"><label>Ticket del cliente (CRQ / INC)</label><input id="sCrq" placeholder="CRQ000000123456"></div>
         </div>
@@ -549,6 +551,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
           </div>
           <div class="rte" id="sNota" contenteditable="true"></div>
         </div>
+        <div class="f" style="margin-top:12px"><label>Observaciones <span class="req">*</span></label>
+          <textarea id="sObserv" placeholder="Conclusión, causa raíz o comentario de cierre"></textarea></div>
+        <div class="note" id="sReqNota">Para <b>cerrar</b> el ticket son obligatorios: restablecimiento (fecha y hora),
+          cierre (fecha y hora), tiempo de afectación, imputable, notas y observaciones.</div>
         <div class="f" style="margin-top:12px"><label>Evidencias / Archivos</label>
           <div class="drop" id="sDrop">Arrastra archivos aquí o haz clic para seleccionar</div>
           <input type="file" id="sFiles" multiple class="hide">
@@ -650,7 +656,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r12';
+const APP_VER = '2026-08-10 · r13';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -963,7 +969,7 @@ function idxEntry(t){
     series:(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean), colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
     fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
-    imputable:t.imputable, respAp:t.respAp, respCi:t.respCi, status:t.status,
+    imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respCi:t.respCi, status:t.status,
     crq:t.crq, ruta:t.ruta, actualizado:t.actualizado};
 }
 async function idxPull(silent){
@@ -1328,7 +1334,8 @@ function limpiarApertura(){
   fillSel('#tLocalidad',[],'— selecciona —');
   fillSel('#tSubcategoria',[],'— selecciona —'); fillSel('#tTipo',[],'— selecciona —');
   msSet('#tPiso',[],[]); msSet('#tEquipoMS',[],[]); msDisabled('#tEquipoMS',true);
-  _equipos=[]; _colaterales=[]; S.filesNew=[]; renderChips(); renderFiles('#tFileList','filesNew');
+  _equipos=[]; _colaterales=[]; S.filesNew=[]; $('#tSinCol').checked=false;
+  renderChips(); renderFiles('#tFileList','filesNew');
   $('#tDesc').innerHTML=''; ahora(); calcFolio();
 }
 function ahora(){
@@ -1341,6 +1348,9 @@ function validarApertura(){
   for(const [id,lbl] of req){ if(!$('#'+id).value){ toast('Falta: '+lbl,'err'); $('#'+id).focus(); return null; } }
   if(!msVal('#tPiso').length){ toast('Selecciona al menos un piso.','err'); return null; }
   if(!_equipos.length){ toast('Agrega al menos un equipo afectado.','err'); return null; }
+  if(!_colaterales.length && !$('#tSinCol').checked){
+    toast('Indica los colaterales afectados o marca «Sin afectación colateral».','err',7000);
+    $('#tColTipo').focus(); return null; }
   const h24=to24($('#tHora').value,$('#tAmPm').value);
   if(!h24){ toast('Hora de apertura inválida. Usa hh:mm:ss en formato 12 h.','err'); return null; }
   return h24;
@@ -1363,7 +1373,8 @@ async function crearTicket(){
       pisos:msVal('#tPiso'), piso:msVal('#tPiso').join(', '),
       categoria:$('#tCategoria').value, subcategoria:$('#tSubcategoria').value, tipo:$('#tTipo').value,
       prioridad:$('#tPrioridad').value, slaHoras:slaHoras($('#tPrioridad').value),
-      equipos:_equipos.slice(), colaterales:_colaterales.slice(), colateralNota:$('#tColNota').value,
+      equipos:_equipos.slice(), colaterales:_colaterales.slice(),
+      sinColaterales:!_colaterales.length&&$('#tSinCol').checked, colateralNota:$('#tColNota').value,
       fechaAp:fecha, horaAp:h24, respAp:S.me.name||S.me.mail, respApMail:S.me.mail,
       status:'ABIERTO', imputable:'', fechaRes:'', horaRes:'', fechaCie:'', horaCie:'',
       tFalla:'', tAfect:'', respCi:'', respCiMail:'', crq:'',
@@ -1516,7 +1527,8 @@ function pintarTicket(t){
     campo('Piso(s)',(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso)),
     campo('Categoría',t.categoria),campo('Subcategoría',t.subcategoria),campo('Tipo de incidente',t.tipo),
     campo('Prioridad',t.prioridad),campo('Equipo(s)',(t.equipos||[]).map(eqLabel).join(', ')),
-    campo('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', ')),
+    campo('Colaterales',(t.colaterales||[]).length? t.colaterales.map(c=>c.tipo+' × '+c.cant).join(', ')
+      : (t.sinColaterales?'Sin afectación colateral':'')),
     campo('Fecha de apertura',fechaHumana(t.fechaAp)),campo('Hora de apertura',from24(t.horaAp).t+' '+from24(t.horaAp).ap),
     campo('Responsable de apertura',t.respAp)
   ].join('');
@@ -1532,12 +1544,15 @@ function pintarTicket(t){
   $('#sFecCie').value=t.fechaCie||''; const hc=from24(t.horaCie); $('#sHoraCie').value=hc.t; $('#sAmPmCie').value=hc.ap;
   $('#sTFalla').value=t.tFalla||''; $('#sTAfect').value=t.tAfect||'';
   $('#sRespCi').value=t.respCi||(cerrado?'':S.me.name||S.me.mail);
-  $('#sNota').innerHTML=''; S.filesSeg=[]; renderFiles('#sFileList','filesSeg');
+  $('#sNota').innerHTML=''; $('#sObserv').value=t.observaciones||'';
+  S.filesSeg=[]; renderFiles('#sFileList','filesSeg');
   // historial
   $('#mHist').innerHTML=(t.historial||[]).slice().reverse().map(h=>{
     const d=new Date(h.cuando);
     return '<div class="it"><div class="mt">'+esc(todayISO(d)+' '+hora12(d).t+' '+hora12(d).ap)+' · <b>'+esc(h.usuario)+'</b> · '+esc(h.accion)+
       (h.status?' → '+esc(h.status):'')+'</div><div class="bd">'+sanitizeHtml(h.nota||'<i>(sin nota)</i>')+
+      (h.observaciones?'<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">'+
+        '<span style="font-size:11px;color:var(--muted);font-weight:700">OBSERVACIONES</span><br>'+esc(h.observaciones)+'</div>':'')+
       ((h.archivos||[]).length?'<div class="files" style="margin-top:8px">'+h.archivos.map(a=>'<span class="file"><span class="ic">'+iconOf(a)+'</span>'+esc(a)+'</span>').join('')+'</div>':'')+
       '</div></div>';
   }).join('')||'<div class="it"><div class="bd">Sin movimientos.</div></div>';
@@ -1571,9 +1586,28 @@ async function guardarSeguimiento(){
   const notaHtml=sanitizeHtml($('#sNota').innerHTML);
   if(!notaHtml.replace(/<[^>]*>/g,'').trim() && !S.filesSeg.length){
     toast('Escribe una nota de actividad o adjunta evidencia.','err'); return; }
+  const observ=$('#sObserv').value.trim();
   if(nuevo==='CERRADO'){
-    if(!$('#sFecCie').value||!to24($('#sHoraCie').value,$('#sAmPmCie').value)){ toast('Para cerrar, indica fecha y hora de cierre.','err'); return; }
-    if(!$('#sImputable').value){ toast('Para cerrar, indica el imputable.','err'); return; }
+    const falta=[];
+    if(!$('#sFecRes').value) falta.push('fecha de restablecimiento');
+    if(!to24($('#sHoraRes').value,$('#sAmPmRes').value)) falta.push('hora de restablecimiento');
+    if(!$('#sFecCie').value) falta.push('fecha de cierre');
+    if(!to24($('#sHoraCie').value,$('#sAmPmCie').value)) falta.push('hora de cierre');
+    if(!$('#sImputable').value) falta.push('imputable');
+    if(!observ) falta.push('observaciones');
+    if(falta.length){ toast('Para cerrar falta: '+falta.join(', ')+'.','err',9000); return; }
+    recalcTiempos();
+    if(!hmsToMs($('#sTFalla').value)&&$('#sTFalla').value!=='0:00:00'){
+      toast('El tiempo de falla no se pudo calcular. Revisa las fechas y horas de apertura y cierre.','err',9000); return; }
+    if(hmsToMs($('#sTAfect').value)===null){
+      toast('Indica el tiempo de afectación en formato h:mm:ss. Usa 0:00:00 si no hubo afectación.','err',9000);
+      $('#sTAfect').focus(); return; }
+    const ini=dt(t.fechaAp,t.horaAp);
+    const fc=dt($('#sFecCie').value,to24($('#sHoraCie').value,$('#sAmPmCie').value));
+    const fr=dt($('#sFecRes').value,to24($('#sHoraRes').value,$('#sAmPmRes').value));
+    if(ini&&fc&&fc<ini){ toast('El cierre no puede ser anterior a la apertura.','err',8000); return; }
+    if(ini&&fr&&fr<ini){ toast('El restablecimiento no puede ser anterior a la apertura.','err',8000); return; }
+    if(fr&&fc&&fc<fr){ toast('El cierre no puede ser anterior al restablecimiento.','err',8000); return; }
   }
   const btn=$('#btnGuardarSeg'); busy(btn,true);
   try{
@@ -1591,6 +1625,7 @@ async function guardarSeguimiento(){
       t.esperaMs=(t.esperaMs||0)+(Date.now()-new Date(t.esperaDesde).getTime()); t.esperaDesde='';
     }
     t.imputable=$('#sImputable').value; t.crq=$('#sCrq').value.trim();
+    if(observ) t.observaciones=observ;
     t.fechaRes=$('#sFecRes').value; t.horaRes=to24($('#sHoraRes').value,$('#sAmPmRes').value);
     t.fechaCie=$('#sFecCie').value; t.horaCie=to24($('#sHoraCie').value,$('#sAmPmCie').value);
     recalcTiempos(); t.tFalla=$('#sTFalla').value; t.tAfect=$('#sTAfect').value;
@@ -1598,7 +1633,7 @@ async function guardarSeguimiento(){
     if(t.status==='CERRADO'){ t.respCi=S.me.name||S.me.mail; t.respCiMail=S.me.mail; }
     t.actualizado=ahoraISO;
     t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:nuevo?('CAMBIO A '+nuevo):'SEGUIMIENTO',
-      status:t.status,nota:notaHtml,archivos:nuevos});
+      status:t.status,nota:notaHtml,observaciones:observ,archivos:nuevos});
     await gPutJson(h,t.ruta+'/ticket.json',t);
     await idxUpsert(t);
     logEvent(nuevo==='CERRADO'?'TICKET_CERRADO':'TICKET_SEGUIMIENTO', t.id+' · status '+t.status);
@@ -1695,7 +1730,7 @@ const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad']
   ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['series','Número de serie'],['colaterales','Colaterales'],
   ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
   ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
-  ['imputable','Imputable'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
+  ['imputable','Imputable'],['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
 const celda=(t,k)=>Array.isArray(t[k])?t[k].join(', '):(t[k]==null?'':String(t[k]));
 
 async function exportExcel(data,nombre){
@@ -1780,7 +1815,7 @@ function correoHTML(t,fase,nota){
      fila('Restablecimiento',t.fechaRes?fechaHumana(t.fechaRes,t.horaRes):'')+
      fila('Cierre',t.fechaCie?fechaHumana(t.fechaCie,t.horaCie)+(t.respCi?' — '+t.respCi:''):'')+
      fila('Tiempo de falla',t.tFalla)+fila('Tiempo de afectación',t.tAfect)+
-     fila('Imputable',t.imputable)+fila('Ticket del cliente',t.crq)+
+     fila('Imputable',t.imputable)+fila('Observaciones',t.observaciones)+fila('Ticket del cliente',t.crq)+
    '</table>'+
    (nota?'<div style="padding:14px 20px;background:#f7fafc;border-top:1px solid #dfe7ee"><div style="color:#7d8aa8;font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:6px">NOTAS Y ACTIVIDADES</div><div style="font-size:13px;color:#16213e;line-height:1.5">'+sanitizeHtml(nota)+'</div></div>':'')+
    '<div style="padding:12px 20px;background:#0f172a;color:#93a0bd;font-size:11px">Correo generado automáticamente por el Sistema de Tickets NOC de Sipnology. No responder a esta dirección.</div>'+
@@ -2417,8 +2452,9 @@ async function analizarHistorico(file){
     const yaExiste = S.idx.some(x=>x.id===id);
     if(!yaExiste && usados.indexOf(id)!==-1){ err.push('Fila '+L+': el folio '+id+' se repite dentro del archivo.'); return; }
     usados.push(id);
-    const notas=[String(g('notasyactividades')||'').trim(),String(g('observaciones')||'').trim()]
-      .filter(Boolean).map(x=>'<p>'+esc(x)+'</p>').join('');
+    const notas=String(g('notasyactividades')||'').trim();
+    const observ=String(g('observaciones')||'').trim();
+    const descHtml=[notas,observ].filter(Boolean).map(x=>'<p>'+esc(x)+'</p>').join('');
     const hosts=String(g('equipoprincipalafectado','equipoafectado','equipos')||'')
       .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
     const series=String(g('numerosdeserieopcional','numerodeserie','nodeserie','series','serie')||'')
@@ -2449,9 +2485,9 @@ async function analizarHistorico(file){
       tAfect:String(g('tiempodeafectacion')||'').trim(),
       respCi:String(g('respolsablecierre','responsablecierre')||'').trim(), respCiMail:'',
       crq:String(g('ticketclientecrqopcional','ticketcliente','crq')||'').trim(),
-      descripcion:sanitizeHtml(notas), adjuntos:[], importado:true, yaExiste:yaExiste,
+      descripcion:sanitizeHtml(descHtml), observaciones:observ, adjuntos:[], importado:true, yaExiste:yaExiste,
       historial:[{cuando:new Date().toISOString(),usuario:S.me.mail,accion:'IMPORTADO DEL HISTÓRICO',
-        status:st,nota:sanitizeHtml(notas)||'<i>(sin notas)</i>',archivos:[]}],
+        status:st,nota:sanitizeHtml(descHtml)||'<i>(sin notas)</i>',observaciones:observ,archivos:[]}],
       creado:new Date().toISOString(), actualizado:new Date().toISOString()
     });
   });
