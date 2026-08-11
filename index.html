@@ -225,9 +225,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 
 <!-- ============ HEADER ============ -->
 <header class="top hide" id="topBar">
-  <div class="logo" style="margin:0"><div class="mark">S</div>
-    <div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div>
-    <div id="verTop" style="font-size:10px;color:var(--muted);letter-spacing:.3px"></div></div></div>
+  <div class="logo" style="margin:0"><div class="mark">S</div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div></div>
   <nav class="tabs" id="tabs">
     <button data-v="vApertura" class="on">Apertura de ticket</button>
     <button data-v="vSeguimiento">Seguimiento</button>
@@ -639,7 +637,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r10';
+const APP_VER = '2026-08-10 · r11';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2730,11 +2728,17 @@ function poblarFiltrosInv(){
   fillSel('#iTipo',opciones(base,e=>e.tipo),'Todos',guarda.iTipo);
   fillSel('#iModelo',opciones(base,e=>e.modelo),'Todos',guarda.iModelo);
   fillSel('#iLoc',opciones(base,e=>e.localidadId).map(id=>({v:id,t:locLabel(id)})),'Todas',guarda.iLoc);
-  /* El piso solo ofrece los de la sede elegida; sin sede, los de todo el cliente. */
-  const loc=$('#iLoc').value;
-  const pisos = loc ? pisosDeSede(loc).filter(x=>base.some(e=>e.localidadId===loc&&e.piso===x))
-                    : opciones(base,e=>e.piso);
-  fillSel('#iPiso',pisos,'Todos',pisos.indexOf(guarda.iPiso)!==-1?guarda.iPiso:'');
+  /* El piso depende de la localidad: sin sede elegida no tiene sentido ofrecer pisos
+     de edificios distintos, así que el campo queda deshabilitado. */
+  const loc=$('#iLoc').value, selPiso=$('#iPiso');
+  if(!loc){
+    fillSel(selPiso,[],'Selecciona una localidad');
+    selPiso.disabled=true;
+  }else{
+    const pisos=pisosDeSede(loc).filter(x=>base.some(e=>e.localidadId===loc&&e.piso===x));
+    fillSel(selPiso,pisos,'Todos los pisos',pisos.indexOf(guarda.iPiso)!==-1?guarda.iPiso:'');
+    selPiso.disabled=false;
+  }
   fillSel('#iFw',opciones(base,e=>e.firmware),'Todas',guarda.iFw);
 }
 function renderInv(){
@@ -3041,7 +3045,10 @@ function enlazarEventos(){
     ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>{ const el=$('#'+id); if(el) el.selectedIndex=0; });
     $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value=''; renderInv(); };
   ['iHost','iSerie','iBuscar'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
-  ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
+  ['iTipo','iModelo','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
+  $('#iPiso').onchange=()=>{ _invPage=1; renderInv(); };
+  /* Al cambiar de localidad se limpia el piso: los de la sede anterior ya no aplican. */
+  $('#iLoc').onchange=()=>{ $('#iPiso').value=''; _invPage=1; limpiarSeleccion(); renderInv(); };
   $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value='';
     ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
   $('#iRefrescar').onclick=async function(){
@@ -3066,9 +3073,9 @@ window.addEventListener('beforeunload',function(e){
   if(invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
 });
 window.addEventListener('DOMContentLoaded',function(){
-  const v1=$('#verGate'), v2=$('#verTop');
-  if(v1) v1.textContent='versión '+APP_VER;
-  if(v2) v2.textContent='v '+APP_VER;
+  /* La versión solo se muestra en la pantalla de acceso: sirve para verificar qué
+     archivo está publicado sin ensuciar el encabezado de trabajo. */
+  const v1=$('#verGate'); if(v1) v1.textContent='versión '+APP_VER;
   ahora(); enlazarEventos();
   initAuthGate();
   setInterval(()=>{ if(S.idx.length) alertasSLA(); }, 15*60*1000);   // recordatorio de SLA cada 15 min
