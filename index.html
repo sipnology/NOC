@@ -580,10 +580,13 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div id="repModulos" class="grid g2"></div>
     <hr class="sep">
     <div class="frow c4">
+      <div class="f"><label>Localidad(es)</label><div class="ms" id="repLocs"></div></div>
       <div class="f"><label>Periodo desde</label><input type="date" id="repF1"></div>
       <div class="f"><label>Periodo hasta</label><input type="date" id="repF2"></div>
       <div class="f"><label>Título del reporte</label><input id="repTitulo" placeholder="Reporte mensual"></div>
-      <div class="f"><label>Comentario de portada</label><input id="repNota" placeholder="Opcional"></div>
+    </div>
+    <div class="frow c4">
+      <div class="f" style="grid-column:1/-1"><label>Comentario de portada</label><input id="repNota" placeholder="Opcional"></div>
     </div>
     <div class="row" style="margin-top:4px">
       <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
@@ -591,8 +594,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
         <input type="checkbox" id="repResumen" checked style="width:auto"> Incluir hoja de resumen en el Excel</label>
     </div>
-    <div class="note">El periodo filtra por fecha de apertura en tickets, fecha de inicio en CRQs y vencimiento
-      en SITs. El inventario no tiene fecha, así que se incluye completo.</div>
+    <div class="note">Sin localidades seleccionadas se incluyen todas. El periodo filtra por fecha de apertura
+      en tickets, fecha de inicio en CRQs y vencimiento en SITs; el inventario no tiene fecha, así que va completo.
+      <b>Ojo:</b> al filtrar por localidad, los CRQs y SITs que no tengan sede asignada quedan fuera.</div>
   </div>
 
   <div class="panel">
@@ -825,7 +829,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-11 · r22 reportes';
+const APP_VER = '2026-08-11 · r23';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2478,7 +2482,34 @@ function enlazarSelectoresTipo(cont,alCambiar){
 }
 
 /* ---------------------- 17. EXPORTACIÓN ---------------------- */
-/* ---- Marca en los entregables ---- */
+/* ---- Marca en los entregables ----
+   La cabecera lleva únicamente lo necesario: logo del operador, tipo de reporte,
+   fecha de generación y logo del cliente. El cliente se identifica por su logo. */
+function cabeceraPdf(doc,W,titulo,logoOp,logoCli,alto){
+  const h=alto||58;
+  doc.setFillColor(15,23,42); doc.rect(0,0,W,h,'F');
+  const hl=h>=58?20:18, cy=h/2;
+  let x=30;
+  if(logoOp){ const m=medirPng(logoOp), w=hl*m.w/m.h;
+    try{ doc.addImage(logoOp,'PNG',x,cy-hl/2,w,hl,'lo','FAST'); x+=w+16; }catch(e){} }
+  doc.setTextColor(255); doc.setFontSize(h>=58?12.5:11.5);
+  doc.text(String(titulo||''),x,cy+4);
+  let xr=W-30;
+  if(logoCli){ const m=medirPng(logoCli), w=hl*m.w/m.h;
+    try{ doc.addImage(logoCli,'PNG',xr-w,cy-hl/2,w,hl,'lc','FAST'); xr-=w+16; }catch(e){} }
+  doc.setFontSize(8.5); doc.setTextColor(190,202,220);
+  doc.text(fechaHumana(todayISO()),xr,cy+4,{align:'right'});
+}
+function pieDePagina(doc,W,H,titulo,margen){
+  const total=doc.internal.getNumberOfPages();
+  for(let i=1;i<=total;i++){
+    doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(130,140,155);
+    doc.text(String(titulo||''),margen,H-14);
+    doc.text(i+' / '+total,W-margen,H-14,{align:'right'});
+  }
+  return total;
+}
+/* ---- Datos de apoyo ---- */
 function nombreCliente(id){
   const c=((S.cat&&S.cat.clientes)||[]).find(x=>x.id===(id||S.cliente));
   return c? c.nombre : (id||S.cliente||'Todos los clientes');
@@ -2494,7 +2525,8 @@ function medirPng(dataUrl){
     return {w:w,h:h};
   }catch(e){ return {w:300,h:90}; }
 }
-/* Inserta la banda de marca en una hoja y devuelve la fila donde va el encabezado. */
+/* Inserta la banda de marca en una hoja y devuelve la fila donde va el encabezado.
+   Solo lleva lo esencial: los dos logos, el tipo de reporte y la fecha. */
 async function bandaMarcaXlsx(wb,ws,titulo,nCols){
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
   const alto=logoOp||logoCli?3:2;
@@ -2506,8 +2538,9 @@ async function bandaMarcaXlsx(wb,ws,titulo,nCols){
   c.font={bold:true,size:12,color:{argb:'FF0F172A'}};
   c.alignment={vertical:'middle',horizontal:'left',indent:logoOp?14:1};
   const c2=ws.getCell(2,1);
-  c2.value='Cliente: '+nombreCliente()+'   ·   Generado: '+fechaHumana(todayISO())+'   ·   '+S.me.mail;
+  c2.value=fechaHumana(todayISO());
   c2.font={size:9,color:{argb:'FF5F6B7F'}};
+  c2.alignment={horizontal:'left',indent:logoOp?14:1};
   try{
     if(logoOp){ const d=medirPng(logoOp);
       const id=wb.addImage({base64:logoOp.split(',')[1],extension:'png'});
@@ -2579,20 +2612,7 @@ async function exportPDF(data,nombre,conGraficas){
   const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4',compress:true});
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight();
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
-  const cabecera=()=>{
-    doc.setFillColor(15,23,42); doc.rect(0,0,W,58,'F');
-    let x=30;
-    if(logoOp){ const d=medirPng(logoOp), h=20, w=h*d.w/d.h;
-      try{ doc.addImage(logoOp,'PNG',x,10,w,h,'logoOp','FAST'); x+=w+14; }catch(e){} }
-    doc.setTextColor(233,102,45); doc.setFontSize(15); doc.text('SIPNOLOGY',x,25);
-    doc.setTextColor(255); doc.setFontSize(10); doc.text('Sistema de Tickets NOC · '+nombre,x,42);
-    let xr=W-30;
-    if(logoCli){ const d=medirPng(logoCli), h=20, w=h*d.w/d.h;
-      try{ doc.addImage(logoCli,'PNG',xr-w,10,w,h,'logoCli','FAST'); xr-=w+14; }catch(e){} }
-    doc.setFontSize(8.5); doc.setTextColor(200,210,225);
-    doc.text('Cliente: '+nombreCliente(),xr,25,{align:'right'});
-    doc.text('Generado: '+fechaHumana(todayISO())+'  ·  '+S.me.mail+'  ·  '+data.length+' registro(s)',xr,42,{align:'right'});
-  };
+  const cabecera=()=>cabeceraPdf(doc,W,nombre,logoOp,logoCli);
   cabecera();
   let y=76;
   if(conGraficas){
@@ -2622,11 +2642,7 @@ async function exportPDF(data,nombre,conGraficas){
     });
   }
   const total=doc.internal.getNumberOfPages();
-  for(let i=1;i<=total;i++){
-    doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(130,140,155);
-    doc.text('Sipnology · Sistema de Tickets NOC   ·   '+nombreCliente(),30,H-14);
-    doc.text(i+' / '+total,W-30,H-14,{align:'right'});
-  }
+  pieDePagina(doc,W,H,nombre,30);
   const blob=doc.output('blob');
   bajar(blob,nombre.replace(/[^\w\-]+/g,'_')+'.pdf');
   const peso=pesoLegible(blob.size);
@@ -4394,19 +4410,25 @@ const MODS_REP=[
   {k:'sit',       t:'SITs',       cols:()=>DATASETS.sit.cols.map(c=>[c.k,c.t]), datos:d=>repDataset(DATASETS.sit,d)}
 ];
 function modsDisponibles(){ return MODS_REP.filter(m=>moduloActivo(m.k)); }
+const enLocs=(d,id)=>!d.locs||!d.locs.length||d.locs.indexOf(id)!==-1;
 function repTickets(d){
   return S.idx.filter(t=>{
+    if(!enLocs(d,t.localidadId)) return false;
     if(d.f1&&(!t.fechaAp||t.fechaAp<d.f1)) return false;
     if(d.f2&&(!t.fechaAp||t.fechaAp>d.f2)) return false;
     return true;
   }).sort((a,b)=>String(b.fechaAp+b.horaAp).localeCompare(String(a.fechaAp+a.horaAp)));
 }
-function repInventario(){ return invVisible().filter(e=>!S.cliente||clienteDeEquipo(e)===S.cliente); }
+function repInventario(d){
+  return invVisible().filter(e=>(!S.cliente||clienteDeEquipo(e)===S.cliente)&&enLocs(d||{},e.localidadId));
+}
 function repDataset(ds,d){
   return dsLista(ds).filter(r=>{
     const base=ds.k==='crq'? r.origen.fechaIni : r.origen.vence;
     if(d.f1&&(!base||base<d.f1)) return false;
     if(d.f2&&(!base||base>d.f2)) return false;
+    /* Un CRQ o SIT sin sede anotada no puede afirmarse de ninguna localidad: al filtrar, queda fuera. */
+    if(d.locs&&d.locs.length&&!(r.sip.sedes||[]).some(x=>d.locs.indexOf(x)!==-1)) return false;
     return true;
   });
 }
@@ -4429,7 +4451,7 @@ function repDefUI(){
     mods[k]={cols:sel? msVal(sel):null};
   });
   return {nombre:$('#repPlantilla').value||'', titulo:$('#repTitulo').value.trim()||'Reporte',
-    nota:$('#repNota').value.trim(), f1:$('#repF1').value, f2:$('#repF2').value,
+    nota:$('#repNota').value.trim(), f1:$('#repF1').value, f2:$('#repF2').value, locs:msVal('#repLocs'),
     graficas:$('#repGraficas').checked, resumen:$('#repResumen').checked,
     formato:$('#repFormato').value, archivos:$('#repArchivos').value,
     destino:$('#repDestino').value, para:$('#repPara').value, mods:mods};
@@ -4441,7 +4463,14 @@ function repAplicarUI(d){
   $('#repGraficas').checked=d.graficas!==false; $('#repResumen').checked=d.resumen!==false;
   $('#repFormato').value=d.formato||'pdf'; $('#repArchivos').value=d.archivos||'uno';
   $('#repDestino').value=d.destino||'descargar'; $('#repPara').value=d.para||'';
+  pintarLocsReporte(d.locs||[]);
   renderRepModulos(d.mods||{});
+}
+function pintarLocsReporte(sel){
+  const el=$('#repLocs'); if(!el) return;
+  if(!el._ms) msInit(el,'Todas las localidades',()=>{});
+  const locs=(S.cat.localidades||[]).filter(l=>!S.cliente||!l.clienteId||l.clienteId===S.cliente);
+  msSet(el,locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),sel||[]);
 }
 function renderRepModulos(sel){
   const cont=$('#repModulos'); if(!cont) return;
@@ -4532,18 +4561,7 @@ async function repPDF(d,bloques,nombre){
   const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4',compress:true});
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight();
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
-  const cabecera=sub=>{
-    doc.setFillColor(15,23,42); doc.rect(0,0,W,58,'F');
-    let x=30;
-    if(logoOp){ const m=medirPng(logoOp), h=20; try{ doc.addImage(logoOp,'PNG',x,10,h*m.w/m.h,h,'lo','FAST'); x+=h*m.w/m.h+14; }catch(e){} }
-    doc.setTextColor(233,102,45); doc.setFontSize(15); doc.text('SIPNOLOGY',x,25);
-    doc.setTextColor(255); doc.setFontSize(10); doc.text(d.titulo+(sub?' · '+sub:''),x,42);
-    let xr=W-30;
-    if(logoCli){ const m=medirPng(logoCli), h=20; try{ doc.addImage(logoCli,'PNG',xr-h*m.w/m.h,10,h*m.w/m.h,h,'lc','FAST'); xr-=h*m.w/m.h+14; }catch(e){} }
-    doc.setFontSize(8.5); doc.setTextColor(200,210,225);
-    doc.text('Cliente: '+nombreCliente(),xr,25,{align:'right'});
-    doc.text('Generado: '+fechaHumana(todayISO())+'  ·  '+S.me.mail,xr,42,{align:'right'});
-  };
+  const cabecera=sub=>cabeceraPdf(doc,W,d.titulo+(sub?' · '+sub:''),logoOp,logoCli);
   cabecera('Portada');
   let y=88;
   doc.setTextColor(30); doc.setFontSize(13);
@@ -4581,10 +4599,7 @@ async function repPDF(d,bloques,nombre){
       body:b.filas.map(r=>{ const f=repFilaPlana(b.m,r); return b.cols.map(f); }),
       didDrawPage:pg=>{ if(pg.pageNumber>1) cabecera(b.m.t); }});
   }
-  const total=doc.internal.getNumberOfPages();
-  for(let i=1;i<=total;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(130,140,155);
-    doc.text('Sipnology · Sistema de Tickets NOC   ·   '+nombreCliente(),30,H-14);
-    doc.text(i+' / '+total,W-30,H-14,{align:'right'}); }
+  const total=pieDePagina(doc,W,H,d.titulo,30);
   return {blob:doc.output('blob'),nombre:nombre+'.pdf',paginas:total};
 }
 
@@ -4599,18 +4614,7 @@ async function fichaTicket(id){
   const doc=new jsPDF({orientation:'portrait',unit:'pt',format:'a4',compress:true});
   const W=doc.internal.pageSize.getWidth(), H2=doc.internal.pageSize.getHeight();
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=logoDe(t.clienteId);
-  const cab=()=>{
-    doc.setFillColor(15,23,42); doc.rect(0,0,W,54,'F');
-    let x=28;
-    if(logoOp){ const m=medirPng(logoOp),hh=18; try{ doc.addImage(logoOp,'PNG',x,10,hh*m.w/m.h,hh,'lo','FAST'); x+=hh*m.w/m.h+12; }catch(er){} }
-    doc.setTextColor(233,102,45); doc.setFontSize(13); doc.text('SIPNOLOGY',x,24);
-    doc.setTextColor(255); doc.setFontSize(9.5); doc.text('Ficha de ticket · '+t.id,x,40);
-    let xr=W-28;
-    if(logoCli){ const m=medirPng(logoCli),hh=18; try{ doc.addImage(logoCli,'PNG',xr-hh*m.w/m.h,10,hh*m.w/m.h,hh,'lc','FAST'); xr-=hh*m.w/m.h+12; }catch(er){} }
-    doc.setFontSize(8); doc.setTextColor(200,210,225);
-    doc.text(nombreCliente(t.clienteId),xr,24,{align:'right'});
-    doc.text('Generado: '+fechaHumana(todayISO()),xr,40,{align:'right'});
-  };
+  const cab=()=>cabeceraPdf(doc,W,'Ficha de ticket · '+t.id,logoOp,logoCli,54);
   cab();
   const sla=slaInfo(t);
   const pisos=(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso)||'';
@@ -4677,10 +4681,7 @@ async function fichaTicket(id){
         return [a.nombre,kb(a.tam||0),a.fase||'',a.por||'',isNaN(f)?'':todayISO(f)]; }),
       didDrawPage:pg=>{ if(pg.pageNumber>1) cab(); }});
   }
-  const total=doc.internal.getNumberOfPages();
-  for(let i=1;i<=total;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(130,140,155);
-    doc.text('Ficha de '+t.id+'   ·   Sipnology · Sistema de Tickets NOC',34,H2-14);
-    doc.text(i+' / '+total,W-34,H2-14,{align:'right'}); }
+  const total=pieDePagina(doc,W,H2,'Ficha de ticket · '+t.id,34);
   return {blob:doc.output('blob'),nombre:'Ficha_'+sanitizeName(t.id)+'.pdf',ticket:t,paginas:total};
 }
 
@@ -4729,6 +4730,7 @@ function renderReportes(){
   const puede=S.role!=='cliente';
   ['repGuardar','repGuardarComo','repBorrar'].forEach(id=>{ const b=$('#'+id); if(b) b.disabled=!puede||!S.cliente; });
   if(!$('#repModulos').innerHTML) renderRepModulos(null);
+  pintarLocsReporte(msVal('#repLocs'));
   pintarPlantillas();
 }
 async function generarReporte(){
@@ -5022,8 +5024,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
   colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
+  cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
-  repFilaPlana:repFilaPlana,pRep:pRep,
+  repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
   idDesdeNombre:idDesdeNombre,cliBloqueado:cliBloqueado,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
   dsFiltrar:dsFiltrar,dsEst:dsEst,dsNormRegistro:dsNormRegistro,textoPlano:textoPlano};
 </script>
