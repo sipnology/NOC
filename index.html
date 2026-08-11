@@ -57,6 +57,52 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--brand2);outline-
 input[readonly],input:disabled,select:disabled,textarea:disabled{opacity:.65;cursor:not-allowed}
 textarea{min-height:80px;resize:vertical}
 select[multiple]{min-height:120px}
+/* Sin spinner ni rueda del mouse en los campos numéricos */
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+/* ---------- Menú desplegable con casillas ---------- */
+.ms{position:relative}
+.ms-btn{width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+ border-radius:8px;padding:8px 28px 8px 10px;font:inherit;font-size:13px;cursor:pointer;min-height:35px;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-btn:after{content:"▾";position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:11px}
+.ms-btn.ph{color:var(--muted)}
+.ms-btn:disabled{opacity:.65;cursor:not-allowed}
+.ms.on .ms-btn{outline:2px solid var(--brand2);outline-offset:-1px}
+.ms-pop{display:none;position:absolute;z-index:120;left:0;right:0;top:calc(100% + 4px);background:var(--panel);
+ border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh);padding:8px;min-width:260px}
+.ms.on .ms-pop{display:block}
+.ms-q{margin-bottom:6px}
+.ms-tools{display:flex;gap:6px;margin-bottom:6px}
+.ms-tools button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:6px;
+ padding:4px 6px;font-size:11px;cursor:pointer}
+.ms-tools button:hover{color:var(--txt)}
+.ms-list{max-height:240px;overflow:auto}
+.ms-item{display:flex;gap:9px;align-items:flex-start;padding:6px 7px;border-radius:6px;cursor:pointer;font-size:12.5px}
+.ms-item:hover{background:var(--panel2)}
+.ms-item input{width:auto;margin:2px 0 0;flex:0 0 auto;accent-color:var(--brand2)}
+.ms-item .l1{font-weight:600}
+.ms-item .l2{color:var(--muted);font-size:11.5px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.ms-item.dis{opacity:.45;cursor:not-allowed}
+.ms-vacio{color:var(--muted);font-size:12px;padding:10px;text-align:center}
+/* ---------- Filas de filtros con número fijo de columnas ---------- */
+.frow{display:grid;gap:12px;margin-bottom:12px}
+.frow.c5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.frow.c4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1100px){.frow.c5,.frow.c4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.frow.c5,.frow.c4{grid-template-columns:1fr}}
+.rango{display:flex;gap:6px;align-items:center}
+.rango span{color:var(--muted);font-size:11px}
+/* ---------- Reordenar filas de catálogo ---------- */
+.grip{cursor:grab;color:var(--muted);user-select:none;font-size:15px;line-height:1;padding:0 4px;text-align:center}
+.grip:active{cursor:grabbing}
+tr.arrastrando{opacity:.4}
+tr.destino td{border-top:2px dashed var(--brand)}
+.ord{display:flex;gap:2px}
+.ord button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:5px;
+ width:22px;height:22px;cursor:pointer;font-size:10px;line-height:1;padding:0}
+.ord button:hover:not(:disabled){color:var(--txt);border-color:var(--brand2)}
+.ord button:disabled{opacity:.3;cursor:not-allowed}
 .btn{background:var(--brand2);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
  cursor:pointer;font-size:13px}
 .btn:hover{filter:brightness(1.08)}
@@ -167,6 +213,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <button data-v="vApertura" class="on">Apertura de ticket</button>
     <button data-v="vSeguimiento">Seguimiento</button>
     <button data-v="vEstado">Estado / Dashboard</button>
+    <button data-v="vInventario">Inventario</button>
     <button data-v="vCatalogos" id="tabCat">Catálogos</button>
     <button data-v="vBitacora" id="tabBit">Bitácora</button>
   </nav>
@@ -185,7 +232,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <input id="tId" readonly placeholder="Se genera automáticamente"></div>
       <div class="f"><label>Cliente <span class="req">*</span></label><select id="tCliente"></select></div>
       <div class="f"><label>Localidad / Sede <span class="req">*</span></label><select id="tLocalidad"></select></div>
-      <div class="f"><label>Piso <span class="req">*</span></label><select id="tPiso"></select></div>
+      <div class="f"><label>Piso(s) <span class="req">*</span></label><div class="ms" id="tPiso"></div></div>
     </div>
     <hr class="sep">
     <div class="grid">
@@ -197,20 +244,19 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <hr class="sep">
     <div class="grid g2">
       <div class="f"><label>Equipo principal afectado <span class="req">*</span></label>
-        <div class="row" style="gap:6px">
-          <select id="tEquipoSel" style="flex:1"></select>
-          <button class="btn sec" id="btnEqAdd" type="button" title="Agregar equipo seleccionado">+</button>
-        </div>
+        <div class="ms" id="tEquipoMS"></div>
         <div class="chips" id="tEquipos"></div>
         <div class="row" style="gap:6px;margin-top:6px">
           <input id="tEqLibre" placeholder="Hostname manual (si no está en catálogo)" style="flex:1">
+          <input id="tSerieLibre" placeholder="No. de serie" style="flex:1">
           <button class="btn sec" id="btnEqLibre" type="button">Agregar</button>
         </div>
+        <div class="note" style="margin:6px 0 0">En un stack los miembros comparten hostname y modelo: el <b>número de serie</b> identifica al equipo exacto.</div>
       </div>
       <div class="f"><label>Colaterales afectados</label>
         <div class="row" style="gap:6px">
           <select id="tColTipo" style="flex:1"></select>
-          <input id="tColCant" type="number" min="1" value="1" style="width:80px">
+          <input id="tColCant" type="text" inputmode="numeric" value="1" style="width:80px;text-align:center" title="Cantidad">
           <button class="btn sec" id="btnColAdd" type="button">+</button>
         </div>
         <div class="chips" id="tColaterales"></div>
@@ -259,23 +305,27 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <section class="view" id="vSeguimiento">
   <div class="panel">
     <h2>Filtros de consulta</h2>
-    <div class="grid">
+    <div class="frow c5">
       <div class="f"><label>ID del ticket</label><input id="fId" placeholder="98090826-01"></div>
       <div class="f"><label>Cliente</label><select id="fCliente"></select></div>
       <div class="f"><label>Localidad</label><select id="fLocalidad"></select></div>
       <div class="f"><label>Piso</label><select id="fPiso"></select></div>
+      <div class="f"><label>Prioridad</label><select id="fPrioridad"></select></div>
+    </div>
+    <div class="frow c5">
+      <div class="f"><label>Tipo de incidente</label><select id="fTipo"></select></div>
       <div class="f"><label>Categoría</label><select id="fCategoria"></select></div>
       <div class="f"><label>Subcategoría</label><select id="fSubcategoria"></select></div>
-      <div class="f"><label>Tipo de incidente</label><select id="fTipo"></select></div>
-      <div class="f"><label>Prioridad</label><select id="fPrioridad"></select></div>
-      <div class="f"><label>Equipo afectado</label><input id="fEquipo" placeholder="hostname"></div>
+      <div class="f"><label>Equipo afectado</label><input id="fEquipo" placeholder="hostname o No. de serie"></div>
       <div class="f"><label>Status</label><select id="fStatus"></select></div>
+    </div>
+    <div class="frow c4">
+      <div class="f"><label>Fecha de apertura</label>
+        <div class="rango"><input type="date" id="fFecAp1" title="Desde"><span>a</span><input type="date" id="fFecAp2" title="Hasta"></div></div>
+      <div class="f"><label>Fecha de cierre</label>
+        <div class="rango"><input type="date" id="fFecCi1" title="Desde"><span>a</span><input type="date" id="fFecCi2" title="Hasta"></div></div>
       <div class="f"><label>Responsable apertura</label><select id="fRespAp"></select></div>
       <div class="f"><label>Responsable cierre</label><select id="fRespCi"></select></div>
-      <div class="f"><label>Apertura desde</label><input type="date" id="fFecAp1"></div>
-      <div class="f"><label>Apertura hasta</label><input type="date" id="fFecAp2"></div>
-      <div class="f"><label>Cierre desde</label><input type="date" id="fFecCi1"></div>
-      <div class="f"><label>Cierre hasta</label><input type="date" id="fFecCi2"></div>
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn" id="btnFiltrar">Aplicar filtros</button>
@@ -292,7 +342,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div class="tw"><table id="tblSeg">
       <thead><tr>
         <th>ID</th><th>Status</th><th>SLA</th><th>Pri</th><th>Cliente</th><th>Localidad</th><th>Piso</th>
-        <th>Categoría</th><th>Subcategoría</th><th>Tipo de incidente</th><th>Equipo</th>
+        <th>Categoría</th><th>Subcategoría</th><th>Tipo de incidente</th><th>Equipo</th><th>No. de serie</th>
         <th>Apertura</th><th>Cierre</th><th>T. Falla</th><th>T. Afect.</th><th>Resp. Ap.</th><th>Resp. Ci.</th><th></th>
       </tr></thead><tbody></tbody></table></div>
     <div class="pag" id="segPag"></div>
@@ -330,6 +380,52 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
   <div class="kpis" id="kpis"></div>
   <div class="charts" id="charts"></div>
+</section>
+
+<!-- ============ VISTA 3b: INVENTARIO ============ -->
+<section class="view" id="vInventario">
+  <div class="panel">
+    <h2>Inventario de dispositivos</h2>
+    <div class="f" style="max-width:360px">
+      <label>Cliente <span class="req">*</span></label>
+      <select id="iCliente"></select>
+    </div>
+    <div id="iFiltros" class="hide">
+      <hr class="sep">
+      <div class="frow c4">
+        <div class="f"><label>Hostname</label><input id="iHost" placeholder="contiene…"></div>
+        <div class="f"><label>No. de serie</label><input id="iSerie" placeholder="contiene…"></div>
+        <div class="f"><label>Tipo</label><select id="iTipo"></select></div>
+        <div class="f"><label>Modelo</label><select id="iModelo"></select></div>
+      </div>
+      <div class="frow c4">
+        <div class="f"><label>ID Localidad</label><select id="iLocId"></select></div>
+        <div class="f"><label>Localidad</label><select id="iLoc"></select></div>
+        <div class="f"><label>Piso</label><select id="iPiso"></select></div>
+        <div class="f"><label>Versión firmware</label><select id="iFw"></select></div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn sec" id="iLimpiar">Limpiar filtros</button>
+        <button class="btn sec" id="iRefrescar">↻ Refrescar</button>
+        <span class="right row" style="gap:8px">
+          <button class="btn sec" id="iExport">⬇ Exportar a Excel</button>
+          <button class="btn" id="iNuevo">+ Agregar equipo</button>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div id="iVacio" class="panel"><div class="note">Selecciona un cliente para ver su inventario.</div></div>
+  <div class="panel hide" id="iPanel">
+    <div id="iPend"></div>
+    <div class="kpis" id="iKpis"></div>
+    <h2>Equipos <span id="iCount" style="color:var(--muted);font-weight:400"></span></h2>
+    <div class="tw"><table id="tblInv">
+      <thead><tr>
+        <th>Cliente</th><th>Hostname</th><th>No. de serie</th><th>Tipo</th><th>Modelo</th>
+        <th>ID Loc.</th><th>Localidad</th><th>Piso</th><th>Versión firmware</th><th></th>
+      </tr></thead><tbody></tbody></table></div>
+    <div class="pag" id="iPag"></div>
+  </div>
 </section>
 
 <!-- ============ VISTA 4: CATÁLOGOS ============ -->
@@ -476,21 +572,22 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 
 <!--
   ================= SRI / INTEGRIDAD =================
-  Antes de publicar, agrega a CADA <script> de CDN su atributo integrity="sha512-..."
-  OJO: el Cotizador NO tiene SRI (se verifico su index.html en produccion), asi que no hay
-  hashes que copiar. Obtenlos en cdnjs.com (boton "Copy Script tag" -> opcion SRI) y en
-  jsdelivr.com para msal-browser 3.7.1. Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, seccion 8.
-  MSAL se carga desde jsDelivr: cdnjs NO publica @azure/msal-browser.
+  Cada <script> lleva su hash. Si el CDN sirviera un archivo distinto, el navegador NO lo ejecuta.
+  Hashes SHA-512 tomados de la API oficial de cdnjs y verificados recalculandolos sobre el archivo
+  descargado. El de MSAL es SHA-384 calculado sobre el archivo de jsDelivr y contrastado con el
+  hash SHA-256 y el tamano que publica su API (285635 bytes).
+  AL SUBIR DE VERSION HAY QUE ACTUALIZAR EL HASH, o la libreria dejara de cargar.
+  Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, seccion 8.
   ====================================================
 -->
-<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.7.1/lib/msal-browser.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.7.1/lib/msal-browser.min.js" integrity="sha384-nzPuIKr/OmZjEFquXL4RVZ7gMhCHh1j3xln9eSX/4zC0HUB67OoTU0lTqNZuwqbx" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha512-CQBWl4fJHWbryGE+Pc7UAxWMUMNMWzWxF4SQo9CgkJIN1kx6djDQZjh3Y8SZ1d+6I+1zze6Z7kHXO7q3UyZAWw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" integrity="sha512-dlPw+ytv/6JyepmelABrgeYgHI0O+frEwgfnPdXDTOIZz+eDgfW07QXG02/O8COfivBdGNINy+Vex+lYmJ5rxw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-qZvrmS2ekKPF2mSznTQsxqPgnpkI4DNTlrdUmTzrDgektczlKNRRhy5X5AAOnx5S09ydFYWWNSfcEqDTTHgtNA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha512-BNaRQnYJYiPSqHHDb58B0yaPfCu+Wgds8Gp/gU33kqBtgNS4tSPHuGibyoeqMV/TJlSKda6FXzoEyYGjTe+vXA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" integrity="sha512-2/YdOMV+YNpanLCF5MdQwaoFRVbTmrJ4u4EpqS/USXAQNUDgI5uwYi6J98WVtJKcfe1AbgerygzDFToxAlOGEQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-const CAT_DEFAULT={"version":1,"admins":["fernando.fernandez@sipnology.com.mx"],"clientes":[{"id":"BBVA","nombre":"BBVA","dominios":["bbva.com","bbva.mx"],"correosNotif":[]}],"localidades":[{"id":"98","clienteId":"BBVA","nombre":"Tecno Parque","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"99","clienteId":"BBVA","nombre":"Reforma PF","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"97","clienteId":"BBVA","nombre":"Puebla - Inxignia","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12","P13","P14","P15","P16","P17","P18","P19","P20","P21","P22","P23","P24","P25","P26","P27","P28","P29","P30","P31","P32","P33","P34"]},{"id":"96","clienteId":"BBVA","nombre":"Guadalajara - Landmark","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"95","clienteId":"BBVA","nombre":"Monterrey - Torre TOP","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"94","clienteId":"BBVA","nombre":"León - City Center","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"93","clienteId":"BBVA","nombre":"Tijuana - BH","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"92","clienteId":"BBVA","nombre":"Patriotismo - Athenea","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]}],"prioridades":[{"id":"P1","nombre":"Alta (P1)","slaHoras":4},{"id":"P2","nombre":"Mediana (P2)","slaHoras":8},{"id":"P3","nombre":"Baja (P3)","slaHoras":24}],"imputables":["Sipnology","Cliente","Proveedor/Tercero"],"estatus":["ABIERTO","EN ESPERA","CERRADO"],"categorias":{"Falla":["LAN_Hardware","LAN_Software","LAN_Aplicativo","WLAN_Hardware","WLAN_Software","WLAN_Aplicativo","ISE_Hardware","ISE_Software","Dispositivo"],"ABC":["LAN","WLAN","ISE"],"Tarea_Programada":["Tarea_Programada_LAN","Tarea_Programada_WLAN","Tarea_Programada_ISE"],"Tarea_Colaborativa":["Atención conjunta usuario","Llamada/Videollamada","Reunión presencial"]},"tipos":{"LAN_Hardware":["Falla de SW general (Apagado/Reinicio)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla Usuario (Problema de conexión física LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Hardware (Apertura)","Caso TAC LAN Hardware (Seguimiento)","Caso TAC LAN Hardware (Cierre)"],"LAN":["Alta de equipo (Switch)","Alta de puerto (Uplink/enlace)","Alta de puerto servicio (Usuario, endpoint, etc.)","Alta de configuración (Otro)","Baja de equipo (Switch)","Baja de puerto (Uplink/enlace)","Baja de puerto servicio (Usuario, endpoint, etc.)","Baja de configuración (Otro)","Cambio de configuración (Uplink/enlace)","Cambio de configuración puerto servicio (Usuario, endpoint, etc.)","Cambio de configuración (Otro)"],"Tarea_Programada_LAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Software (Apertura)","Caso TAC LAN Software (Seguimiento)","Caso TAC LAN Software (Cierre)"],"WLAN":["Alta de equipo (AP)","Alta de SSID (Red Inalámbrica)","Alta de configuración (Otro)","Baja de equipo (AP)","Baja de SSID (Red inalámbrica)","Baja de configuración (Otro)","Cambio de configuración (AP)","Cambio de configuración SSID (Red inalámbrica)","Cambio de configuración (Otro)"],"Tarea_Programada_WLAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Aplicativo":["Falla de acceso Aplicativo vía LAN"],"ISE":["Alta de adaptador","Alta de dipositivo (Laptop, Camara, Impresora, Control de acceso, etc)","Alta de NAD (Switch, AP, etc)","Baja de adaptador","Baja de dispositivo (Laptop, Cámara, Impresora, Control de acceso, etc.)","Baja de NAD (Switch, AP, etc.)","Cambio de grupo de acceso","Cambio de tiempo de duración","Depuración de Mac Add"],"Tarea_Programada_ISE":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"WLAN_Hardware":["Falla de AP general (Apagado/Reinicio)","Falla de suministro Electrico","Falla física (Problema de cableado)","Falla conectividad (Perdida de conectividad/gestió)","Caso TAC WLAN Hardware (Apertura)","Caso TAC WLAN Hardware (Seguimiento)","Caso TAC WLAN Hardware (Cierre)"],"WLAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug/Flappeo)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración WLAN)","Caso TAC WLAN Software (Apertura)","Caso TAC WLAN Software (Seguimiento)","Caso TAC WLAN Software (Cierre)"],"WLAN_Aplicativo":["Falla de acceso Aplicativo vía WLAN"],"ISE_Hardware":["Falla de general (Apagado/Reinicio/Falla servidor)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla conectividad (falla de conectividad LAN)","Caso TAC ISE Hardware (Apertura)","Caso TAC ISE Hardware (Seguimiento)","Caso TAC ISE Hardware (Cierre)"],"ISE_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración equipo)","Caso TAC ISE Software (Apertura)","Caso TAC ISE Software (Seguimiento)","Caso TAC ISE Software (Cierre)"],"Dispositivo":["Falla física de dispositivo","Falla lógica de dispositivo","Falla de componente (Cable, Docking, adaptador, etc.)","Falla eléctrica (Cargador, batería, etc.)","Falla de plataformado/política de seguridad","Falla de configuración"],"Atención conjunta usuario":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Llamada/Videollamada":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Reunión presencial":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"]},"tiposDispositivo":["Switch","Access Point","WLC","ISE Node","Router","Firewall","Cámara IP","Impresora","Teléfono IP","Control de acceso","Laptop/PC","Docking","Otro"],"equipos":[{"tipo":"Switch","modelo":"C9300-48P","hostname":"SW94071-IDF1-Tecno","localidadId":"98","piso":"P02"},{"tipo":"Switch","modelo":"C9300-48P","hostname":"SW94072-IDF1-Tecno","localidadId":"98","piso":"P02"},{"tipo":"Access Point","modelo":"C9120AXI","hostname":"AP-Tecno-P02-01","localidadId":"98","piso":"P02"}],"clientesExternos":[]};/* =====================================================================
+const CAT_DEFAULT={"version":1,"admins":["fernando.fernandez@sipnology.com.mx"],"clientes":[{"id":"BBVA","nombre":"BBVA","dominios":["bbva.com","bbva.mx"],"correosNotif":[]}],"localidades":[{"id":"98","clienteId":"BBVA","nombre":"Tecno Parque","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"99","clienteId":"BBVA","nombre":"Reforma PF","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"97","clienteId":"BBVA","nombre":"Puebla - Inxignia","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12","P13","P14","P15","P16","P17","P18","P19","P20","P21","P22","P23","P24","P25","P26","P27","P28","P29","P30","P31","P32","P33","P34"]},{"id":"96","clienteId":"BBVA","nombre":"Guadalajara - Landmark","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"95","clienteId":"BBVA","nombre":"Monterrey - Torre TOP","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"94","clienteId":"BBVA","nombre":"León - City Center","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"93","clienteId":"BBVA","nombre":"Tijuana - BH","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]},{"id":"92","clienteId":"BBVA","nombre":"Patriotismo - Athenea","pisos":["PB","P01","P02","P03","P04","P05","P06","P07","P08","P09","P10","P11","P12"]}],"prioridades":[{"id":"P1","nombre":"Alta (P1)","slaHoras":4},{"id":"P2","nombre":"Mediana (P2)","slaHoras":8},{"id":"P3","nombre":"Baja (P3)","slaHoras":24}],"imputables":["Sipnology","Cliente","Proveedor/Tercero"],"estatus":["ABIERTO","EN ESPERA","CERRADO"],"categorias":{"Falla":["LAN_Hardware","LAN_Software","LAN_Aplicativo","WLAN_Hardware","WLAN_Software","WLAN_Aplicativo","ISE_Hardware","ISE_Software","Dispositivo"],"ABC":["LAN","WLAN","ISE"],"Tarea_Programada":["Tarea_Programada_LAN","Tarea_Programada_WLAN","Tarea_Programada_ISE"],"Tarea_Colaborativa":["Atención conjunta usuario","Llamada/Videollamada","Reunión presencial"]},"tipos":{"LAN_Hardware":["Falla de SW general (Apagado/Reinicio)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla Usuario (Problema de conexión física LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Hardware (Apertura)","Caso TAC LAN Hardware (Seguimiento)","Caso TAC LAN Hardware (Cierre)"],"LAN":["Alta de equipo (Switch)","Alta de puerto (Uplink/enlace)","Alta de puerto servicio (Usuario, endpoint, etc.)","Alta de configuración (Otro)","Baja de equipo (Switch)","Baja de puerto (Uplink/enlace)","Baja de puerto servicio (Usuario, endpoint, etc.)","Baja de configuración (Otro)","Cambio de configuración (Uplink/enlace)","Cambio de configuración puerto servicio (Usuario, endpoint, etc.)","Cambio de configuración (Otro)"],"Tarea_Programada_LAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración LAN)","Fallo Servicios Superiores  (SBR, MAN, Internet, etc)","Caso TAC LAN Software (Apertura)","Caso TAC LAN Software (Seguimiento)","Caso TAC LAN Software (Cierre)"],"WLAN":["Alta de equipo (AP)","Alta de SSID (Red Inalámbrica)","Alta de configuración (Otro)","Baja de equipo (AP)","Baja de SSID (Red inalámbrica)","Baja de configuración (Otro)","Cambio de configuración (AP)","Cambio de configuración SSID (Red inalámbrica)","Cambio de configuración (Otro)"],"Tarea_Programada_WLAN":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"LAN_Aplicativo":["Falla de acceso Aplicativo vía LAN"],"ISE":["Alta de adaptador","Alta de dipositivo (Laptop, Camara, Impresora, Control de acceso, etc)","Alta de NAD (Switch, AP, etc)","Baja de adaptador","Baja de dispositivo (Laptop, Cámara, Impresora, Control de acceso, etc.)","Baja de NAD (Switch, AP, etc.)","Cambio de grupo de acceso","Cambio de tiempo de duración","Depuración de Mac Add"],"Tarea_Programada_ISE":["Tarea Programada (Apagado, Reinicio, HW Upgrade, etc.)","Tarea Programada (Upgrade, Downgrade, etc.)","Tarea programada (Pruebas, reinicio, etc.)","Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Control de cambio (Apertura)","Control de cambio (Documentación)","Control de cambio (Ejecución)","Reporte Mensual (Generación/Documentación/Recopilación)","Reporte Especial (Generación/Documentación/Recopilación)"],"WLAN_Hardware":["Falla de AP general (Apagado/Reinicio)","Falla de suministro Electrico","Falla física (Problema de cableado)","Falla conectividad (Perdida de conectividad/gestió)","Caso TAC WLAN Hardware (Apertura)","Caso TAC WLAN Hardware (Seguimiento)","Caso TAC WLAN Hardware (Cierre)"],"WLAN_Software":["Falla de Software (Comportamiento anómalo de Software/Bug/Flappeo)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración WLAN)","Caso TAC WLAN Software (Apertura)","Caso TAC WLAN Software (Seguimiento)","Caso TAC WLAN Software (Cierre)"],"WLAN_Aplicativo":["Falla de acceso Aplicativo vía WLAN"],"ISE_Hardware":["Falla de general (Apagado/Reinicio/Falla servidor)","Falla de componente (Fuente, Ventilador, modulo, puerto, etc.)","Falla conectividad (falla de conectividad LAN)","Caso TAC ISE Hardware (Apertura)","Caso TAC ISE Hardware (Seguimiento)","Caso TAC ISE Hardware (Cierre)"],"ISE_Software":["Falla de Software (Comportamiento anómalo de Software/Bug)","Falla/Problema de configuración","Falla Usuario (Problema de conexión lógica/configuración equipo)","Caso TAC ISE Software (Apertura)","Caso TAC ISE Software (Seguimiento)","Caso TAC ISE Software (Cierre)"],"Dispositivo":["Falla física de dispositivo","Falla lógica de dispositivo","Falla de componente (Cable, Docking, adaptador, etc.)","Falla eléctrica (Cargador, batería, etc.)","Falla de plataformado/política de seguridad","Falla de configuración"],"Atención conjunta usuario":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Llamada/Videollamada":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"],"Reunión presencial":["Seguimiento a ticket previo","Seguimiento a llamada/reunión previa","Seguimiento a actividad previa","Seguimiento ticket TAC","Reunión de estado","Atención en sitio","Atención remota"]},"tiposDispositivo":["Switch","Access Point","WLC","ISE Node","Router","Firewall","Cámara IP","Impresora","Teléfono IP","Control de acceso","Laptop/PC","Docking","Otro"],"equipos":[{"clienteId":"BBVA","tipo":"Switch","modelo":"C9300-48P","hostname":"SW94071-IDF1-Tecno","serie":"FOC2345X6Y7","localidadId":"98","piso":"P02","firmware":"17.09.04a"},{"clienteId":"BBVA","tipo":"Switch","modelo":"C9300-48P","hostname":"SW94071-IDF1-Tecno","serie":"FOC2345X6Y8","localidadId":"98","piso":"P02","firmware":"17.09.04a"},{"clienteId":"BBVA","tipo":"Switch","modelo":"C9300-48P","hostname":"SW94071-IDF1-Tecno","serie":"FOC2345X6Y9","localidadId":"98","piso":"P02","firmware":"17.09.04a"},{"clienteId":"BBVA","tipo":"Access Point","modelo":"C9120AXI","hostname":"AP-Tecno-P02-01","serie":"FGL2401ABCD","localidadId":"98","piso":"P02","firmware":"17.9.5.45"}],"clientesExternos":[]};/* =====================================================================
    SIPNOLOGY · SISTEMA DE TICKETS NOC
    App de un solo archivo. Backend = Microsoft 365 / SharePoint via Graph.
    Basado en la arquitectura del Cotizador Sipnology.
@@ -514,7 +611,7 @@ const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin
 
 /* ---------------------- 2. ESTADO GLOBAL ---------------------- */
 const S = {
-  cat:null, idx:[], bit:[], role:'cliente', me:{name:'',mail:''},
+  cat:null, inv:[], idx:[], bit:[], role:'cliente', me:{name:'',mail:''},
   clienteScope:null,        // si es cliente externo: id del cliente al que se limita
   filtro:{}, segPage:1, segSize:25, bitPage:1,
   ticket:null,              // ticket abierto en el modal
@@ -676,6 +773,10 @@ const P_CAT = 'Sistema/_tickets_catalogo.json';
 const P_IDX = 'Sistema/_tickets_indice.json';
 const P_BIT = 'Sistema/_tickets_bitacora.json';
 const P_CASOS = 'Casos';                       // Casos/AAAA-MM/<ID>/ticket.json + evidencias
+/* El inventario NO vive en Sistema/: esa carpeta es de escritura exclusiva del administrador.
+   Los operadores del NOC deben poder corregir firmware, piso o serie, así que va en su propia
+   carpeta con permiso de escritura para el grupo NOC-Operadores. */
+const P_INV  = 'Inventario/_inventario.json';
 
 async function driveId(h){
   if(S.driveId) return S.driveId;
@@ -767,11 +868,52 @@ async function catalogoPush(){
   return true;
 }
 
+/* ---------------------- 6bis. INVENTARIO ---------------------- */
+function puedeEditarInventario(){ return S.role==='admin'||S.role==='operador'; }
+/* Un equipo sin cliente hereda el de su localidad: el dato está implícito y evita capturarlo dos veces. */
+function clienteDeEquipo(e){
+  if(e.clienteId) return e.clienteId;
+  const l=(S.cat.localidades||[]).find(x=>x.id===e.localidadId);
+  return l? l.clienteId||'' : '';
+}
+function normEquipo(e){
+  const o=Object.assign({hostname:'',serie:'',tipo:'',modelo:'',localidadId:'',piso:'',firmware:''},e||{});
+  o.clienteId=clienteDeEquipo(o);
+  return o;
+}
+async function invPull(silent){
+  try{
+    const h=await H(); const a=await gGetJson(h,P_INV);
+    if(Array.isArray(a)) S.inv=a.map(normEquipo);
+    else{
+      /* Primera vez: se siembra con los equipos que traiga el catálogo. */
+      S.inv=((S.cat&&S.cat.equipos)||[]).map(normEquipo);
+      if(puedeEditarInventario()&&S.inv.length) await gPutJson(h,P_INV,S.inv);
+    }
+    invConfirmado(); renderInv();
+    if(!silent) toast('Inventario actualizado ('+S.inv.length+' equipos).');
+  }catch(e){
+    if(!S.inv.length) S.inv=((S.cat&&S.cat.equipos)||[]).map(normEquipo);
+    renderInv();
+    if(!silent) toast('No se pudo leer el inventario: '+e.message,'err',7000);
+  }
+}
+async function invPush(detalle){
+  if(!puedeEditarInventario()){ toast('Tu perfil no permite modificar el inventario.','err'); return false; }
+  const h=await H();
+  S.inv=S.inv.map(e=>{ const o=normEquipo(e); delete o._nuevo; return o; });
+  await gPutJson(h,P_INV,S.inv);
+  logEvent('INVENTARIO_ACTUALIZADO',detalle||(S.inv.length+' equipos'));
+  return true;
+}
+
 /* ---------------------- 7. ÍNDICE DE TICKETS ---------------------- */
 function idxEntry(t){
   return {id:t.id, clienteId:t.clienteId, cliente:t.cliente, localidadId:t.localidadId, localidad:t.localidad,
-    piso:t.piso, categoria:t.categoria, subcategoria:t.subcategoria, tipo:t.tipo, prioridad:t.prioridad,
-    equipos:t.equipos, colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
+    pisos:(t.pisos&&t.pisos.length? t.pisos : (t.piso?String(t.piso).split(/\s*,\s*/).filter(Boolean):[])),
+    piso:(t.pisos&&t.pisos.length? t.pisos.join(', ') : t.piso), categoria:t.categoria, subcategoria:t.subcategoria, tipo:t.tipo, prioridad:t.prioridad,
+    equipos:(t.equipos||[]).map(e=>eqNorm(e).hostname).filter(Boolean),
+    series:(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean), colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
     fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
     imputable:t.imputable, respAp:t.respAp, respCi:t.respCi, status:t.status,
@@ -838,6 +980,7 @@ function aplicarPermisosUI(){
   $('#tabBit').classList.toggle('hide',!interno);
   $$('#vApertura input,#vApertura select,#vApertura textarea,#vApertura button').forEach(el=>{ if(!interno) el.disabled=true; });
   $('#tabs').querySelector('[data-v="vApertura"]').classList.toggle('hide',!interno);
+  $('#tabs').querySelector('[data-v="vInventario"]').classList.remove('hide');
   $('#mSegForm') && $('#mSegForm').classList.toggle('hide',!interno);
   const r=$('#whoRole');
   r.textContent = admin?'ADMIN':(interno?'OPERADOR':'CLIENTE');
@@ -853,11 +996,12 @@ async function unlockApp(){
   $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
   await catalogoPull(true);
   resolverRol(); aplicarPermisosUI();
+  await invPull(true);
   await idxPull(true);
   if(S.role!=='cliente') bitPull();
   logEvent('LOGIN','rol '+S.role);
   clearInterval(S._timer);
-  S._timer=setInterval(()=>{ catalogoPull(true); idxPull(true); }, POLL_MS);
+  S._timer=setInterval(()=>{ catalogoPull(true); if(!invSucio()) invPull(true); idxPull(true); }, POLL_MS);
   setTimeout(()=>{ toast('Sesión expirada por seguridad (3 h).','warn',9000); location.reload(); }, AUTH_TTL);
 }
 async function initAuthGate(){
@@ -873,6 +1017,68 @@ async function initAuthGate(){
     finally{ busy(this,false); }
   };
 }
+
+/* ---------------------- 9bis. MENÚ DESPLEGABLE CON CASILLAS ---------------------- */
+/* items: [{v,l1,l2}]  ·  v = valor único, l1 = línea principal, l2 = línea secundaria */
+function msInit(sel,ph,onChange){
+  const el=typeof sel==='string'?$(sel):sel;
+  el._ms={items:[],sel:[],ph:ph||'— selecciona —',onChange:onChange||function(){},q:''};
+  el.innerHTML='<button type="button" class="ms-btn"></button>'+
+    '<div class="ms-pop"><input class="ms-q" placeholder="Buscar…">'+
+    '<div class="ms-tools"><button type="button" data-t="all">Todos</button>'+
+    '<button type="button" data-t="none">Ninguno</button></div><div class="ms-list"></div></div>';
+  const btn=el.querySelector('.ms-btn'), pop=el.querySelector('.ms-pop'), q=el.querySelector('.ms-q');
+  btn.onclick=e=>{ e.stopPropagation(); if(btn.disabled) return;
+    const abierto=el.classList.contains('on');
+    $$('.ms.on').forEach(x=>x.classList.remove('on'));
+    if(!abierto){ el.classList.add('on'); q.value=el._ms.q=''; msPintarLista(el); setTimeout(()=>q.focus(),30); } };
+  pop.onclick=e=>e.stopPropagation();
+  q.oninput=()=>{ el._ms.q=q.value.trim().toLowerCase(); msPintarLista(el); };
+  el.querySelectorAll('.ms-tools button').forEach(b=>b.onclick=()=>{
+    const vis=msVisibles(el).map(i=>i.v);
+    el._ms.sel = b.dataset.t==='all'
+      ? [...new Set(el._ms.sel.concat(vis))]
+      : el._ms.sel.filter(v=>vis.indexOf(v)===-1);
+    msPintar(el); el._ms.onChange(msVal(el));
+  });
+  return el;
+}
+function msVisibles(el){
+  const q=el._ms.q;
+  return el._ms.items.filter(i=>!q||((i.l1||'')+' '+(i.l2||'')).toLowerCase().indexOf(q)!==-1);
+}
+function msPintarLista(el){
+  const m=el._ms, lista=el.querySelector('.ms-list'), vis=msVisibles(el);
+  lista.innerHTML = vis.length? vis.map(i=>
+    '<label class="ms-item"><input type="checkbox" value="'+esc(i.v)+'"'+(m.sel.indexOf(i.v)!==-1?' checked':'')+'>'+
+    '<span><span class="l1">'+esc(i.l1)+'</span>'+(i.l2?'<br><span class="l2">'+esc(i.l2)+'</span>':'')+'</span></label>').join('')
+    : '<div class="ms-vacio">'+(m.items.length? 'Sin coincidencias' : 'Nada que seleccionar todavía')+'</div>';
+  lista.querySelectorAll('input').forEach(chk=>chk.onchange=()=>{
+    const v=chk.value;
+    if(chk.checked){ if(m.sel.indexOf(v)===-1) m.sel.push(v); }
+    else m.sel=m.sel.filter(x=>x!==v);
+    msPintarBoton(el); m.onChange(msVal(el));
+  });
+}
+function msPintarBoton(el){
+  const m=el._ms, btn=el.querySelector('.ms-btn');
+  const sel=m.items.filter(i=>m.sel.indexOf(i.v)!==-1);
+  btn.classList.toggle('ph',!sel.length);
+  btn.textContent = !sel.length? m.ph : (sel.length===1? sel[0].l1 : sel.length+' seleccionados: '+sel.map(i=>i.l1).join(', '));
+  btn.title = sel.map(i=>i.l1+(i.l2?' — '+i.l2:'')).join('\n');
+}
+function msPintar(el){ msPintarBoton(el); if(el.classList.contains('on')) msPintarLista(el); }
+function msSet(el,items,sel){
+  el=typeof el==='string'?$(el):el;
+  el._ms.items=items||[];
+  const validos=el._ms.items.map(i=>i.v);
+  el._ms.sel=(sel!==undefined?sel:el._ms.sel).filter(v=>validos.indexOf(v)!==-1);
+  msPintar(el); return el._ms.sel;
+}
+function msVal(el){ el=typeof el==='string'?$(el):el; return el._ms.sel.slice(); }
+function msLimpiar(el){ el=typeof el==='string'?$(el):el; el._ms.sel=[]; msPintar(el); }
+function msDisabled(el,v){ el=typeof el==='string'?$(el):el; el.querySelector('.ms-btn').disabled=!!v; }
+document.addEventListener('click',()=>$$('.ms.on').forEach(x=>x.classList.remove('on')));
 
 /* ---------------------- 10. POBLADO DE COMBOS ---------------------- */
 function locsDe(clienteId){ return (S.cat.localidades||[]).filter(l=>!clienteId||l.clienteId===clienteId); }
@@ -922,11 +1128,12 @@ function poblarResponsables(){
 function enlazarCascadas(){
   $('#tCliente').onchange=function(){
     fillSel('#tLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre+' ['+l.id+']'})),'— selecciona —');
-    fillSel('#tPiso',[],'— selecciona —'); calcFolio();
+    msSet('#tPiso',[],[]); msSet('#tEquipoMS',[],[]); calcFolio();
   };
-  $('#tLocalidad').onchange=function(){ fillSel('#tPiso',pisosDe(this.value),'— selecciona —');
-    fillSel('#tEquipoSel',equiposDe(this.value).map(e=>({v:e.hostname,t:e.hostname+' · '+e.tipo+' '+e.modelo})),'— selecciona equipo —');
-    calcFolio(); };
+  $('#tLocalidad').onchange=function(){
+    msSet('#tPiso',pisosDe(this.value).map(x=>({v:x,l1:x})),[]);
+    refrescarEquiposMS(); calcFolio();
+  };
   $('#tCategoria').onchange=function(){ fillSel('#tSubcategoria',subsDe(this.value),'— selecciona —'); fillSel('#tTipo',[],'— selecciona —'); };
   $('#tSubcategoria').onchange=function(){ fillSel('#tTipo',tiposDe(this.value),'— selecciona —'); };
   $('#tFecha').onchange=calcFolio;
@@ -937,9 +1144,46 @@ function enlazarCascadas(){
   $('#dCliente').onchange=function(){ fillSel('#dLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre})),'Todas'); fillSel('#dPiso',[],'Todos'); };
   $('#dLocalidad').onchange=function(){ fillSel('#dPiso',pisosDe(this.value),'Todos'); };
 }
-function equiposDe(locId){
-  const e=(S.cat.equipos||[]);
-  return locId? e.filter(x=>!x.localidadId||x.localidadId===locId) : e;
+/* Un equipo es {hostname,serie,tipo,modelo}. La serie es la identidad real:
+   los miembros de un stack comparten hostname y modelo. */
+function eqNorm(x){
+  if(x&&typeof x==='object') return {hostname:String(x.hostname||'').trim(),serie:String(x.serie||'').trim(),
+    tipo:String(x.tipo||'').trim(),modelo:String(x.modelo||'').trim()};
+  const t=String(x==null?'':x).trim();
+  const m=/^(.*?)\s*(?:·|\||\(S\/N:?)\s*([A-Za-z0-9-]{4,})\)?$/.exec(t);
+  return m? {hostname:m[1].trim(),serie:m[2].trim(),tipo:'',modelo:''} : {hostname:t,serie:'',tipo:'',modelo:''};
+}
+function eqLabel(e){ e=eqNorm(e); return e.serie? e.hostname+' · '+e.serie : e.hostname; }
+function eqClave(e){ e=eqNorm(e); return e.serie? 'S:'+e.serie.toUpperCase() : 'H:'+e.hostname.toUpperCase(); }
+/* Equipos de una localidad, opcionalmente acotados a ciertos pisos.
+   Un equipo sin piso asignado aparece siempre: no hay forma de descartarlo con certeza. */
+function equiposDe(locId,pisos){
+  let e=(S.inv&&S.inv.length? S.inv : (S.cat.equipos||[]));
+  if(locId) e=e.filter(x=>!x.localidadId||x.localidadId===locId);
+  if(pisos&&pisos.length) e=e.filter(x=>!x.piso||pisos.indexOf(x.piso)!==-1);
+  return e;
+}
+/* Recalcula el menú de equipos según localidad y pisos elegidos. */
+function refrescarEquiposMS(){
+  const loc=$('#tLocalidad').value, pisos=msVal('#tPiso');
+  const lista=equiposDe(loc,pisos);
+  const items=lista.map(e=>({v:eqClave(e),
+    l1:e.hostname+(e.piso?'  ·  '+e.piso:''),
+    l2:(e.serie?'S/N '+e.serie:'sin número de serie')+(e.modelo||e.tipo?'  ·  '+[e.tipo,e.modelo].filter(Boolean).join(' '):'')}));
+  const antes=msVal('#tEquipoMS');
+  const ahora=msSet('#tEquipoMS',items);
+  msDisabled('#tEquipoMS',!loc);
+  if(antes.length!==ahora.length) toast('Se quitaron equipos que no pertenecen a los pisos seleccionados.','warn');
+  sincronizarEquipos();
+}
+/* El menú manda sobre los equipos de catálogo; los capturados a mano se conservan aparte. */
+function sincronizarEquipos(){
+  const loc=$('#tLocalidad').value, pisos=msVal('#tPiso');
+  const cat=equiposDe(loc,pisos);
+  const sel=msVal('#tEquipoMS');
+  const deCatalogo=sel.map(v=>{const e=cat.find(x=>eqClave(x)===v); return e?eqNorm(e):null;}).filter(Boolean);
+  _equipos=_equipos.filter(e=>e.manual).concat(deCatalogo);
+  renderChips();
 }
 
 /* ---------------------- 11. FOLIO ---------------------- */
@@ -1020,16 +1264,23 @@ function renderFiles(listSel,bucket){
 /* ---------------------- 13. MÓDULO 1 · APERTURA ---------------------- */
 let _equipos=[], _colaterales=[];
 function renderChips(){
-  $('#tEquipos').innerHTML=_equipos.map((e,i)=>'<span class="chip">'+esc(e)+'<button class="rm" data-i="'+i+'">×</button></span>').join('');
-  $('#tEquipos').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{_equipos.splice(+b.dataset.i,1);renderChips();});
+  $('#tEquipos').innerHTML=_equipos.map((e,i)=>'<span class="chip" title="'+esc(e.serie?'No. de serie '+e.serie:'sin número de serie')+'">'+
+    esc(e.hostname)+(e.serie?' <span style="color:var(--muted);font-family:ui-monospace,monospace">'+esc(e.serie)+'</span>':'')+
+    (e.manual?' <span style="color:var(--warn);font-size:10px">manual</span>':'')+
+    '<button class="rm" data-i="'+i+'">×</button></span>').join('');
+  $('#tEquipos').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{
+    const e=_equipos[+b.dataset.i];
+    if(e&&!e.manual){ const el=$('#tEquipoMS'); el._ms.sel=el._ms.sel.filter(v=>v!==eqClave(e)); msPintar(el); }
+    _equipos.splice(+b.dataset.i,1); renderChips();
+  });
   $('#tColaterales').innerHTML=_colaterales.map((c,i)=>'<span class="chip">'+esc(c.tipo)+' × '+c.cant+'<button class="rm" data-i="'+i+'">×</button></span>').join('');
   $('#tColaterales').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{_colaterales.splice(+b.dataset.i,1);renderChips();});
 }
 function limpiarApertura(){
-  ['tCliente','tLocalidad','tPiso','tCategoria','tSubcategoria','tTipo','tPrioridad','tEqLibre','tColNota'].forEach(id=>$('#'+id).value='');
-  fillSel('#tLocalidad',[],'— selecciona —'); fillSel('#tPiso',[],'— selecciona —');
+  ['tCliente','tLocalidad','tPiso','tCategoria','tSubcategoria','tTipo','tPrioridad','tEqLibre','tSerieLibre','tColNota'].forEach(id=>$('#'+id).value='');
+  fillSel('#tLocalidad',[],'— selecciona —');
   fillSel('#tSubcategoria',[],'— selecciona —'); fillSel('#tTipo',[],'— selecciona —');
-  fillSel('#tEquipoSel',[],'— selecciona equipo —');
+  msSet('#tPiso',[],[]); msSet('#tEquipoMS',[],[]); msDisabled('#tEquipoMS',true);
   _equipos=[]; _colaterales=[]; S.filesNew=[]; renderChips(); renderFiles('#tFileList','filesNew');
   $('#tDesc').innerHTML=''; ahora(); calcFolio();
 }
@@ -1038,9 +1289,10 @@ function ahora(){
   const h=hora12(d); $('#tHora').value=h.t; $('#tAmPm').value=h.ap;
 }
 function validarApertura(){
-  const req=[['tCliente','Cliente'],['tLocalidad','Localidad'],['tPiso','Piso'],['tCategoria','Categoría'],
+  const req=[['tCliente','Cliente'],['tLocalidad','Localidad'],['tCategoria','Categoría'],
     ['tSubcategoria','Subcategoría'],['tTipo','Tipo de incidente'],['tPrioridad','Prioridad'],['tFecha','Fecha de apertura']];
   for(const [id,lbl] of req){ if(!$('#'+id).value){ toast('Falta: '+lbl,'err'); $('#'+id).focus(); return null; } }
+  if(!msVal('#tPiso').length){ toast('Selecciona al menos un piso.','err'); return null; }
   if(!_equipos.length){ toast('Agrega al menos un equipo afectado.','err'); return null; }
   const h24=to24($('#tHora').value,$('#tAmPm').value);
   if(!h24){ toast('Hora de apertura inválida. Usa hh:mm:ss en formato 12 h.','err'); return null; }
@@ -1060,7 +1312,8 @@ async function crearTicket(){
     const t={
       id:id, ruta:ruta,
       clienteId:cli.id||'', cliente:cli.nombre||'',
-      localidadId:$('#tLocalidad').value, localidad:nombreLoc($('#tLocalidad').value), piso:$('#tPiso').value,
+      localidadId:$('#tLocalidad').value, localidad:nombreLoc($('#tLocalidad').value),
+      pisos:msVal('#tPiso'), piso:msVal('#tPiso').join(', '),
       categoria:$('#tCategoria').value, subcategoria:$('#tSubcategoria').value, tipo:$('#tTipo').value,
       prioridad:$('#tPrioridad').value, slaHoras:slaHoras($('#tPrioridad').value),
       equipos:_equipos.slice(), colaterales:_colaterales.slice(), colateralNota:$('#tColNota').value,
@@ -1125,11 +1378,15 @@ function leerFiltros(){
   };
 }
 function filtrar(f){
+  /* Los tres campos de texto se normalizan aquí y no en la UI, para que la función
+     sea correcta la llame quien la llame (filtros, exportación, pruebas). */
+  const bajo=v=>String(v==null?'':v).trim().toLowerCase();
+  const fId=bajo(f.id), fEq=bajo(f.equipo), fSn=bajo(f.serie);
   return S.idx.filter(t=>{
-    if(f.id && String(t.id).toLowerCase().indexOf(f.id)===-1) return false;
+    if(fId && String(t.id).toLowerCase().indexOf(fId)===-1) return false;
     if(f.cliente && t.clienteId!==f.cliente) return false;
     if(f.localidad && t.localidadId!==f.localidad) return false;
-    if(f.piso && t.piso!==f.piso) return false;
+    if(f.piso && (t.pisos&&t.pisos.length? t.pisos.indexOf(f.piso)===-1 : t.piso!==f.piso)) return false;
     if(f.categoria && t.categoria!==f.categoria) return false;
     if(f.subcategoria && t.subcategoria!==f.subcategoria) return false;
     if(f.tipo && t.tipo!==f.tipo) return false;
@@ -1137,7 +1394,9 @@ function filtrar(f){
     if(f.status && t.status!==f.status) return false;
     if(f.respAp && t.respAp!==f.respAp) return false;
     if(f.respCi && t.respCi!==f.respCi) return false;
-    if(f.equipo && (t.equipos||[]).join(' ').toLowerCase().indexOf(f.equipo)===-1) return false;
+    /* Un solo campo busca en hostname y en número de serie */
+    if(fEq && ((t.equipos||[]).join(' ')+' '+(t.series||[]).join(' ')).toLowerCase().indexOf(fEq)===-1) return false;
+    if(fSn && (t.series||[]).join(' ').toLowerCase().indexOf(fSn)===-1) return false;
     if(f.fa1 && (!t.fechaAp||t.fechaAp<f.fa1)) return false;
     if(f.fa2 && (!t.fechaAp||t.fechaAp>f.fa2)) return false;
     if(f.fc1 && (!t.fechaCie||t.fechaCie<f.fc1)) return false;
@@ -1165,13 +1424,14 @@ function renderSeg(){
       '<td>'+esc(t.cliente)+'</td><td>'+esc(t.localidad)+'</td><td>'+esc(t.piso)+'</td>'+
       '<td>'+esc(t.categoria)+'</td><td>'+esc(t.subcategoria)+'</td><td>'+esc(t.tipo)+'</td>'+
       '<td>'+esc((t.equipos||[]).join(', '))+'</td>'+
+      '<td class="mono">'+esc((t.series||[]).join(', '))+'</td>'+
       '<td class="mono">'+esc(fechaHumana(t.fechaAp,t.horaAp))+'</td>'+
       '<td class="mono">'+esc(fechaHumana(t.fechaCie,t.horaCie))+'</td>'+
       '<td class="mono">'+esc(t.tFalla||'')+'</td><td class="mono">'+esc(t.tAfect||'')+'</td>'+
       '<td>'+esc(t.respAp||'')+'</td><td>'+esc(t.respCi||'')+'</td>'+
       '<td><button class="btn sec" style="padding:4px 10px" data-open="'+esc(t.id)+'">Abrir</button></td>'+
     '</tr>';
-  }).join('') : '<tr><td colspan="18" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
+  }).join('') : '<tr><td colspan="19" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
   $('#tblSeg').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirTicket(b.dataset.open));
   // paginación
   let p='<span>Filas</span><select id="segSize" style="width:70px;padding:3px">'+
@@ -1205,9 +1465,10 @@ function pintarTicket(t){
   $('#mPri').className='pill pr-'+t.prioridad; $('#mPri').textContent=t.prioridad;
   $('#mSla').className=s.cls; $('#mSla').textContent='SLA '+s.txt;
   $('#mResumen').innerHTML=[
-    campo('Cliente',t.cliente),campo('Localidad',t.localidad+' ['+t.localidadId+']'),campo('Piso',t.piso),
+    campo('Cliente',t.cliente),campo('Localidad',t.localidad+' ['+t.localidadId+']'),
+    campo('Piso(s)',(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso)),
     campo('Categoría',t.categoria),campo('Subcategoría',t.subcategoria),campo('Tipo de incidente',t.tipo),
-    campo('Prioridad',t.prioridad),campo('Equipo(s)',(t.equipos||[]).join(', ')),
+    campo('Prioridad',t.prioridad),campo('Equipo(s)',(t.equipos||[]).map(eqLabel).join(', ')),
     campo('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', ')),
     campo('Fecha de apertura',fechaHumana(t.fechaAp)),campo('Hora de apertura',from24(t.horaAp).t+' '+from24(t.horaAp).ap),
     campo('Responsable de apertura',t.respAp)
@@ -1305,13 +1566,14 @@ async function guardarSeguimiento(){
 const DIMENSIONES=[
   {k:'cliente',   t:'Tickets por cliente',        f:t=>t.cliente||'(sin cliente)', tipo:'bar'},
   {k:'localidad', t:'Tickets por sede/localidad', f:t=>t.localidad||'(sin sede)',  tipo:'bar'},
-  {k:'piso',      t:'Tickets por piso',           f:t=>t.piso||'(sin piso)',       tipo:'bar'},
+  {k:'piso',      t:'Tickets por piso',           f:t=>((t.pisos&&t.pisos.length)?t.pisos:[t.piso||'(sin piso)']),tipo:'bar'},
   {k:'status',    t:'Tickets por status',         f:t=>t.status,                   tipo:'doughnut'},
   {k:'prioridad', t:'Tickets por prioridad',      f:t=>t.prioridad,                tipo:'doughnut'},
   {k:'categoria', t:'Tickets por categoría',      f:t=>t.categoria,                tipo:'doughnut'},
   {k:'subcategoria',t:'Tickets por subcategoría', f:t=>t.subcategoria,             tipo:'bar'},
   {k:'tipo',      t:'Tickets por tipo de incidente',f:t=>t.tipo,                   tipo:'bar'},
-  {k:'equipo',    t:'Tickets por equipo/hostname',f:t=>(t.equipos||['(sin equipo)']),tipo:'bar'},
+  {k:'equipo',    t:'Tickets por equipo/hostname',f:t=>((t.equipos||[]).length?t.equipos:['(sin equipo)']),tipo:'bar'},
+  {k:'serie',     t:'Tickets por número de serie',f:t=>((t.series||[]).length?t.series:['(sin serie)']),tipo:'bar'},
   {k:'dia',       t:'Tickets por día',            f:t=>t.fechaAp||'(sin fecha)',   tipo:'line'},
   {k:'mes',       t:'Tickets por mes',            f:t=>String(t.fechaAp||'').slice(0,7),tipo:'bar'},
   {k:'imputable', t:'Tickets por imputable',      f:t=>t.imputable||'(sin definir)',tipo:'doughnut'},
@@ -1383,7 +1645,7 @@ function renderDash(){
 /* ---------------------- 17. EXPORTACIÓN ---------------------- */
 const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad'],['cliente','Cliente'],
   ['localidad','Localidad'],['piso','Piso'],['categoria','Categoría'],['subcategoria','Subcategoría'],
-  ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['colaterales','Colaterales'],
+  ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['series','Número de serie'],['colaterales','Colaterales'],
   ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
   ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
   ['imputable','Imputable'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
@@ -1463,8 +1725,9 @@ function correoHTML(t,fase,nota){
    '<div style="background:'+C[0]+';color:#fff;padding:10px 20px;font-weight:700;font-size:13px;letter-spacing:.5px">'+C[1]+' · '+esc(t.id)+'</div>'+
    '<table style="width:100%;border-collapse:collapse;background:#fff">'+
      fila('Status',t.status)+fila('Prioridad',t.prioridad)+fila('Cliente',t.cliente)+
-     fila('Localidad / Piso',t.localidad+' · '+t.piso)+fila('Categoría',t.categoria+' / '+t.subcategoria)+
-     fila('Tipo de incidente',t.tipo)+fila('Equipo(s) afectado(s)',(t.equipos||[]).join(', '))+
+     fila('Localidad / Piso',t.localidad+' · '+(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso))+fila('Categoría',t.categoria+' / '+t.subcategoria)+
+     fila('Tipo de incidente',t.tipo)+fila('Equipo(s) afectado(s)',(t.equipos||[]).map(eqLabel).join(', '))+
+     fila('Número(s) de serie',(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean).join(', '))+
      fila('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', '))+
      fila('Apertura',fechaHumana(t.fechaAp,t.horaAp)+' — '+t.respAp)+
      fila('Restablecimiento',t.fechaRes?fechaHumana(t.fechaRes,t.horaRes):'')+
@@ -1530,7 +1793,8 @@ const ESQUEMAS={
   localidades:{titulo:'Localidades / Sedes',cols:[['id','ID (2 dígitos)',12],['clienteId','Cliente',12],['nombre','Nombre',26]],
     nota:'El ID de 2 dígitos es el prefijo del folio. Ej.: sede 98 → ticket 98090826-01.'},
   prioridades:{titulo:'Prioridades y SLA',cols:[['id','ID',8],['nombre','Nombre visible',22],['slaHoras','SLA (horas)',10]],num:['slaHoras']},
-  equipos:{titulo:'Equipos / Dispositivos',cols:[['hostname','Hostname',26],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Localidad',12],['piso','Piso',10]]},
+  equipos:{titulo:'Equipos / Dispositivos',cols:[['clienteId','Cliente',12],['hostname','Hostname',24],['serie','No. de serie',20],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Localidad',12],['piso','Piso',10],['firmware','Versión firmware',18]],
+    nota:'El inventario se guarda en Inventario/_inventario.json y lo pueden editar los operadores del NOC, no solo el administrador. El número de serie identifica al equipo físico: los miembros de un stack comparten hostname y modelo, así que van como filas distintas con el mismo hostname y series diferentes. Si dejas el cliente vacío, se hereda de la localidad.'},
   clientesExternos:{titulo:'Usuarios cliente (acceso externo)',cols:[['correo','Correo (invitado B2B)',30],['nombre','Nombre',22],['clienteId','Cliente que puede ver',14]],
     nota:'Estos usuarios deben existir como INVITADOS en Microsoft Entra (B2B). Aquí solo se declara qué cliente puede ver cada uno; el acceso real lo aplican los permisos de SharePoint.'}
 };
@@ -1538,29 +1802,119 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',ad
 
 function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
-  $('#btnCatSave').disabled=ro;
+  $('#btnCatSave').disabled = k==='equipos' ? !puedeEditarInventario() : ro;
   if(k==='historico') return renderHistorico(box,ro);
-  if(ESQUEMAS[k]){ renderTabla(k,ESQUEMAS[k],box,ro); if(k==='equipos') barraEquipos(box,ro); return; }
+  if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
+    renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='pisos') return renderPisos(box,ro);
   if(k==='categorias') return renderMapa(box,ro,'categorias','Categoría','Subcategorías (una por línea)');
   if(k==='tipos') return renderMapa(box,ro,'tipos','Subcategoría','Tipos de incidente (uno por línea)');
 }
+function moverFila(arr,de,a){
+  if(a<0||a>=arr.length||de===a) return false;
+  arr.splice(a,0,arr.splice(de,1)[0]); return true;
+}
 function renderTabla(k,esq,box,ro){
-  const arr=S.cat[k]||(S.cat[k]=[]);
+  const arr = k==='equipos' ? S.inv : (S.cat[k]||(S.cat[k]=[]));
+  if(k==='equipos') ro = !puedeEditarInventario();
   box.innerHTML=(esq.nota?'<div class="note">'+esc(esq.nota)+'</div>':'')+
-   '<div class="tw" style="max-height:52vh"><table><thead><tr>'+esq.cols.map(c=>'<th>'+esc(c[1])+'</th>').join('')+'<th></th></tr></thead><tbody>'+
-   arr.map((o,i)=>'<tr>'+esq.cols.map(c=>'<td><input data-i="'+i+'" data-c="'+c[0]+'" value="'+
-     esc(Array.isArray(o[c[0]])?o[c[0]].join(', '):(o[c[0]]==null?'':o[c[0]]))+'"'+(ro?' disabled':'')+'></td>').join('')+
+   (ro?'':'<div class="note">Arrastra una fila por el asa <b>⠿</b> o usa ▲▼ para cambiar su orden.</div>')+
+   '<div class="tw" style="max-height:52vh"><table><thead><tr><th style="width:1%"></th><th style="width:1%">Orden</th>'+
+   esq.cols.map(c=>'<th>'+esc(c[1])+'</th>').join('')+'<th></th></tr></thead><tbody>'+
+   arr.map((o,i)=>'<tr data-fila="'+i+'"'+(ro?'':' draggable="true"')+'>'+
+     '<td class="grip" title="Arrastrar para reordenar">⠿</td>'+
+     '<td><div class="ord"><button data-up="'+i+'"'+(ro||i===0?' disabled':'')+' title="Subir">▲</button>'+
+       '<button data-down="'+i+'"'+(ro||i===arr.length-1?' disabled':'')+' title="Bajar">▼</button></div></td>'+
+     esq.cols.map(c=>'<td><input data-i="'+i+'" data-c="'+c[0]+'" value="'+
+       esc(Array.isArray(o[c[0]])?o[c[0]].join(', '):(o[c[0]]==null?'':o[c[0]]))+'"'+(ro?' disabled':'')+'></td>').join('')+
      '<td><button class="btn dan" style="padding:3px 9px" data-del="'+i+'"'+(ro?' disabled':'')+'>×</button></td></tr>').join('')+
    '</tbody></table></div><div class="row" style="margin-top:10px"><button class="btn sec" id="catAdd"'+(ro?' disabled':'')+'>+ Agregar fila</button></div>';
-  box.querySelectorAll('input[data-c]').forEach(inp=>inp.onchange=()=>{
-    const o=arr[+inp.dataset.i], c=inp.dataset.c;
-    o[c]= (esq.lista||[]).indexOf(c)>=0 ? inp.value.split(',').map(s=>s.trim()).filter(Boolean)
+  if(k==='equipos') box.addEventListener('change',()=>{ if(!invSucio()) invMarcar('Edición desde Catálogos'); });
+  box.querySelectorAll('input[data-c]').forEach(inp=>{
+    inp.dataset.antes=inp.value;
+    inp.onchange=async()=>{
+      const o=arr[+inp.dataset.i], c=inp.dataset.c, antes=inp.dataset.antes;
+      const val=(esq.lista||[]).indexOf(c)>=0 ? inp.value.split(',').map(s=>s.trim()).filter(Boolean)
         : ((esq.num||[]).indexOf(c)>=0 ? (+inp.value||0) : inp.value.trim());
+      if(k==='localidades'&&(c==='id'||c==='nombre')){ await editarSede(o,c,antes,val,inp); return; }
+      o[c]=val; inp.dataset.antes=inp.value;
+    };
   });
-  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ if(confirm('¿Eliminar la fila?')){arr.splice(+b.dataset.del,1);renderCat();} });
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.del, o=arr[i];
+    if(k==='localidades'){
+      const n=S.idx.filter(t=>t.localidadId===o.id).length;
+      if(n){ alert('No se puede eliminar «'+o.nombre+'»: tiene '+n+' ticket(s) asociados.'); return; }
+    }
+    if(confirm('¿Eliminar la fila?')){ arr.splice(i,1); renderCat(); }
+  });
+  box.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ if(moverFila(arr,+b.dataset.up,+b.dataset.up-1)) renderCat(); });
+  box.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>{ if(moverFila(arr,+b.dataset.down,+b.dataset.down+1)) renderCat(); });
+  if(!ro) habilitarArrastre(box,arr);
   const add=box.querySelector('#catAdd'); if(add) add.onclick=()=>{ arr.push({}); renderCat(); };
+}
+function habilitarArrastre(box,arr){
+  let origen=null;
+  box.querySelectorAll('tr[data-fila]').forEach(tr=>{
+    tr.addEventListener('dragstart',e=>{ origen=+tr.dataset.fila; tr.classList.add('arrastrando');
+      e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',String(origen));}catch(x){} });
+    tr.addEventListener('dragend',()=>{ tr.classList.remove('arrastrando');
+      box.querySelectorAll('tr').forEach(x=>x.classList.remove('destino')); });
+    tr.addEventListener('dragover',e=>{ e.preventDefault();
+      box.querySelectorAll('tr').forEach(x=>x.classList.remove('destino')); tr.classList.add('destino'); });
+    tr.addEventListener('drop',e=>{ e.preventDefault();
+      const destino=+tr.dataset.fila;
+      if(origen!=null && moverFila(arr,origen,destino)) renderCat();
+    });
+  });
+}
+/* Cambiar el ID o el nombre de una sede propaga a equipos, índice y expedientes.
+   Los folios ya emitidos NO se tocan: son la llave del expediente y de su carpeta. */
+async function editarSede(loc,campo,antes,nuevo,inp){
+  const revertir=()=>{ inp.value=antes; };
+  if(campo==='id'){
+    if(!/^\d{2}$/.test(nuevo)){ alert('El ID de la sede debe ser de exactamente 2 dígitos.'); return revertir(); }
+    if((S.cat.localidades||[]).some(l=>l!==loc&&l.id===nuevo)){ alert('Ya existe otra sede con el ID '+nuevo+'.'); return revertir(); }
+  }else if(!nuevo){ alert('El nombre no puede quedar vacío.'); return revertir(); }
+  const idAntes=loc.id, idNuevo=campo==='id'?nuevo:loc.id;
+  const nomNuevo=campo==='nombre'?nuevo:loc.nombre;
+  const eq=S.inv.filter(e=>e.localidadId===idAntes).length;
+  const tk=S.idx.filter(t=>t.localidadId===idAntes).length;
+  let msg='Se actualizará la sede en:\n  · '+eq+' dispositivo(s) del catálogo'+
+    '\n  · '+tk+' ticket(s) y sus expedientes\n\n';
+  if(campo==='id'&&tk) msg+='IMPORTANTE: los folios ya emitidos conservan el prefijo '+idAntes+
+    ', porque son la llave del expediente y el nombre de su carpeta en SharePoint.'+
+    '\nLos tickets nuevos usarán el prefijo '+idNuevo+'.\n\n';
+  msg+='¿Continuar?';
+  if(!confirm(msg)) return revertir();
+  loc.id=idNuevo; loc.nombre=nomNuevo; inp.dataset.antes=inp.value;
+  S.inv.forEach(e=>{ if(e.localidadId===idAntes) e.localidadId=idNuevo; });
+  try{
+    if(!await catalogoPush()) return;
+    if(eq) await invPush('sede '+idAntes+' → '+idNuevo+' en '+eq+' equipo(s)');
+    if(tk){ toast('Actualizando '+tk+' expediente(s)…'); const n=await propagarSede(idAntes,idNuevo,nomNuevo);
+      toast(n+' ticket(s) actualizados.'); }
+    logEvent('SEDE_ACTUALIZADA',idAntes+' → '+idNuevo+' · '+nomNuevo+' · '+eq+' equipos, '+tk+' tickets');
+    poblarCatalogosUI(); renderSeg(); renderDash(); renderCat(); renderInv();
+  }catch(e){ toast('Se guardó el catálogo pero falló la propagación: '+e.message,'err',10000); }
+}
+async function propagarSede(idAntes,idNuevo,nombreNuevo){
+  const h=await H();
+  const afectados=S.idx.filter(t=>t.localidadId===idAntes);
+  for(const e of afectados){
+    const ruta=e.ruta||(P_CASOS+'/'+String(e.fechaAp||'').slice(0,7)+'/'+sanitizeName(e.id));
+    try{
+      const t=await gGetJson(h,ruta+'/ticket.json');
+      if(t){ t.localidadId=idNuevo; t.localidad=nombreNuevo; t.actualizado=new Date().toISOString();
+             await gPutJson(h,ruta+'/ticket.json',t); }
+    }catch(err){}
+  }
+  let a=await gGetJson(h,P_IDX); a=Array.isArray(a)?a:[];
+  a.forEach(x=>{ if(x.localidadId===idAntes){ x.localidadId=idNuevo; x.localidad=nombreNuevo; } });
+  await gPutJson(h,P_IDX,a);
+  S.idx=a; aplicarScopeCliente();
+  return afectados.length;
 }
 function renderLista(k,titulo,box,ro){
   box.innerHTML='<div class="f"><label>'+esc(titulo)+'</label><textarea id="catTxt" style="min-height:260px"'+(ro?' disabled':'')+'>'+
@@ -1651,8 +2005,9 @@ async function escribirXlsx(nombre,hojas){
 }
 
 /* ---- Dispositivos ---- */
-const COLS_DISP=[['hostname','Hostname *',26],['tipo','Tipo *',18],['modelo','Modelo',20],
-  ['localidadId','ID Localidad *',14],['localidad','Localidad (referencia)',24],['piso','Piso',10]];
+const COLS_DISP=[['cliente','Cliente *',16],['hostname','Hostname *',26],['serie','No. de serie *',20],
+  ['tipo','Tipo *',18],['modelo','Modelo',20],['localidadId','ID Localidad *',14],
+  ['localidad','Localidad (referencia)',24],['piso','Piso',10],['firmware','Versión firmware',18]];
 function filasReferencia(){
   const ref=[];
   (S.cat.localidades||[]).forEach(l=>ref.push({a:'Localidad',b:l.id,c:l.nombre,d:(l.pisos||[]).join(', ')}));
@@ -1666,32 +2021,66 @@ function filasReferencia(){
 }
 const HOJA_REF={nombre:'Referencias',cols:[['a','Catálogo',22],['b','ID',12],['c','Valor',34],['d','Detalle',70]]};
 async function plantillaDispositivos(conDatos){
-  const filas = conDatos ? (S.cat.equipos||[]).map(e=>({hostname:e.hostname,tipo:e.tipo,modelo:e.modelo,
-      localidadId:e.localidadId,localidad:nombreLoc(e.localidadId),piso:e.piso}))
-    : [{hostname:'SW94071-IDF1-Tecno',tipo:'Switch',modelo:'C9300-48P',localidadId:'98',localidad:'Tecno Parque',piso:'P02'}];
-  await escribirXlsx(conDatos?('Dispositivos_Sipnology_'+todayISO()):'Plantilla_Dispositivos_Sipnology',
-    [{nombre:'Dispositivos',cols:COLS_DISP,filas:filas,oblig:['hostname','tipo','localidadId']},
+  const nomCli=id=>((S.cat.clientes||[]).find(c=>c.id===id)||{}).nombre||id||'';
+  const filas = conDatos ? S.inv.map(e=>({cliente:nomCli(clienteDeEquipo(e)),hostname:e.hostname,serie:e.serie,
+      tipo:e.tipo,modelo:e.modelo,localidadId:e.localidadId,localidad:nombreLoc(e.localidadId),
+      piso:e.piso,firmware:e.firmware}))
+    : [{cliente:'BBVA',hostname:'SW94071-IDF1-Tecno',serie:'FOC2345X6Y7',tipo:'Switch',modelo:'C9300-48P',localidadId:'98',localidad:'Tecno Parque',piso:'P02',firmware:'17.09.04a'},
+       {cliente:'BBVA',hostname:'SW94071-IDF1-Tecno',serie:'FOC2345X6Y8',tipo:'Switch',modelo:'C9300-48P',localidadId:'98',localidad:'Tecno Parque',piso:'P02',firmware:'17.09.04a'}];
+  await escribirXlsx(conDatos?('Inventario_Sipnology_'+todayISO()):'Plantilla_Dispositivos_Sipnology',
+    [{nombre:'Dispositivos',cols:COLS_DISP,filas:filas,oblig:['cliente','hostname','serie','tipo','localidadId']},
      Object.assign({filas:filasReferencia()},HOJA_REF)]);
   logEvent(conDatos?'EXPORT_DISPOSITIVOS':'PLANTILLA_DISPOSITIVOS',String(filas.length)+' fila(s)');
 }
 async function importarDispositivos(file,modo){
   const filas=await leerXlsx(file);
   const tipos=(S.cat.tiposDispositivo||[]), locs=(S.cat.localidades||[]).map(l=>l.id);
+  const buscaCli=v=>{ const t=String(v||'').trim().toLowerCase(); if(!t) return '';
+    const c=(S.cat.clientes||[]).find(x=>x.id.toLowerCase()===t||x.nombre.toLowerCase()===t); return c?c.id:null; };
   const ok=[], err=[];
   filas.forEach(f=>{
     const host=String(f.hostname||'').trim();
+    const serie=String(f.nodeserie||f.numerodeserie||f.serie||'').trim();
     const tipo=String(f.tipo||'').trim();
     const loc =String(f.localidadid||f.idlocalidad||'').trim();
+    const fw  =String(f.versionfirmware||f.firmware||'').trim();
+    const cliRaw=String(f.cliente||'').trim();
+    const cli=buscaCli(cliRaw);
+    if(cli===null) err.push('Fila '+f._fila+': cliente «'+cliRaw+'» no existe en el catálogo; se deducirá de la localidad.');
     if(!host){ err.push('Fila '+f._fila+': falta Hostname.'); return; }
     if(!tipo){ err.push('Fila '+f._fila+': falta Tipo.'); return; }
+    if(!serie) err.push('Fila '+f._fila+': sin número de serie. Se identificará solo por hostname, así que no podrás distinguir miembros de un stack.');
     if(tipo && tipos.indexOf(tipo)===-1) err.push('Fila '+f._fila+': tipo «'+tipo+'» no está en el catálogo (se agregará igual).');
     if(loc && locs.indexOf(loc)===-1) err.push('Fila '+f._fila+': ID de localidad «'+loc+'» no existe.');
-    ok.push({hostname:host,tipo:tipo,modelo:String(f.modelo||'').trim(),
-             localidadId:loc,piso:String(f.piso||'').trim()});
+    ok.push(normEquipo({clienteId:cli||'',hostname:host,serie:serie,tipo:tipo,
+             modelo:String(f.modelo||'').trim(),localidadId:loc,
+             piso:String(f.piso||'').trim(),firmware:fw}));
   });
-  const dup=ok.map(e=>e.hostname).filter((h,i,a)=>a.indexOf(h)!==i);
-  if(dup.length) err.push('Hostnames repetidos en el archivo: '+[...new Set(dup)].join(', '));
+  const ser=ok.map(e=>e.serie).filter(Boolean);
+  const dup=ser.filter((h,i,a)=>a.indexOf(h)!==i);
+  if(dup.length) err.push('Números de serie repetidos en el archivo: '+[...new Set(dup)].join(', ')+'. Cada equipo físico debe aparecer una sola vez.');
   return {ok:ok,err:err,modo:modo};
+}
+/* Panel de conflictos: una decisión por elemento repetido, con opción de aplicar a todos.
+   filas: [{clave,titulo,actual,nuevo}]  ·  opciones: [[valor,etiqueta,ayuda]] */
+function panelDuplicados(cont,filas,opciones,porDefecto){
+  const dec={}; filas.forEach(f=>dec[f.clave]=porDefecto);
+  const sel=(id,v)=>'<select data-dec="'+esc(id)+'" style="width:100%">'+
+    opciones.map(o=>'<option value="'+esc(o[0])+'"'+(o[0]===v?' selected':'')+' title="'+esc(o[2]||'')+'">'+esc(o[1])+'</option>').join('')+'</select>';
+  cont.innerHTML='<div class="note" style="border-left-color:var(--warn)"><b>'+filas.length+
+    ' elemento(s) ya existen.</b> Decide qué hacer con cada uno.</div>'+
+    '<div class="row" style="margin-bottom:10px"><span style="font-size:12.5px;color:var(--muted)">Aplicar a todos:</span>'+
+    '<span style="width:280px">'+sel('__todos__',porDefecto)+'</span></div>'+
+    '<div class="tw" style="max-height:320px"><table><thead><tr><th>Elemento</th><th>Lo que hay hoy</th>'+
+    '<th>Lo que trae el archivo</th><th style="width:280px">Decisión</th></tr></thead><tbody>'+
+    filas.map(f=>'<tr><td class="mono">'+esc(f.titulo)+'</td><td>'+esc(f.actual)+'</td><td>'+esc(f.nuevo)+
+      '</td><td>'+sel(f.clave,porDefecto)+'</td></tr>').join('')+'</tbody></table></div>';
+  cont.querySelectorAll('[data-dec]').forEach(el=>el.onchange=()=>{
+    if(el.dataset.dec==='__todos__'){
+      cont.querySelectorAll('[data-dec]').forEach(x=>{ if(x.dataset.dec!=='__todos__'){ x.value=el.value; dec[x.dataset.dec]=el.value; } });
+    } else dec[el.dataset.dec]=el.value;
+  });
+  return ()=>dec;
 }
 function barraEquipos(box,ro){
   const d=document.createElement('div'); d.style.marginTop='14px';
@@ -1713,22 +2102,51 @@ function barraEquipos(box,ro){
     const rep=d.querySelector('#eqRep'); rep.innerHTML='<div class="note"><span class="spin"></span> Leyendo…</div>';
     try{
       const r=await importarDispositivos(f,d.querySelector('#eqModo').value);
-      rep.innerHTML='<div class="note"><b>'+r.ok.length+' dispositivo(s) listos</b> · modo '+
+      const actuales={}; S.inv.forEach(e=>actuales[eqClave(e)]=e);
+      const desc=e=>[e.hostname,e.serie?'S/N '+e.serie:'',e.modelo,e.localidadId?'sede '+e.localidadId:'',e.piso,
+        e.firmware?'fw '+e.firmware:''].filter(Boolean).join(' · ');
+      const choques=r.modo==='replace'? [] : r.ok.filter(e=>actuales[eqClave(e)])
+        .map(e=>({clave:eqClave(e),titulo:e.serie||e.hostname,actual:desc(actuales[eqClave(e)]),nuevo:desc(e)}));
+      rep.innerHTML='<div class="note"><b>'+r.ok.length+' dispositivo(s) leídos</b> · modo '+
         (r.modo==='replace'?'reemplazar todo':'actualizar y agregar')+
+        (choques.length?' · <b style="color:var(--warn)">'+choques.length+' ya existen</b>':'')+
         (r.err.length?'<br><br><b style="color:var(--warn)">Avisos ('+r.err.length+'):</b><br>'+r.err.slice(0,25).map(esc).join('<br>')+
           (r.err.length>25?'<br>… y '+(r.err.length-25)+' más':''):'')+
-        '</div><button class="btn" id="eqGo">Aplicar al catálogo</button>';
+        '</div><div id="eqDup"></div><button class="btn" id="eqGo" style="margin-top:12px">Aplicar al catálogo</button>';
+      const leerDec = choques.length
+        ? panelDuplicados(rep.querySelector('#eqDup'),choques,
+            [['sobrescribir','Sobrescribir con el archivo','Los datos del archivo reemplazan a los actuales'],
+             ['conservar','Conservar el registro actual','Se ignora la fila del archivo'],
+             ['duplicar','Agregar como equipo aparte','Quedan dos registros; úsalo solo si de verdad son equipos distintos'],
+             ['eliminar','Eliminar del catálogo','Se borra el equipo existente y no se agrega el del archivo']],'sobrescribir')
+        : (()=>({}));
       rep.querySelector('#eqGo').onclick=async function(){
         busy(this,true);
         try{
-          if(r.modo==='replace') S.cat.equipos=r.ok;
+          const dec=leerDec();
+          if(r.modo==='replace') S.inv=r.ok;
           else{
-            const m={}; (S.cat.equipos||[]).forEach(e=>m[e.hostname]=e);
-            r.ok.forEach(e=>m[e.hostname]=e);
-            S.cat.equipos=Object.keys(m).map(k=>m[k]);
+            const m={}; S.inv.forEach(e=>m[eqClave(e)]=e);
+            const extras=[];
+            r.ok.forEach(e=>{
+              const k=eqClave(e), d=dec[k];
+              if(!m[k]||!d||d==='sobrescribir'){ m[k]=e; return; }
+              if(d==='conservar') return;
+              if(d==='eliminar'){ delete m[k]; return; }
+              if(d==='duplicar') extras.push(e);
+            });
+            S.inv=Object.keys(m).map(k=>m[k]).concat(extras);
           }
-          r.ok.forEach(e=>{ if(e.tipo && (S.cat.tiposDispositivo||[]).indexOf(e.tipo)===-1) S.cat.tiposDispositivo.push(e.tipo); });
-          if(await catalogoPush()){ toast(r.ok.length+' dispositivo(s) guardados.'); poblarCatalogosUI(); renderCat(); }
+          const nuevosTipos=r.ok.filter(e=>e.tipo&&(S.cat.tiposDispositivo||[]).indexOf(e.tipo)===-1).map(e=>e.tipo);
+          if(await invPush('importación de '+r.ok.length+' equipo(s)')){
+            if(nuevosTipos.length&&isAdmin()){
+              [...new Set(nuevosTipos)].forEach(t=>S.cat.tiposDispositivo.push(t));
+              try{ await catalogoPush(); }catch(e){}
+            } else if(nuevosTipos.length){
+              toast('Tipos nuevos ('+[...new Set(nuevosTipos)].join(', ')+') no se agregaron al catálogo: requiere administrador.','warn',9000);
+            }
+            toast(S.inv.length+' equipo(s) en el inventario.'); poblarCatalogosUI(); renderCat(); renderInv();
+          }
         }catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
         finally{ busy(this,false); }
       };
@@ -1744,13 +2162,13 @@ const COLS_HIST=[['id','# de Ticket',16],['cliente','Cliente',14],['localidad','
   ['tAfect','Tiempo de afectacion',16],['horaRes','Hora de reestablecimiento',20],['fechaCie','Fecha de cierre',15],
   ['horaCie','Hora de cierre',13],['imputable','Imputable a:',16],['notas','Notas y Actividades',44],
   ['observaciones','Observaciones',34],['respAp','Responsable Apertura',22],['respCi','Respolsable Cierre',22],
-  ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24]];
+  ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24],['series','Número(s) de serie (opcional)',26]];
 async function plantillaHistorico(){
   await escribirXlsx('Plantilla_Historico_Tickets_Sipnology',
     [{nombre:'Tickets',cols:COLS_HIST,oblig:['cliente','localidad','categoria','prioridad','fechaAp','status'],
       filas:[{id:'98090824-01',cliente:'BBVA',localidad:'Tecno Parque',piso:'P02',categoria:'Falla',
         subcategoria:'Dispositivo',tipo:'Falla de configuración',prioridad:'Baja (P3)',
-        equipos:'SW94071-IDF1-Tecno',colaterales:'Apagado controlado de equipos',
+        equipos:'SW94071-IDF1-Tecno',series:'FOC2345X6Y7, FOC2345X6Y8',colaterales:'Apagado controlado de equipos',
         fechaAp:'09/08/2024',horaAp:'08:33:00 PM',tFalla:'1:02:00',tAfect:'0:00:00',horaRes:'09:35:00 PM',
         fechaCie:'09/08/2024',horaCie:'09:35:00 PM',imputable:'Cliente',
         notas:'Apagado controlado de equipos por mantenimiento eléctrico.',observaciones:'Al finalizar se encienden equipos.',
@@ -1841,12 +2259,26 @@ async function analizarHistorico(file){
     if(st==='CERRADO'&&!fcie) avisos.push('Fila '+L+': ticket cerrado sin fecha de cierre.');
     const id=normFolio(g('deticket','numerodeticket','ticket','id'),loc.id,fap,usados,avisos,L);
     if(!id){ err.push('Fila '+L+': no se pudo determinar el folio.'); return; }
-    if(usados.indexOf(id)!==-1){ err.push('Fila '+L+': el folio '+id+' ya existe; se omite para no sobrescribir.'); return; }
+    const yaExiste = S.idx.some(x=>x.id===id);
+    if(!yaExiste && usados.indexOf(id)!==-1){ err.push('Fila '+L+': el folio '+id+' se repite dentro del archivo.'); return; }
     usados.push(id);
     const notas=[String(g('notasyactividades')||'').trim(),String(g('observaciones')||'').trim()]
       .filter(Boolean).map(x=>'<p>'+esc(x)+'</p>').join('');
-    const equipos=String(g('equipoprincipalafectado','equipoafectado','equipos')||'')
+    const hosts=String(g('equipoprincipalafectado','equipoafectado','equipos')||'')
       .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
+    const series=String(g('numerosdeserieopcional','numerodeserie','nodeserie','series','serie')||'')
+      .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
+    if(series.length && hosts.length && series.length!==hosts.length)
+      avisos.push('Fila '+L+': hay '+hosts.length+' equipo(s) y '+series.length+' serie(s); se emparejan por posición.');
+    const equipos=(hosts.length?hosts:series.map(()=> '')).map((h,i)=>{
+      const sn=series[i]||'';
+      if(h&&!sn){  /* si el hostname es único en el catálogo, toma su serie */
+        const c=S.inv.filter(e=>String(e.hostname).toLowerCase()===h.toLowerCase());
+        if(c.length===1) return {hostname:h,serie:c[0].serie||'',tipo:c[0].tipo||'',modelo:c[0].modelo||''};
+        if(c.length>1) avisos.push('Fila '+L+': «'+h+'» tiene '+c.length+' equipos en el catálogo (stack); sin serie no se puede saber cuál.');
+      }
+      return {hostname:h,serie:sn,tipo:'',modelo:''};
+    }).filter(e=>e.hostname||e.serie);
     const colTxt=String(g('colateralesafectados','colaterales')||'').trim();
     const ini=dt(fap,hap), fin=dt(fcie,hcie);
     ok.push({
@@ -1862,7 +2294,7 @@ async function analizarHistorico(file){
       tAfect:String(g('tiempodeafectacion')||'').trim(),
       respCi:String(g('respolsablecierre','responsablecierre')||'').trim(), respCiMail:'',
       crq:String(g('ticketclientecrqopcional','ticketcliente','crq')||'').trim(),
-      descripcion:sanitizeHtml(notas), adjuntos:[], importado:true,
+      descripcion:sanitizeHtml(notas), adjuntos:[], importado:true, yaExiste:yaExiste,
       historial:[{cuando:new Date().toISOString(),usuario:S.me.mail,accion:'IMPORTADO DEL HISTÓRICO',
         status:st,nota:sanitizeHtml(notas)||'<i>(sin notas)</i>',archivos:[]}],
       creado:new Date().toISOString(), actualizado:new Date().toISOString()
@@ -1901,34 +2333,286 @@ function renderHistorico(box,ro){
     rep.innerHTML='<div class="note"><span class="spin"></span> Analizando «'+esc(f.name)+'»…</div>';
     try{
       const r=await analizarHistorico(f);
+      const dupes=r.ok.filter(t=>t.yaExiste);
       const lista=(arr,color)=>arr.length? '<br><br><b style="color:'+color+'">'+arr.length+' aviso(s):</b><br>'+
         arr.slice(0,30).map(esc).join('<br>')+(arr.length>30?'<br>… y '+(arr.length-30)+' más':'') : '';
-      rep.innerHTML='<div class="note"><b>'+r.total+' fila(s) leídas · '+r.ok.length+' listas para importar · '+
-        r.err.length+' con error</b>'+
+      rep.innerHTML='<div class="note"><b>'+r.total+' fila(s) leídas · '+r.ok.length+' válidas · '+
+        r.err.length+' con error'+(dupes.length?' · '+dupes.length+' con folio ya existente':'')+'</b>'+
         lista(r.err,'var(--p1)').replace('aviso(s)','error(es)')+lista(r.avisos,'var(--warn)')+'</div>'+
+        '<div id="hDup"></div>'+
         (r.ok.length? '<div class="tw" style="max-height:280px"><table><thead><tr><th>ID</th><th>Status</th><th>Pri</th>'+
           '<th>Cliente</th><th>Localidad</th><th>Piso</th><th>Categoría</th><th>Apertura</th><th>Cierre</th></tr></thead><tbody>'+
           r.ok.map(t=>'<tr><td class="mono">'+esc(t.id)+'</td><td>'+pillStatus(t.status)+'</td><td>'+pillPri(t.prioridad)+
             '</td><td>'+esc(t.cliente)+'</td><td>'+esc(t.localidad)+'</td><td>'+esc(t.piso)+'</td><td>'+esc(t.categoria)+
             '</td><td class="mono">'+esc(fechaHumana(t.fechaAp,t.horaAp))+'</td><td class="mono">'+esc(fechaHumana(t.fechaCie,t.horaCie))+
             '</td></tr>').join('')+'</tbody></table></div>'+
-          '<div class="row" style="margin-top:12px"><button class="btn" id="hGo">Importar '+r.ok.length+' ticket(s)</button>'+
+          '<div class="row" style="margin-top:12px"><button class="btn" id="hGo">Importar</button>'+
           '<span id="hProg" style="color:var(--muted);font-size:12.5px"></span></div>' : '');
+      const leerDec = dupes.length
+        ? panelDuplicados(rep.querySelector('#hDup'),
+            dupes.map(t=>{ const v=S.idx.find(x=>x.id===t.id)||{};
+              return {clave:t.id,titulo:t.id,
+                actual:[v.status,v.cliente,v.localidad,fechaHumana(v.fechaAp)].filter(Boolean).join(' · '),
+                nuevo:[t.status,t.cliente,t.localidad,fechaHumana(t.fechaAp)].filter(Boolean).join(' · ')}; }),
+            [['omitir','Omitir la fila del archivo','No se toca el ticket que ya existe'],
+             ['sobrescribir','Sobrescribir el ticket existente','Se pierde el contenido actual del expediente'],
+             ['renumerar','Importar con folio nuevo','Se le asigna el siguiente consecutivo de ese día']],'omitir')
+        : (()=>({}));
       const go=rep.querySelector('#hGo'); if(!go) return;
       go.onclick=async function(){
-        if(!confirm('Se crearán '+r.ok.length+' expedientes en SharePoint. ¿Continuar?')) return;
+        const dec=leerDec();
+        const usados=S.idx.map(x=>x.id).slice();
+        const lista=[];
+        r.ok.forEach(t=>{
+          if(!t.yaExiste){ lista.push(t); usados.push(t.id); return; }
+          const d=dec[t.id]||'omitir';
+          if(d==='omitir') return;
+          if(d==='sobrescribir'){ lista.push(t); return; }
+          const base=baseFolio(t.localidadId,t.fechaAp);
+          if(!base) return;
+          let n=1; while(usados.indexOf(base+'-'+pad2(n))!==-1) n++;
+          const nuevo=base+'-'+pad2(n);
+          usados.push(nuevo);
+          lista.push(Object.assign({},t,{id:nuevo,folioOriginal:t.id,
+            ruta:P_CASOS+'/'+t.fechaAp.slice(0,7)+'/'+sanitizeName(nuevo)}));
+        });
+        if(!lista.length){ toast('No quedó ninguna fila por importar.','warn'); return; }
+        const sob=lista.filter(t=>t.yaExiste&&(dec[t.id]==='sobrescribir')).length;
+        if(!confirm('Se escribirán '+lista.length+' expediente(s) en SharePoint'+
+          (sob?', de los cuales '+sob+' SOBRESCRIBEN tickets existentes':'')+'. ¿Continuar?')) return;
         busy(this,true);
         const pr=rep.querySelector('#hProg');
         try{
-          await ejecutarImportacion(r.ok,(n,t)=>{ pr.textContent=n+' / '+t; });
-          toast(r.ok.length+' ticket(s) importados.');
+          await ejecutarImportacion(lista,(n,t)=>{ pr.textContent=n+' / '+t; });
+          toast(lista.length+' ticket(s) importados.');
           renderSeg(); renderDash(); poblarCatalogosUI();
-          rep.innerHTML='<div class="note"><b>Importación completa:</b> '+r.ok.length+' ticket(s). Revísalos en Seguimiento.</div>';
+          rep.innerHTML='<div class="note"><b>Importación completa:</b> '+lista.length+' ticket(s). Revísalos en Seguimiento.</div>';
         }catch(e){ toast('Falló la importación: '+e.message,'err',10000); pr.textContent='Detenido en '+pr.textContent; }
         finally{ busy(this,false); }
       };
     }catch(e){ rep.innerHTML='<div class="note" style="border-left-color:var(--p1)">'+esc(e.message)+'</div>'; }
   };
+}
+
+/* ---------------------- 19ter. MÓDULO DE INVENTARIO ---------------------- */
+let _invPage=1, _invSize=25, _invEdit=null;
+/* Los cambios se acumulan en memoria y se escriben a SharePoint con "Guardar cambios".
+   _invSnap es la última versión confirmada, para poder descartar. */
+let _invCambios=[], _invSnap=null;
+function invSucio(){ return _invCambios.length>0; }
+function invMarcar(desc){ _invCambios.push(desc); }
+function invConfirmado(){ _invCambios=[]; _invSnap=JSON.stringify(S.inv); }
+function invDescartar(){
+  if(_invSnap==null) return;
+  S.inv=JSON.parse(_invSnap).map(normEquipo);
+  _invCambios=[]; _invEdit=null; renderInv(); poblarCatalogosUI(); renderCat();
+  toast('Cambios descartados.');
+}
+/* Valores que aparecen en el inventario pero todavía no existen en los catálogos maestros. */
+function nuevosParaCatalogo(){
+  const tipos=[...new Set(S.inv.map(e=>e.tipo).filter(t=>t&&(S.cat.tiposDispositivo||[]).indexOf(t)===-1))];
+  const pisos=[];
+  S.inv.forEach(e=>{
+    if(!e.piso||!e.localidadId) return;
+    const l=(S.cat.localidades||[]).find(x=>x.id===e.localidadId); if(!l) return;
+    if((l.pisos||[]).indexOf(e.piso)===-1 && !pisos.some(p=>p.locId===e.localidadId&&p.piso===e.piso))
+      pisos.push({locId:e.localidadId,nombre:l.nombre,piso:e.piso});
+  });
+  const sedes=[...new Set(S.inv.map(e=>e.localidadId).filter(id=>id&&!(S.cat.localidades||[]).some(l=>l.id===id)))];
+  const clientes=[...new Set(S.inv.map(e=>e.clienteId).filter(id=>id&&!(S.cat.clientes||[]).some(c=>c.id===id)))];
+  return {tipos:tipos,pisos:pisos,sedes:sedes,clientes:clientes};
+}
+/* Guarda el inventario y, si hay valores nuevos, ofrece reflejarlos en el catálogo maestro. */
+async function guardarInventario(detalle){
+  const n=nuevosParaCatalogo();
+  let tocarCatalogo=false;
+  const hayAltas=n.tipos.length||n.pisos.length;
+  if(hayAltas){
+    let m='En el inventario hay valores que aún no existen en el catálogo:\n\n';
+    if(n.tipos.length) m+='Tipos de dispositivo:\n  · '+n.tipos.join('\n  · ')+'\n\n';
+    if(n.pisos.length) m+='Pisos:\n'+n.pisos.map(p=>'  · '+p.piso+' en '+p.nombre+' ['+p.locId+']').join('\n')+'\n\n';
+    if(isAdmin()) m+='¿Deseas actualizar también el catálogo con estos valores?\n\n'+
+      'Aceptar: se guardan el inventario y el catálogo.\nCancelar: solo se guarda el inventario.';
+    else m+='Solo el administrador puede darlos de alta en el catálogo.\n'+
+      'Se guardará el inventario; pídele a Fernando que los agregue.\n\n¿Continuar?';
+    if(!confirm(m)){ if(!isAdmin()) return false; }
+    else tocarCatalogo=isAdmin();
+  }
+  if(n.sedes.length) toast('Hay equipos con sedes que no existen en el catálogo: '+n.sedes.join(', '),'warn',9000);
+  if(n.clientes.length) toast('Hay equipos con clientes que no existen en el catálogo: '+n.clientes.join(', '),'warn',9000);
+  if(!await invPush(detalle||(_invCambios.length+' cambio(s)'))) return false;
+  if(tocarCatalogo){
+    n.tipos.forEach(t=>S.cat.tiposDispositivo.push(t));
+    n.pisos.forEach(p=>{ const l=(S.cat.localidades||[]).find(x=>x.id===p.locId);
+      if(l){ l.pisos=l.pisos||[]; l.pisos.push(p.piso); l.pisos.sort(); } });
+    try{
+      if(await catalogoPush()){
+        toast('Catálogo actualizado: '+n.tipos.length+' tipo(s) y '+n.pisos.length+' piso(s).');
+        logEvent('CATALOGO_DESDE_INVENTARIO',
+          'tipos: '+(n.tipos.join(', ')||'—')+' · pisos: '+(n.pisos.map(p=>p.piso+'@'+p.locId).join(', ')||'—'));
+      }
+    }catch(e){ toast('El inventario se guardó, pero el catálogo no: '+e.message,'err',10000); }
+  }
+  invConfirmado(); poblarCatalogosUI(); renderInv(); renderCat();
+  return true;
+}
+function renderPendientes(){
+  const c=$('#iPend'); if(!c) return;
+  if(!invSucio()||!puedeEditarInventario()){ c.innerHTML=''; return; }
+  c.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+    '<b>'+_invCambios.length+' cambio(s) sin guardar.</b> No se han escrito en SharePoint todavía.'+
+    '<div style="margin-top:6px;font-size:11.5px;color:var(--muted)">'+
+    _invCambios.slice(-6).map(esc).join('<br>')+(_invCambios.length>6?'<br>…':'')+'</div>'+
+    '<div class="row" style="margin-top:10px">'+
+    '<button class="btn" id="iGuardar">Guardar cambios</button>'+
+    '<button class="btn sec" id="iDescartar">Descartar</button></div></div>';
+  c.querySelector('#iGuardar').onclick=async function(){ busy(this,true);
+    try{ if(await guardarInventario()) toast('Inventario guardado.'); }
+    catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
+    finally{ busy(this,false); } };
+  c.querySelector('#iDescartar').onclick=()=>{ if(confirm('¿Descartar los '+_invCambios.length+' cambio(s) sin guardar?')) invDescartar(); };
+}
+function invVisible(){
+  /* Un invitado de cliente solo ve su propio parque instalado. */
+  return S.role==='cliente'&&S.clienteScope ? S.inv.filter(e=>clienteDeEquipo(e)===S.clienteScope) : S.inv;
+}
+function invFiltrado(){
+  const cli=$('#iCliente').value; if(!cli) return [];
+  const g=id=>String($(id).value||'').trim().toLowerCase();
+  const host=g('#iHost'), serie=g('#iSerie');
+  const tipo=$('#iTipo').value, modelo=$('#iModelo').value, locId=$('#iLocId').value,
+        loc=$('#iLoc').value, piso=$('#iPiso').value, fw=$('#iFw').value;
+  return invVisible().filter(e=>{
+    if(clienteDeEquipo(e)!==cli) return false;
+    if(host && String(e.hostname||'').toLowerCase().indexOf(host)===-1) return false;
+    if(serie && String(e.serie||'').toLowerCase().indexOf(serie)===-1) return false;
+    if(tipo && e.tipo!==tipo) return false;
+    if(modelo && e.modelo!==modelo) return false;
+    if(locId && e.localidadId!==locId) return false;
+    if(loc && nombreLoc(e.localidadId)!==loc) return false;
+    if(piso && e.piso!==piso) return false;
+    if(fw && String(e.firmware||'')!==fw) return false;
+    return true;
+  });
+}
+function opciones(arr,f){ return [...new Set(arr.map(f).filter(x=>x!==''&&x!=null))].sort(); }
+function poblarFiltrosInv(){
+  const cli=$('#iCliente').value;
+  const base=invVisible().filter(e=>!cli||clienteDeEquipo(e)===cli);
+  const guarda={};
+  ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>guarda[id]=$('#'+id).value);
+  fillSel('#iTipo',opciones(base,e=>e.tipo),'Todos',guarda.iTipo);
+  fillSel('#iModelo',opciones(base,e=>e.modelo),'Todos',guarda.iModelo);
+  fillSel('#iLocId',opciones(base,e=>e.localidadId),'Todas',guarda.iLocId);
+  fillSel('#iLoc',opciones(base,e=>nombreLoc(e.localidadId)),'Todas',guarda.iLoc);
+  fillSel('#iPiso',opciones(base,e=>e.piso),'Todos',guarda.iPiso);
+  fillSel('#iFw',opciones(base,e=>e.firmware),'Todas',guarda.iFw);
+}
+function renderInv(){
+  if(!S.cat||!$('#iCliente')) return;
+  const clientes=(S.cat.clientes||[]).filter(c=>S.role!=='cliente'||!S.clienteScope||c.id===S.clienteScope);
+  const antes=$('#iCliente').value;
+  fillSel('#iCliente',clientes.map(c=>({v:c.id,t:c.nombre})),'— selecciona un cliente —',antes);
+  if(S.role==='cliente'&&clientes.length===1&&!$('#iCliente').value) $('#iCliente').value=clientes[0].id;
+  const cli=$('#iCliente').value;
+  $('#iFiltros').classList.toggle('hide',!cli);
+  $('#iVacio').classList.toggle('hide',!!cli);
+  $('#iPanel').classList.toggle('hide',!cli);
+  if(!cli) return;
+  poblarFiltrosInv();
+  const todos=invVisible().filter(e=>clienteDeEquipo(e)===cli);
+  const filas=invFiltrado();
+  const pages=Math.max(1,Math.ceil(filas.length/_invSize));
+  if(_invPage>pages) _invPage=pages;
+  const rows=filas.slice((_invPage-1)*_invSize,(_invPage-1)*_invSize+_invSize);
+  $('#iKpis').innerHTML=[
+    ['Equipos del cliente',todos.length,''],
+    ['Coinciden con el filtro',filas.length,'color:var(--brand2)'],
+    ['Sedes',new Set(todos.map(e=>e.localidadId).filter(Boolean)).size,''],
+    ['Modelos distintos',new Set(todos.map(e=>e.modelo).filter(Boolean)).size,''],
+    ['Sin número de serie',todos.filter(e=>!e.serie).length,todos.some(e=>!e.serie)?'color:var(--warn)':''],
+    ['Sin firmware',todos.filter(e=>!e.firmware).length,todos.some(e=>!e.firmware)?'color:var(--warn)':'']
+  ].map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
+  $('#iCount').textContent='· '+filas.length+' de '+todos.length;
+  renderPendientes();
+  const puede=puedeEditarInventario();
+  $('#iNuevo').classList.toggle('hide',!puede);
+  const cel=(e,c,i)=> _invEdit===S.inv.indexOf(e)
+    ? '<td><input data-e="'+c+'" value="'+esc(e[c]==null?'':e[c])+'"></td>'
+    : '<td'+(c==='serie'||c==='firmware'?' class="mono"':'')+'>'+esc(e[c]||'')+'</td>';
+  $('#tblInv').tBodies[0].innerHTML = rows.length? rows.map(e=>{
+    const i=S.inv.indexOf(e), edit=_invEdit===i;
+    return '<tr>'+
+      '<td>'+esc((( S.cat.clientes||[]).find(c=>c.id===clienteDeEquipo(e))||{}).nombre||clienteDeEquipo(e))+'</td>'+
+      cel(e,'hostname')+cel(e,'serie')+cel(e,'tipo')+cel(e,'modelo')+cel(e,'localidadId')+
+      '<td>'+esc(nombreLoc(e.localidadId))+'</td>'+cel(e,'piso')+cel(e,'firmware')+
+      '<td style="white-space:nowrap">'+(puede? (edit
+        ? '<button class="btn" style="padding:3px 9px" data-ok="'+i+'" title="Aplicar (se guarda con «Guardar cambios»)">✓</button> '+
+          '<button class="btn sec" style="padding:3px 9px" data-cancel="1" title="Cancelar">✕</button>'
+        : '<button class="btn sec" style="padding:3px 9px" data-edit="'+i+'" title="Editar">✎</button> '+
+          '<button class="btn dan" style="padding:3px 9px" data-rm="'+i+'" title="Eliminar">🗑</button>') : '')+'</td>'+
+    '</tr>';
+  }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">Sin equipos que coincidan</td></tr>';
+  $('#tblInv').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{ _invEdit=+b.dataset.edit; renderInv(); });
+  $('#tblInv').querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>{ _invEdit=null; renderInv(); });
+  $('#tblInv').querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>aplicarFilaInv(+b.dataset.ok,b));
+  $('#tblInv').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>eliminarEquipo(+b.dataset.rm));
+  let pg='<span>Filas</span><select id="iSize" style="width:70px;padding:3px">'+
+    [10,25,50,100].map(n=>'<option'+(n===_invSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
+  pg+='<button data-p="'+(_invPage-1)+'"'+(_invPage<=1?' disabled':'')+'>‹</button>';
+  for(let i=Math.max(1,_invPage-2);i<=Math.min(pages,_invPage+2);i++)
+    pg+='<button data-p="'+i+'" class="'+(i===_invPage?'on':'')+'">'+i+'</button>';
+  pg+='<button data-p="'+(_invPage+1)+'"'+(_invPage>=pages?' disabled':'')+'>›</button>';
+  $('#iPag').innerHTML=pg;
+  $('#iPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{_invPage=Math.max(1,Math.min(pages,+b.dataset.p));renderInv();});
+  const sz=$('#iSize'); if(sz) sz.onchange=()=>{_invSize=+sz.value;_invPage=1;renderInv();};
+}
+/* Aplica la edición en memoria. La escritura ocurre en "Guardar cambios". */
+function aplicarFilaInv(i,btn){
+  const e=S.inv[i]; if(!e) return;
+  const fila=btn.closest('tr'); const antes=JSON.parse(JSON.stringify(e));
+  fila.querySelectorAll('[data-e]').forEach(inp=>{ e[inp.dataset.e]=inp.value.trim(); });
+  if(!e.hostname&&!e.serie){ toast('El equipo necesita al menos hostname o número de serie.','err');
+    Object.assign(e,antes); return; }
+  const choque=S.inv.some((x,j)=>j!==i&&x.serie&&e.serie&&x.serie.toUpperCase()===e.serie.toUpperCase());
+  if(choque){ toast('Ya existe otro equipo con el número de serie '+e.serie+'.','err',7000);
+    Object.assign(e,antes); renderInv(); return; }
+  Object.assign(e,normEquipo(e));
+  const nuevo=!!e._nuevo; delete e._nuevo;
+  const cambios=Object.keys(e).filter(k=>k!=='_nuevo'&&String(antes[k]||'')!==String(e[k]||''))
+    .map(k=>k+': «'+(antes[k]||'')+'» → «'+(e[k]||'')+'»').join(' · ');
+  if(!nuevo&&!cambios){ _invEdit=null; renderInv(); return; }
+  invMarcar((nuevo?'Alta · ':'Edición · ')+(e.serie||e.hostname)+(cambios?' · '+cambios:''));
+  _invEdit=null; renderInv();
+}
+function eliminarEquipo(i){
+  const e=S.inv[i]; if(!e) return;
+  if(!confirm('¿Eliminar «'+(e.hostname||'(sin hostname)')+(e.serie?' · '+e.serie:'')+'» del inventario?\n'+
+    'Los tickets que lo mencionan conservan el registro histórico.\n\n'+
+    'El cambio se aplica al guardar.')) return;
+  S.inv.splice(i,1);
+  invMarcar('Baja · '+(e.serie||e.hostname||'(sin identificar)'));
+  _invEdit=null; renderInv();
+}
+function nuevoEquipo(){
+  const cli=$('#iCliente').value; if(!cli) return;
+  const loc=$('#iLocId').value||((S.cat.localidades||[]).find(l=>l.clienteId===cli)||{}).id||'';
+  const e=normEquipo({clienteId:cli,localidadId:loc,piso:$('#iPiso').value||''});
+  e._nuevo=true;
+  S.inv.unshift(e);
+  _invEdit=0; _invPage=1; renderInv();
+  toast('Captura los datos, aplica con ✓ y luego usa «Guardar cambios».');
+}
+async function exportarInventario(){
+  const filas=invFiltrado();
+  if(!filas.length){ toast('No hay equipos que exportar.','warn'); return; }
+  const cli=((S.cat.clientes||[]).find(c=>c.id===$('#iCliente').value)||{}).nombre||'cliente';
+  await escribirXlsx('Inventario_'+sanitizeName(cli)+'_'+todayISO(),
+    [{nombre:'Inventario',cols:COLS_DISP,
+      filas:filas.map(e=>Object.assign({},e,{cliente:cli,localidad:nombreLoc(e.localidadId)})),
+      oblig:['hostname','serie','tipo','localidadId']},
+     Object.assign({filas:filasReferencia()},HOJA_REF)]);
+  logEvent('EXPORT_INVENTARIO',cli+' · '+filas.length+' equipos');
 }
 
 /* ---------------------- 20. BITÁCORA (render) ---------------------- */
@@ -1953,9 +2637,13 @@ function renderBit(){
 
 /* ---------------------- 21. NAVEGACIÓN Y EVENTOS ---------------------- */
 function irA(v){
+  if(invSucio()&&v!=='vInventario'&&v!=='vCatalogos'&&
+     !confirm('Tienes '+_invCambios.length+' cambio(s) de inventario sin guardar.\n'+
+              'Si sales de la vista siguen pendientes, pero no se habrán escrito en SharePoint.\n\n¿Continuar?')) return;
   $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
   $$('.view').forEach(s=>s.classList.toggle('on',s.id===v));
   if(v==='vEstado') renderDash();
+  if(v==='vInventario') renderInv();
   if(v==='vCatalogos') renderCat();
   if(v==='vBitacora') renderBit();
 }
@@ -1965,12 +2653,20 @@ function enlazarEventos(){
     try{ await msalApp().logoutPopup(); }catch(e){} location.reload(); };
 
   // Apertura
+  msInit('#tPiso','— selecciona piso(s) —',()=>{ refrescarEquiposMS(); });
+  msInit('#tEquipoMS','— selecciona equipo(s) —',()=>{ sincronizarEquipos(); });
+  msDisabled('#tEquipoMS',true);
   enlazarCascadas(); enlazarRTE();
   enlazarDrop('#tDrop','#tFiles','#tFileList','filesNew');
   enlazarDrop('#sDrop','#sFiles','#sFileList','filesSeg');
   $('#btnAhora').onclick=ahora;
-  $('#btnEqAdd').onclick=()=>{const v=$('#tEquipoSel').value; if(v&&_equipos.indexOf(v)===-1){_equipos.push(v);renderChips();}};
-  $('#btnEqLibre').onclick=()=>{const v=$('#tEqLibre').value.trim(); if(v&&_equipos.indexOf(v)===-1){_equipos.push(v);$('#tEqLibre').value='';renderChips();}};
+  $('#btnEqLibre').onclick=()=>{
+    const h=$('#tEqLibre').value.trim(), sn=$('#tSerieLibre').value.trim();
+    if(!h&&!sn){ toast('Escribe al menos el hostname o el número de serie.','err'); return; }
+    const e={hostname:h||'(sin hostname)',serie:sn,tipo:'',modelo:'',manual:true};
+    if(_equipos.some(x=>eqClave(x)===eqClave(e))){ toast('Ese equipo ya está agregado.','warn'); return; }
+    _equipos.push(e); $('#tEqLibre').value=''; $('#tSerieLibre').value=''; renderChips();
+  };
   $('#btnColAdd').onclick=()=>{const t=$('#tColTipo').value,c=+$('#tColCant').value||1;
     if(t){_colaterales.push({tipo:t,cant:c});renderChips();}};
   $('#btnCrear').onclick=crearTicket;
@@ -2007,11 +2703,26 @@ function enlazarEventos(){
 
   // Catálogos
   $('#catSel').onchange=renderCat;
-  $('#btnCatReload').onclick=async()=>{ await catalogoPull(); renderCat(); };
+  $('#btnCatReload').onclick=async()=>{ await catalogoPull(); await invPull(); renderCat(); };
   $('#btnCatSave').onclick=async function(){ busy(this,true);
-    try{ if(await catalogoPush()){ toast('Catálogo guardado.'); poblarCatalogosUI(); } }
+    try{
+      const esInv=$('#catSel').value==='equipos';
+      const okGuardado = esInv? await guardarInventario('edición manual desde Catálogos') : await catalogoPush();
+      if(okGuardado){ toast(esInv?'Inventario guardado.':'Catálogo guardado.'); poblarCatalogosUI(); renderInv(); } }
     catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
     finally{ busy(this,false); } };
+
+  // Inventario
+  $('#iCliente').onchange=()=>{ _invEdit=null; _invPage=1;
+    ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>{ const el=$('#'+id); if(el) el.selectedIndex=0; });
+    $('#iHost').value=''; $('#iSerie').value=''; renderInv(); };
+  ['iHost','iSerie'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
+  ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
+  $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value='';
+    ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
+  $('#iRefrescar').onclick=async function(){ busy(this,true); _invEdit=null; await invPull(); busy(this,false); };
+  $('#iNuevo').onclick=nuevoEquipo;
+  $('#iExport').onclick=()=>exportarInventario().catch(e=>toast(e.message,'err'));
 
   // Bitácora / correo
   $('#bitQ').oninput=()=>{S.bitPage=1;renderBit();};
@@ -2025,6 +2736,9 @@ function enlazarEventos(){
 }
 
 /* ---------------------- 22. ARRANQUE ---------------------- */
+window.addEventListener('beforeunload',function(e){
+  if(invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
+});
 window.addEventListener('DOMContentLoaded',function(){
   ahora(); enlazarEventos();
   initAuthGate();
@@ -2038,7 +2752,12 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
   buscarPri:buscarPri,buscarCliente:buscarCliente,buscarLoc:buscarLoc,normStatus:normStatus,
-  COLS_HIST:COLS_HIST,COLS_DISP:COLS_DISP};
+  COLS_HIST:COLS_HIST,COLS_DISP:COLS_DISP,eqNorm:eqNorm,eqLabel:eqLabel,eqClave:eqClave,moverFila:moverFila,equiposDe:equiposDe,
+  normEquipo:normEquipo,clienteDeEquipo:clienteDeEquipo,invFiltrado:invFiltrado,invVisible:invVisible,
+  puedeEditarInventario:puedeEditarInventario,opciones:opciones,
+  nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,
+  invConfirmado:invConfirmado,invDescartar:invDescartar,
+  cambios:()=>_invCambios.slice()};
 </script>
 </body>
 </html>
