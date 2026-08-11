@@ -195,7 +195,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .charts{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))}
 .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;position:relative}
 .chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
-.chartbox canvas{max-height:260px}
+.chartbox canvas{max-height:280px}
 .chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
 .chartbox .cab{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-right:22px}
 .chartbox .cab h3{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -758,7 +758,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-11 · r18';
+const APP_VER = '2026-08-11 · r19';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2169,7 +2169,10 @@ const DIMENSIONES=[
   {k:'respAp',    t:'Tickets por responsable de apertura',f:t=>t.respAp||'(n/d)',  tipo:'bar'},
   {k:'sla',       t:'Cumplimiento de SLA',        f:t=>slaInfo(t).vencido?'Fuera de SLA':'Dentro de SLA',tipo:'doughnut'}
 ];
-const PALETA=['#e9662d','#3b82f6','#f59e0b','#22c55e','#ef4444','#7c3aed','#0ea5e9','#ec4899','#84cc16','#14b8a6','#f97316','#94a3b8'];
+/* Paleta de saturación pareja: ningún color grita más que otro y todos leen bien
+   sobre el fondo oscuro. Ordenada para que dos vecinos nunca se confundan. */
+const PALETA=['#5b9bd5','#ed8a4e','#6fbf8b','#e8c468','#a58bd0','#5fc2c2',
+              '#e8879e','#8fd0bd','#c69ac9','#f0a878','#b5d478','#89a9d6'];
 
 function dashFiltrado(){
   return S.idx.filter(t=>{
@@ -2283,21 +2286,49 @@ function selectorTipo(mod,k,actual){
 }
 /* Traduce el tipo elegido a la configuración de Chart.js. */
 function configGrafica(tipo,etiqueta,labels,datos,colores){
-  const circular=['doughnut','pie','polarArea','radar'].indexOf(tipo)!==-1;
+  const radial=tipo==='polarArea'||tipo==='radar';
+  const tarta=tipo==='doughnut'||tipo==='pie';
+  const circular=radial||tarta;
   const linea=tipo==='line'||tipo==='area';
   const real=tipo==='barH'?'bar':(tipo==='area'?'line':tipo);
-  const ejeTexto={color:'#93a0bd',font:{size:10},maxRotation:60};
-  return {
+  const gris='#93a0bd', reja='rgba(255,255,255,.07)';
+  const ejeCat={color:gris,font:{size:10},autoSkip:true,maxRotation:tipo==='barH'?0:55,
+    callback:function(v){ const t=String(this.getLabelForValue?this.getLabelForValue(v):v);
+      return t.length>22? t.slice(0,21)+'…' : t; }};
+  const ejeNum={color:gris,precision:0,padding:4};
+  const cfg={
     type:real,
     data:{labels:labels,datasets:[{label:etiqueta,data:datos,
-      backgroundColor:linea?'rgba(233,102,45,.25)':colores,
-      borderColor:linea?'#e9662d':(tipo==='radar'?'#e9662d':'rgba(0,0,0,.15)'),
-      borderWidth:1,fill:tipo==='area'||tipo==='radar',tension:.3}]},
+      backgroundColor:linea?'rgba(91,155,213,.28)':(radial?colores.map(c=>c+'cc'):colores),
+      borderColor:linea?'#5b9bd5':(tarta?'rgba(15,23,42,.85)':(radial?'#5b9bd5':'rgba(255,255,255,.12)')),
+      borderWidth:tarta?2:1, fill:tipo==='area'||tipo==='radar', tension:.3,
+      pointBackgroundColor:'#5b9bd5', pointRadius:tipo==='radar'?3:2, maxBarThickness:46}]},
     options:{responsive:true,maintainAspectRatio:true,animation:false,
       indexAxis:tipo==='barH'?'y':'x',
-      plugins:{legend:{display:circular,position:'bottom',labels:{color:'#93a0bd',boxWidth:12,font:{size:11}}}},
-      scales:circular?{}:{x:{ticks:ejeTexto},y:{beginAtZero:true,ticks:{color:'#93a0bd',precision:0}}}}
+      /* Espacio interior: sin esto, las etiquetas de los ejes radiales se cortan en el borde. */
+      layout:{padding:radial?14:6},
+      plugins:{
+        legend:{display:circular,position:'bottom',
+          labels:{color:gris,boxWidth:11,boxHeight:11,padding:10,font:{size:11},usePointStyle:true}},
+        tooltip:{backgroundColor:'rgba(15,23,42,.96)',borderColor:'rgba(255,255,255,.12)',borderWidth:1,
+          titleColor:'#e8edf7',bodyColor:'#e8edf7',padding:10,displayColors:true}
+      }}
   };
+  if(radial){
+    cfg.options.scales={r:{
+      beginAtZero:true,
+      ticks:{color:gris,backdropColor:'transparent',showLabelBackdrop:false,precision:0,font:{size:9},z:2},
+      grid:{color:reja}, angleLines:{color:reja},
+      pointLabels:{color:gris,font:{size:10}}
+    }};
+  }else if(tarta){
+    cfg.options.scales={};        /* dona y pastel no tienen ejes */
+  }else{
+    cfg.options.scales = tipo==='barH'
+      ? {x:{beginAtZero:true,ticks:ejeNum,grid:{color:reja}},y:{ticks:ejeCat,grid:{display:false}}}
+      : {x:{ticks:ejeCat,grid:{display:false}},y:{beginAtZero:true,ticks:ejeNum,grid:{color:reja}}};
+  }
+  return cfg;
 }
 function enlazarSelectoresTipo(cont,alCambiar){
   cont.querySelectorAll('[data-tipo]').forEach(sel=>sel.onchange=()=>{
@@ -2453,7 +2484,6 @@ async function enviarCorreo(){
 
 /* ---------------------- 19. CATÁLOGOS (solo administrador) ---------------------- */
 const ESQUEMAS={
-  clientes:{titulo:'Clientes',cols:[['id','ID',10],['nombre','Nombre',22],['dominios','Dominios de correo (coma)',26],['correosNotif','Correos de notificación (coma)',30]],lista:['dominios','correosNotif']},
   localidades:{titulo:'Localidades / Sedes',cols:[['id','ID (2 dígitos)',12],['clienteId','Cliente',12],['nombre','Nombre',26]],
     nota:'El ID de 2 dígitos es el prefijo del folio. Ej.: sede 98 → ticket 98090826-01.'},
   prioridades:{titulo:'Prioridades y SLA',cols:[['id','ID',8],['nombre','Nombre visible',22],['slaHoras','SLA (horas)',10]],num:['slaHoras']},
@@ -2469,10 +2499,11 @@ function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
   $('#btnCatSave').disabled = k==='equipos' ? !puedeEditarInventario() : ro;
   if(k==='historico') return renderHistorico(box,ro);
+  /* Clientes tiene editor propio (módulos y logo): va antes que las tablas genéricas. */
+  if(k==='clientes') return renderClientes(box,ro);
   if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
-  if(k==='clientes') return renderClientes(box,ro);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
   if(k==='categorias') return renderMapa(box,ro,'categorias','Categoría','Subcategorías (una por línea)');
