@@ -38,13 +38,22 @@ a{color:var(--brand2)}
 .selcli label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .sub{color:var(--muted);font-size:12.5px;margin-bottom:20px}
 /* ---------- Layout ---------- */
-header.top{position:sticky;top:0;z-index:50;background:rgba(13,27,42,.92);backdrop-filter:blur(8px);
- border-bottom:1px solid var(--line);padding:10px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-nav.tabs{display:flex;gap:4px;flex:1;flex-wrap:wrap}
-nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:8px 14px;
- border-radius:8px;cursor:pointer;font-size:13.5px;font-weight:500}
-nav.tabs button:hover{background:var(--panel2);color:var(--txt)}
-nav.tabs button.on{background:var(--brand2);color:#fff;font-weight:700}
+header.top{position:sticky;top:0;z-index:50;background:rgba(15,23,42,.94);backdrop-filter:blur(8px);
+ display:block;padding:0}
+header.top .fila1{display:flex;align-items:center;gap:16px;padding:10px 18px 12px;flex-wrap:wrap}
+/* Pestañas tipo carpeta: la activa se funde con el contenido de abajo */
+nav.tabs{display:flex;gap:3px;padding:0 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+nav.tabs button{background:transparent;border:1px solid transparent;border-bottom:none;color:var(--muted);
+ padding:9px 18px;border-radius:9px 9px 0 0;cursor:pointer;font-size:13.5px;font-weight:500;
+ margin-bottom:-1px;position:relative}
+nav.tabs button:hover{color:var(--txt);background:rgba(255,255,255,.04)}
+nav.tabs button.on{background:var(--bg);border-color:var(--line);border-bottom:1px solid var(--bg);
+ color:var(--brand2);font-weight:700}
+nav.tabs button.on:after{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--brand2);
+ border-radius:9px 9px 0 0}
+/* Sub-pestañas del tablero, mismo lenguaje visual */
+#dashTabs{padding:0;border-bottom:1px solid var(--line)}
+#dashTabs button.on{background:var(--panel);border-bottom-color:var(--panel)}
 .who{font-size:12px;color:var(--muted);text-align:right;line-height:1.3}
 .who b{color:var(--txt);display:block;font-size:12.5px}
 .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
@@ -262,12 +271,15 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 
 <!-- ============ HEADER ============ -->
 <header class="top hide" id="topBar">
-  <div class="marca">
-    <img id="logoOperador" class="hide" alt="Sipnology">
-    <div class="logo" id="marcaTexto" style="margin:0"><div class="mark">S</div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div></div>
-    <div class="sep"></div>
-    <div class="selcli"><label for="selCliente">Cliente</label><select id="selCliente"></select></div>
-    <img id="logoCliente" class="hide" alt="">
+  <div class="fila1">
+    <div class="marca">
+      <div class="logo" id="marcaTexto" style="margin:0"><div class="mark">S</div><div class="name" style="font-size:16px">SIP<span>NOLOGY</span></div></div>
+      <div class="sep"></div>
+      <div class="selcli"><label for="selCliente">Cliente</label><select id="selCliente"></select></div>
+      <img id="logoCliente" class="hide" alt="">
+    </div>
+    <div class="who right"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
+    <button class="btn sec" id="btnLogout">Salir</button>
   </div>
   <nav class="tabs" id="tabs">
     <button data-v="vApertura" class="on">Apertura de ticket</button>
@@ -279,8 +291,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <button data-v="vCatalogos" id="tabCat">Catálogos</button>
     <button data-v="vBitacora" id="tabBit">Bitácora</button>
   </nav>
-  <div class="who"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
-  <button class="btn sec" id="btnLogout">Salir</button>
 </header>
 
 <main class="hide" id="app">
@@ -467,12 +477,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <section class="view" id="vInventario">
   <div class="panel">
     <h2>Inventario de dispositivos</h2>
-    <div class="f" style="max-width:360px">
-      <label>Cliente <span class="req">*</span></label>
-      <select id="iCliente"></select>
-    </div>
     <div id="iFiltros" class="hide">
-      <hr class="sep">
       <div class="frow c4">
         <div class="f"><label>Hostname</label><input id="iHost" placeholder="contiene…"></div>
         <div class="f"><label>No. de serie</label><input id="iSerie" placeholder="contiene…"></div>
@@ -496,7 +501,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       </div>
     </div>
   </div>
-  <div id="iVacio" class="panel"><div class="note">Selecciona un cliente para ver su inventario.</div></div>
+  <div id="iVacio" class="panel"><div class="note">Selecciona un cliente concreto en el encabezado para ver su inventario.
+    Con «Todos los clientes» el inventario no se muestra, para no mezclar el parque instalado de clientes distintos.</div></div>
   <div class="panel hide" id="iPanel">
     <div id="iPend"></div>
     <div class="kpis" id="iKpis"></div>
@@ -749,7 +755,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r16 multitenant';
+const APP_VER = '2026-08-11 · r17';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -988,6 +994,20 @@ async function gUpload(h,path,file){
 }
 
 /* ---------------------- 6. CATÁLOGO CENTRAL ---------------------- */
+/* Los clientes se fusionan POR ID en lugar de reemplazarse en bloque. Sin esto, un catálogo
+   guardado por una versión anterior deja a los clientes sin los campos nuevos (logo, módulos)
+   y los módulos del cliente simplemente no aparecen. */
+function mergeClientes(base,ext){
+  if(!Array.isArray(ext)) return base;
+  const porId={}; (base||[]).forEach(c=>porId[c.id]=c);
+  return ext.map(c=>{
+    const d=porId[c.id]||{};
+    const o=Object.assign({},d,c);
+    if(!Array.isArray(o.modulos)||!o.modulos.length) o.modulos=(d.modulos||['tickets','inventario']).slice();
+    if(!o.logo&&d.logo) o.logo=d.logo;
+    return o;
+  });
+}
 function deepMerge(base,ext){
   if(ext===undefined||ext===null) return base;
   if(Array.isArray(base)||Array.isArray(ext)) return (ext!==undefined?ext:base);
@@ -1001,8 +1021,11 @@ function deepMerge(base,ext){
 async function catalogoPull(silent){
   try{
     const h=await H(); const remoto=await gGetJson(h,P_CAT);
-    S.cat = remoto? deepMerge(JSON.parse(JSON.stringify(CAT_DEFAULT)),remoto)
-                  : JSON.parse(JSON.stringify(CAT_DEFAULT));
+    const def=JSON.parse(JSON.stringify(CAT_DEFAULT));
+    S.cat = remoto? deepMerge(def,remoto) : def;
+    if(remoto) S.cat.clientes=mergeClientes(def.clientes,remoto.clientes||def.clientes);
+    if(!S.cat.logoOperador) S.cat.logoOperador=def.logoOperador;
+    if(!S.cat.aliasSedes) S.cat.aliasSedes={};
     if(!remoto && isAdmin()){ await gPutJson(h,P_CAT,S.cat); }   // siembra inicial
     poblarCatalogosUI();
     if(!silent) toast('Catálogo actualizado.');
@@ -1051,8 +1074,7 @@ function logoDe(cliId){
   return (c&&c.logo)||P_LOGO_FALLBACK;
 }
 function pintarMarca(){
-  const op=$('#logoOperador'), cl=$('#logoCliente');
-  if(op&&S.cat&&S.cat.logoOperador){ op.src=S.cat.logoOperador; op.classList.remove('hide'); }
+  const cl=$('#logoCliente');
   if(cl){
     const l=S.cliente?logoDe(S.cliente):'';
     if(l){ cl.src=l; cl.classList.remove('hide'); } else cl.classList.add('hide');
@@ -2407,6 +2429,7 @@ function renderCat(){
   if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
+  if(k==='clientes') return renderClientes(box,ro);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
   if(k==='categorias') return renderMapa(box,ro,'categorias','Categoría','Subcategorías (una por línea)');
@@ -2570,6 +2593,87 @@ function renderLista(k,titulo,box,ro){
     esc((S.cat[k]||[]).join('\n'))+'</textarea></div>';
   box.querySelector('#catTxt').onchange=e=>S.cat[k]=e.target.value.split('\n').map(s=>s.trim()).filter(Boolean);
 }
+/* Reduce una imagen y la devuelve como data URL, para que el logo viaje dentro del catálogo. */
+function leerLogo(file,maxAncho){
+  return new Promise((res,rej)=>{
+    if(file.size>4*1024*1024) return rej(new Error('La imagen supera 4 MB.'));
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const w=Math.min(maxAncho||300,img.width);
+        const c=document.createElement('canvas');
+        c.width=w; c.height=Math.max(1,Math.round(img.height*w/img.width));
+        const cx=c.getContext('2d'); cx.imageSmoothingQuality='high';
+        cx.drawImage(img,0,0,c.width,c.height);
+        res(c.toDataURL('image/png'));
+      };
+      img.onerror=()=>rej(new Error('No se pudo leer la imagen.'));
+      img.src=fr.result;
+    };
+    fr.onerror=()=>rej(new Error('No se pudo leer el archivo.'));
+    fr.readAsDataURL(file);
+  });
+}
+const ETIQ_MOD={tickets:'Tickets',inventario:'Inventario',crq:'CRQs',sit:'SITs'};
+function renderClientes(box,ro){
+  const arr=S.cat.clientes||(S.cat.clientes=[]);
+  box.innerHTML='<div class="note">Cada cliente decide qué módulos se le muestran. El logo aparece junto al '+
+    'selector del encabezado y se guarda dentro del catálogo, así que no hay que subir archivos aparte.</div>'+
+    arr.map((c,i)=>'<div class="panel" style="margin:0 0 12px">'+
+      '<div class="grid">'+
+      '<div class="f"><label>ID</label><input data-c="id" data-i="'+i+'" value="'+esc(c.id||'')+'"'+(ro?' disabled':'')+'></div>'+
+      '<div class="f"><label>Nombre</label><input data-c="nombre" data-i="'+i+'" value="'+esc(c.nombre||'')+'"'+(ro?' disabled':'')+'></div>'+
+      '<div class="f"><label>Dominios de correo (coma)</label><input data-c="dominios" data-i="'+i+'" value="'+esc((c.dominios||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
+      '<div class="f"><label>Correos de notificación (coma)</label><input data-c="correosNotif" data-i="'+i+'" value="'+esc((c.correosNotif||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
+      '</div>'+
+      '<div class="row" style="margin-top:12px;align-items:flex-start;gap:26px">'+
+        '<div><label style="font-size:11.5px;color:var(--muted);font-weight:600">MÓDULOS</label>'+
+          '<div class="row" style="gap:14px;margin-top:6px">'+MODULOS.map(m=>
+            '<label class="row" style="gap:6px;font-size:12.5px"><input type="checkbox" data-m="'+m+'" data-i="'+i+'"'+
+            ((c.modulos||[]).indexOf(m)!==-1?' checked':'')+(ro?' disabled':'')+' style="width:auto"> '+esc(ETIQ_MOD[m]||m)+'</label>').join('')+
+          '</div></div>'+
+        '<div><label style="font-size:11.5px;color:var(--muted);font-weight:600">LOGO</label>'+
+          '<div class="row" style="gap:10px;margin-top:6px;align-items:center">'+
+            (c.logo?'<img src="'+esc(c.logo)+'" style="height:30px;background:#fff2;padding:3px 6px;border-radius:6px">'
+                   :'<span style="color:var(--muted);font-size:12px">sin logo</span>')+
+            '<label class="btn sec" style="cursor:'+(ro?'not-allowed':'pointer')+';padding:5px 12px;font-size:12px">Subir imagen'+
+              '<input type="file" accept="image/*" data-logo="'+i+'" class="hide"'+(ro?' disabled':'')+'></label>'+
+            (c.logo?'<button class="btn sec" data-nologo="'+i+'" style="padding:5px 12px;font-size:12px"'+(ro?' disabled':'')+'>Quitar</button>':'')+
+          '</div></div>'+
+        '<button class="btn dan right" data-del="'+i+'"'+(ro?' disabled':'')+' style="padding:5px 12px">Eliminar cliente</button>'+
+      '</div></div>').join('')+
+    '<button class="btn sec" id="cliAdd"'+(ro?' disabled':'')+'>+ Agregar cliente</button>';
+  box.querySelectorAll('input[data-c]').forEach(inp=>inp.onchange=()=>{
+    const o=arr[+inp.dataset.i], k=inp.dataset.c;
+    o[k]=(k==='dominios'||k==='correosNotif')? inp.value.split(',').map(x=>x.trim()).filter(Boolean) : inp.value.trim();
+  });
+  box.querySelectorAll('input[data-m]').forEach(chk=>chk.onchange=()=>{
+    const o=arr[+chk.dataset.i], m=chk.dataset.m;
+    o.modulos=o.modulos||[];
+    if(chk.checked){ if(o.modulos.indexOf(m)===-1) o.modulos.push(m); }
+    else o.modulos=o.modulos.filter(x=>x!==m);
+  });
+  box.querySelectorAll('[data-logo]').forEach(inp=>inp.onchange=async()=>{
+    const f=inp.files[0]; inp.value=''; if(!f) return;
+    try{
+      arr[+inp.dataset.logo].logo=await leerLogo(f,300);
+      toast('Logo cargado. Usa «Guardar cambios» para publicarlo.');
+      renderCat();
+    }catch(e){ toast(e.message,'err',7000); }
+  });
+  box.querySelectorAll('[data-nologo]').forEach(b=>b.onclick=()=>{ delete arr[+b.dataset.nologo].logo; renderCat(); });
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    const c=arr[+b.dataset.del];
+    const n=S.idx.filter(t=>t.clienteId===c.id).length;
+    if(n){ alert('No se puede eliminar «'+c.nombre+'»: tiene '+n+' ticket(s) asociados.'); return; }
+    if(confirm('¿Eliminar el cliente «'+(c.nombre||c.id)+'»?\nSus datos en SharePoint no se borran.')){
+      arr.splice(+b.dataset.del,1); renderCat(); }
+  });
+  const add=box.querySelector('#cliAdd');
+  if(add) add.onclick=()=>{ arr.push({id:'',nombre:'',dominios:[],correosNotif:[],modulos:['tickets','inventario']}); renderCat(); };
+}
+
 /* Diccionario para traducir el texto libre de sede que traen los archivos del cliente. */
 function renderAlias(box,ro){
   const m=S.cat.aliasSedes||(S.cat.aliasSedes={});
@@ -3296,7 +3400,7 @@ function invVisible(){
 /* Etiqueta única de sede: "[98] - Tecno Parque" */
 function locLabel(id){ if(!id) return ''; const n=nombreLoc(id); return '['+id+']'+(n&&n!==id?' - '+n:''); }
 function invFiltrado(){
-  const cli=$('#iCliente').value; if(!cli) return [];
+  const cli=S.cliente; if(!cli) return [];
   const g=id=>String(($(id)||{}).value||'').trim().toLowerCase();
   const host=g('#iHost'), serie=g('#iSerie'), libre=g('#iBuscar');
   const tipo=$('#iTipo').value, modelo=$('#iModelo').value,
@@ -3324,7 +3428,7 @@ function pisosDeSede(locId){
 }
 function opciones(arr,f){ return [...new Set(arr.map(f).filter(x=>x!==''&&x!=null))].sort(); }
 function poblarFiltrosInv(){
-  const cli=$('#iCliente').value;
+  const cli=S.cliente;
   const base=invVisible().filter(e=>!cli||clienteDeEquipo(e)===cli);
   const guarda={};
   ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>guarda[id]=$('#'+id).value);
@@ -3345,12 +3449,8 @@ function poblarFiltrosInv(){
   fillSel('#iFw',opciones(base,e=>e.firmware),'Todas',guarda.iFw);
 }
 function renderInv(){
-  if(!S.cat||!$('#iCliente')) return;
-  const clientes=(S.cat.clientes||[]).filter(c=>S.role!=='cliente'||!S.clienteScope||c.id===S.clienteScope);
-  const antes=$('#iCliente').value;
-  fillSel('#iCliente',clientes.map(c=>({v:c.id,t:c.nombre})),'— selecciona un cliente —',antes);
-  if(S.role==='cliente'&&clientes.length===1&&!$('#iCliente').value) $('#iCliente').value=clientes[0].id;
-  const cli=$('#iCliente').value;
+  if(!S.cat||!$('#iPanel')) return;
+  const cli=S.cliente;
   $('#iFiltros').classList.toggle('hide',!cli);
   $('#iVacio').classList.toggle('hide',!!cli);
   $('#iPanel').classList.toggle('hide',!cli);
@@ -3451,8 +3551,8 @@ function eliminarEquipo(i){
   _invEdit=null; renderInv();
 }
 function nuevoEquipo(){
-  const cli=$('#iCliente').value; if(!cli) return;
-  const loc=$('#iLocId').value||((S.cat.localidades||[]).find(l=>l.clienteId===cli)||{}).id||'';
+  const cli=S.cliente; if(!cli) return;
+  const loc=$('#iLoc').value||((S.cat.localidades||[]).find(l=>l.clienteId===cli)||{}).id||'';
   const e=normEquipo({clienteId:cli,localidadId:loc,piso:$('#iPiso').value||''});
   e._nuevo=true;
   S.inv.unshift(e);
@@ -3575,7 +3675,7 @@ function aplicarBulk(sel,panel){
 async function exportarInventario(soloEstos){
   const filas=(soloEstos&&soloEstos.length)?soloEstos:invFiltrado();
   if(!filas.length){ toast('No hay equipos que exportar.','warn'); return; }
-  const cli=((S.cat.clientes||[]).find(c=>c.id===$('#iCliente').value)||{}).nombre||'cliente';
+  const cli=((S.cat.clientes||[]).find(c=>c.id===S.cliente)||{}).nombre||'cliente';
   await escribirXlsx('Inventario_'+sanitizeName(cli)+'_'+todayISO(),
     [{nombre:'Inventario',cols:COLS_DISP,
       filas:filas.map(e=>Object.assign({},e,{cliente:cli,localidad:locLabel(e.localidadId)})),
@@ -4060,14 +4160,12 @@ function enlazarEventos(){
     try{
       const esInv=$('#catSel').value==='equipos';
       const okGuardado = esInv? await guardarInventario('edición manual desde Catálogos') : await catalogoPush();
-      if(okGuardado){ toast(esInv?'Inventario guardado.':'Catálogo guardado.'); poblarCatalogosUI(); renderInv(); } }
+      if(okGuardado){ toast(esInv?'Inventario guardado.':'Catálogo guardado.');
+        poblarCatalogosUI(); pintarSelectorCliente(); aplicarModulosUI(); renderInv(); } }
     catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
     finally{ busy(this,false); } };
 
   // Inventario
-  $('#iCliente').onchange=()=>{ _invEdit=null; _invPage=1; limpiarSeleccion();
-    ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>{ const el=$('#'+id); if(el) el.selectedIndex=0; });
-    $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value=''; renderInv(); };
   ['iHost','iSerie','iBuscar'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
   ['iTipo','iModelo','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
   $('#iPiso').onchange=()=>{ _invPage=1; renderInv(); };
@@ -4133,7 +4231,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable,
   clientesVisibles:clientesVisibles,modulosDe:modulosDe,moduloActivo:moduloActivo,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
-  MODULOS:MODULOS,DATASETS:DATASETS,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
+  MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
   dsFiltrar:dsFiltrar,dsEst:dsEst,dsNormRegistro:dsNormRegistro,textoPlano:textoPlano};
 </script>
 </body>
