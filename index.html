@@ -103,6 +103,18 @@ tr.destino td{border-top:2px dashed var(--brand)}
  width:22px;height:22px;cursor:pointer;font-size:10px;line-height:1;padding:0}
 .ord button:hover:not(:disabled){color:var(--txt);border-color:var(--brand2)}
 .ord button:disabled{opacity:.3;cursor:not-allowed}
+/* ---------- Barra flotante de edición masiva ---------- */
+.bulk{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:180;
+ background:var(--panel);border:1px solid var(--brand2);border-radius:12px;box-shadow:var(--sh);
+ padding:12px 16px;max-width:min(1180px,96vw);width:max-content}
+.bulk .bh{display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:13px}
+.bulk .bh b{color:var(--brand2)}
+.bulk .campos{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.bulk .campos .f label{display:flex;align-items:center;gap:6px}
+.bulk .campos .f label input[type=checkbox]{width:auto;margin:0;accent-color:var(--brand2)}
+.bulk .acciones{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+tr.sel td{background:rgba(59,130,246,.12)}
+@media(max-width:760px){.bulk{width:96vw}.bulk .campos{grid-template-columns:1fr 1fr}}
 .btn{background:var(--brand2);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
  cursor:pointer;font-size:13px}
 .btn:hover{filter:brightness(1.08)}
@@ -399,10 +411,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <div class="f"><label>Modelo</label><select id="iModelo"></select></div>
       </div>
       <div class="frow c4">
-        <div class="f"><label>ID Localidad</label><select id="iLocId"></select></div>
         <div class="f"><label>Localidad</label><select id="iLoc"></select></div>
         <div class="f"><label>Piso</label><select id="iPiso"></select></div>
         <div class="f"><label>Versión firmware</label><select id="iFw"></select></div>
+        <div class="f"><label>&nbsp;</label><input id="iBuscar" placeholder="Buscar en todo…"></div>
       </div>
       <div class="row" style="margin-top:6px">
         <button class="btn sec" id="iLimpiar">Limpiar filtros</button>
@@ -421,8 +433,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <h2>Equipos <span id="iCount" style="color:var(--muted);font-weight:400"></span></h2>
     <div class="tw"><table id="tblInv">
       <thead><tr>
+        <th style="width:1%"><input type="checkbox" id="iTodos" title="Seleccionar todo lo visible"></th>
         <th>Cliente</th><th>Hostname</th><th>No. de serie</th><th>Tipo</th><th>Modelo</th>
-        <th>ID Loc.</th><th>Localidad</th><th>Piso</th><th>Versión firmware</th><th></th>
+        <th>Localidad</th><th>Piso</th><th>Versión firmware</th><th></th>
       </tr></thead><tbody></tbody></table></div>
     <div class="pag" id="iPag"></div>
   </div>
@@ -884,16 +897,13 @@ function normEquipo(e){
 async function invPull(silent){
   try{
     const h=await H(); const a=await gGetJson(h,P_INV);
-    if(Array.isArray(a)) S.inv=a.map(normEquipo);
-    else{
-      /* Primera vez: se siembra con los equipos que traiga el catálogo. */
-      S.inv=((S.cat&&S.cat.equipos)||[]).map(normEquipo);
-      if(puedeEditarInventario()&&S.inv.length) await gPutJson(h,P_INV,S.inv);
-    }
-    invConfirmado(); renderInv();
+    /* El inventario arranca VACÍO a propósito. Sembrarlo con los equipos de muestra del
+       catálogo metía datos falsos en producción y, si el catálogo remoto era de una versión
+       anterior, llegaban sin número de serie. La carga real se hace con la plantilla. */
+    S.inv = Array.isArray(a) ? a.map(normEquipo) : [];
+    limpiarSeleccion(); invConfirmado(); renderInv();
     if(!silent) toast('Inventario actualizado ('+S.inv.length+' equipos).');
   }catch(e){
-    if(!S.inv.length) S.inv=((S.cat&&S.cat.equipos)||[]).map(normEquipo);
     renderInv();
     if(!silent) toast('No se pudo leer el inventario: '+e.message,'err',7000);
   }
@@ -1158,7 +1168,7 @@ function eqClave(e){ e=eqNorm(e); return e.serie? 'S:'+e.serie.toUpperCase() : '
 /* Equipos de una localidad, opcionalmente acotados a ciertos pisos.
    Un equipo sin piso asignado aparece siempre: no hay forma de descartarlo con certeza. */
 function equiposDe(locId,pisos){
-  let e=(S.inv&&S.inv.length? S.inv : (S.cat.equipos||[]));
+  let e=S.inv||[];
   if(locId) e=e.filter(x=>!x.localidadId||x.localidadId===locId);
   if(pisos&&pisos.length) e=e.filter(x=>!x.piso||pisos.indexOf(x.piso)!==-1);
   return e;
@@ -2399,13 +2409,17 @@ let _invPage=1, _invSize=25, _invEdit=null;
 /* Los cambios se acumulan en memoria y se escriben a SharePoint con "Guardar cambios".
    _invSnap es la última versión confirmada, para poder descartar. */
 let _invCambios=[], _invSnap=null;
+/* Selección para edición masiva: guardamos referencias a los objetos, no índices,
+   porque los índices se mueven al dar de alta o de baja. */
+let _invSel=new Set();
 function invSucio(){ return _invCambios.length>0; }
 function invMarcar(desc){ _invCambios.push(desc); }
 function invConfirmado(){ _invCambios=[]; _invSnap=JSON.stringify(S.inv); }
+function limpiarSeleccion(){ _invSel=new Set(); }
 function invDescartar(){
   if(_invSnap==null) return;
   S.inv=JSON.parse(_invSnap).map(normEquipo);
-  _invCambios=[]; _invEdit=null; renderInv(); poblarCatalogosUI(); renderCat();
+  _invCambios=[]; _invEdit=null; limpiarSeleccion(); renderInv(); poblarCatalogosUI(); renderCat();
   toast('Cambios descartados.');
 }
 /* Valores que aparecen en el inventario pero todavía no existen en los catálogos maestros. */
@@ -2476,11 +2490,13 @@ function invVisible(){
   /* Un invitado de cliente solo ve su propio parque instalado. */
   return S.role==='cliente'&&S.clienteScope ? S.inv.filter(e=>clienteDeEquipo(e)===S.clienteScope) : S.inv;
 }
+/* Etiqueta única de sede: "[98] - Tecno Parque" */
+function locLabel(id){ if(!id) return ''; const n=nombreLoc(id); return '['+id+']'+(n&&n!==id?' - '+n:''); }
 function invFiltrado(){
   const cli=$('#iCliente').value; if(!cli) return [];
-  const g=id=>String($(id).value||'').trim().toLowerCase();
-  const host=g('#iHost'), serie=g('#iSerie');
-  const tipo=$('#iTipo').value, modelo=$('#iModelo').value, locId=$('#iLocId').value,
+  const g=id=>String(($(id)||{}).value||'').trim().toLowerCase();
+  const host=g('#iHost'), serie=g('#iSerie'), libre=g('#iBuscar');
+  const tipo=$('#iTipo').value, modelo=$('#iModelo').value,
         loc=$('#iLoc').value, piso=$('#iPiso').value, fw=$('#iFw').value;
   return invVisible().filter(e=>{
     if(clienteDeEquipo(e)!==cli) return false;
@@ -2488,24 +2504,35 @@ function invFiltrado(){
     if(serie && String(e.serie||'').toLowerCase().indexOf(serie)===-1) return false;
     if(tipo && e.tipo!==tipo) return false;
     if(modelo && e.modelo!==modelo) return false;
-    if(locId && e.localidadId!==locId) return false;
-    if(loc && nombreLoc(e.localidadId)!==loc) return false;
+    if(loc && e.localidadId!==loc) return false;
     if(piso && e.piso!==piso) return false;
     if(fw && String(e.firmware||'')!==fw) return false;
+    if(libre && [e.hostname,e.serie,e.tipo,e.modelo,locLabel(e.localidadId),e.piso,e.firmware]
+        .join(' ').toLowerCase().indexOf(libre)===-1) return false;
     return true;
   });
+}
+/* Pisos válidos de una sede: los del catálogo más los que ya aparezcan en el inventario. */
+function pisosDeSede(locId){
+  const l=(S.cat.localidades||[]).find(x=>x.id===locId);
+  const delCat=l?(l.pisos||[]):[];
+  const delInv=S.inv.filter(e=>e.localidadId===locId).map(e=>e.piso).filter(Boolean);
+  return [...new Set(delCat.concat(delInv))].sort();
 }
 function opciones(arr,f){ return [...new Set(arr.map(f).filter(x=>x!==''&&x!=null))].sort(); }
 function poblarFiltrosInv(){
   const cli=$('#iCliente').value;
   const base=invVisible().filter(e=>!cli||clienteDeEquipo(e)===cli);
   const guarda={};
-  ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>guarda[id]=$('#'+id).value);
+  ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>guarda[id]=$('#'+id).value);
   fillSel('#iTipo',opciones(base,e=>e.tipo),'Todos',guarda.iTipo);
   fillSel('#iModelo',opciones(base,e=>e.modelo),'Todos',guarda.iModelo);
-  fillSel('#iLocId',opciones(base,e=>e.localidadId),'Todas',guarda.iLocId);
-  fillSel('#iLoc',opciones(base,e=>nombreLoc(e.localidadId)),'Todas',guarda.iLoc);
-  fillSel('#iPiso',opciones(base,e=>e.piso),'Todos',guarda.iPiso);
+  fillSel('#iLoc',opciones(base,e=>e.localidadId).map(id=>({v:id,t:locLabel(id)})),'Todas',guarda.iLoc);
+  /* El piso solo ofrece los de la sede elegida; sin sede, los de todo el cliente. */
+  const loc=$('#iLoc').value;
+  const pisos = loc ? pisosDeSede(loc).filter(x=>base.some(e=>e.localidadId===loc&&e.piso===x))
+                    : opciones(base,e=>e.piso);
+  fillSel('#iPiso',pisos,'Todos',pisos.indexOf(guarda.iPiso)!==-1?guarda.iPiso:'');
   fillSel('#iFw',opciones(base,e=>e.firmware),'Todas',guarda.iFw);
 }
 function renderInv(){
@@ -2537,26 +2564,46 @@ function renderInv(){
   renderPendientes();
   const puede=puedeEditarInventario();
   $('#iNuevo').classList.toggle('hide',!puede);
-  const cel=(e,c,i)=> _invEdit===S.inv.indexOf(e)
+  const cel=(e,c)=> _invEdit===S.inv.indexOf(e)
     ? '<td><input data-e="'+c+'" value="'+esc(e[c]==null?'':e[c])+'"></td>'
     : '<td'+(c==='serie'||c==='firmware'?' class="mono"':'')+'>'+esc(e[c]||'')+'</td>';
+  const sedes=(S.cat.localidades||[]).filter(l=>!l.clienteId||l.clienteId===cli);
+  const celLoc=e=> _invEdit===S.inv.indexOf(e)
+    ? '<td><select data-e="localidadId">'+
+        (sedes.some(l=>l.id===e.localidadId)?'':'<option value="'+esc(e.localidadId||'')+'" selected>'+esc(locLabel(e.localidadId)||'— sin sede —')+'</option>')+
+        sedes.map(l=>'<option value="'+esc(l.id)+'"'+(l.id===e.localidadId?' selected':'')+'>'+esc(locLabel(l.id))+'</option>').join('')+
+      '</select></td>'
+    : '<td>'+esc(locLabel(e.localidadId))+'</td>';
   $('#tblInv').tBodies[0].innerHTML = rows.length? rows.map(e=>{
-    const i=S.inv.indexOf(e), edit=_invEdit===i;
-    return '<tr>'+
+    const i=S.inv.indexOf(e), edit=_invEdit===i, marcado=_invSel.has(e);
+    return '<tr'+(marcado?' class="sel"':'')+'>'+
+      '<td>'+(puede?'<input type="checkbox" data-sel="'+i+'"'+(marcado?' checked':'')+'>':'')+'</td>'+
       '<td>'+esc((( S.cat.clientes||[]).find(c=>c.id===clienteDeEquipo(e))||{}).nombre||clienteDeEquipo(e))+'</td>'+
-      cel(e,'hostname')+cel(e,'serie')+cel(e,'tipo')+cel(e,'modelo')+cel(e,'localidadId')+
-      '<td>'+esc(nombreLoc(e.localidadId))+'</td>'+cel(e,'piso')+cel(e,'firmware')+
+      cel(e,'hostname')+cel(e,'serie')+cel(e,'tipo')+cel(e,'modelo')+celLoc(e)+cel(e,'piso')+cel(e,'firmware')+
       '<td style="white-space:nowrap">'+(puede? (edit
         ? '<button class="btn" style="padding:3px 9px" data-ok="'+i+'" title="Aplicar (se guarda con «Guardar cambios»)">✓</button> '+
           '<button class="btn sec" style="padding:3px 9px" data-cancel="1" title="Cancelar">✕</button>'
         : '<button class="btn sec" style="padding:3px 9px" data-edit="'+i+'" title="Editar">✎</button> '+
           '<button class="btn dan" style="padding:3px 9px" data-rm="'+i+'" title="Eliminar">🗑</button>') : '')+'</td>'+
     '</tr>';
-  }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">Sin equipos que coincidan</td></tr>';
+  }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">'+
+      (todos.length? 'Sin equipos que coincidan con el filtro'
+                   : 'Este cliente no tiene equipos. Usa «+ Agregar equipo» o carga la plantilla desde Catálogos → Equipos.')+'</td></tr>';
   $('#tblInv').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{ _invEdit=+b.dataset.edit; renderInv(); });
   $('#tblInv').querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>{ _invEdit=null; renderInv(); });
   $('#tblInv').querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>aplicarFilaInv(+b.dataset.ok,b));
   $('#tblInv').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>eliminarEquipo(+b.dataset.rm));
+  $('#tblInv').querySelectorAll('[data-sel]').forEach(c=>c.onchange=()=>{
+    const e=S.inv[+c.dataset.sel]; if(!e) return;
+    if(c.checked) _invSel.add(e); else _invSel.delete(e);
+    renderInv();
+  });
+  const todosChk=$('#iTodos');
+  if(todosChk){
+    todosChk.checked = rows.length>0 && rows.every(e=>_invSel.has(e));
+    todosChk.onchange=()=>{ rows.forEach(e=>{ if(todosChk.checked) _invSel.add(e); else _invSel.delete(e); }); renderInv(); };
+  }
+  renderBulk(filas);
   let pg='<span>Filas</span><select id="iSize" style="width:70px;padding:3px">'+
     [10,25,50,100].map(n=>'<option'+(n===_invSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
   pg+='<button data-p="'+(_invPage-1)+'"'+(_invPage<=1?' disabled':'')+'>‹</button>';
@@ -2603,13 +2650,87 @@ function nuevoEquipo(){
   _invEdit=0; _invPage=1; renderInv();
   toast('Captura los datos, aplica con ✓ y luego usa «Guardar cambios».');
 }
+/* Campos editables en masa. Cliente, hostname y número de serie quedan fuera a propósito:
+   son la identidad del equipo y cambiarlos en bloque produce duplicados o registros huérfanos. */
+const CAMPOS_BULK=[
+  {k:'tipo',      t:'Tipo',            lista:()=>S.cat.tiposDispositivo||[]},
+  {k:'modelo',    t:'Modelo'},
+  {k:'localidadId',t:'Localidad',      lista:()=>(S.cat.localidades||[]).map(l=>({v:l.id,t:locLabel(l.id)}))},
+  {k:'piso',      t:'Piso',            lista:()=>{ const l=$('#bulk_localidadId');
+                    const loc=(l&&l.value)|| $('#iLoc').value; return loc? pisosDeSede(loc) : []; }},
+  {k:'firmware',  t:'Versión firmware'}
+];
+function renderBulk(visibles){
+  const previo=$('#bulkBar'); if(previo) previo.remove();
+  const sel=[...(_invSel||[])].filter(e=>S.inv.indexOf(e)!==-1);
+  if(!puedeEditarInventario()||sel.length<2) return;
+  const d=document.createElement('div');
+  d.id='bulkBar'; d.className='bulk';
+  d.innerHTML='<div class="bh"><b>'+sel.length+' equipos seleccionados</b>'+
+      '<span style="color:var(--muted);font-size:12px">Marca la casilla del campo que quieras cambiar. '+
+      'Cliente, hostname y número de serie no se editan en bloque.</span></div>'+
+    '<div class="campos">'+CAMPOS_BULK.map(c=>{
+      const lista=c.lista?c.lista():null;
+      const ctrl = lista
+        ? '<select id="bulk_'+c.k+'" disabled><option value="">— elige —</option>'+
+          lista.map(o=>{const v=(typeof o==='object')?o.v:o, t=(typeof o==='object')?o.t:o;
+            return '<option value="'+esc(v)+'">'+esc(t)+'</option>';}).join('')+'</select>'
+        : '<input id="bulk_'+c.k+'" disabled placeholder="nuevo valor">';
+      return '<div class="f"><label><input type="checkbox" data-on="'+c.k+'"> '+esc(c.t)+'</label>'+ctrl+'</div>';
+    }).join('')+'</div>'+
+    '<div class="acciones"><button class="btn" id="bulkGo">Aplicar a los '+sel.length+'</button>'+
+    '<button class="btn sec" id="bulkClr">Quitar selección</button>'+
+    '<span id="bulkAviso" style="color:var(--warn);font-size:12px;align-self:center"></span></div>';
+  document.body.appendChild(d);
+  d.querySelectorAll('[data-on]').forEach(chk=>chk.onchange=()=>{
+    const el=$('#bulk_'+chk.dataset.on); el.disabled=!chk.checked; if(chk.checked) el.focus();
+  });
+  const selLoc=$('#bulk_localidadId');
+  if(selLoc) selLoc.addEventListener('change',()=>{
+    const c=CAMPOS_BULK.find(x=>x.k==='piso'); const lista=c.lista();
+    const p=$('#bulk_piso');
+    if(p&&p.tagName==='SELECT') p.innerHTML='<option value="">— elige —</option>'+
+      lista.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');
+    $('#bulkAviso').textContent='Revisa el piso: cambió la sede.';
+  });
+  d.querySelector('#bulkClr').onclick=()=>{ limpiarSeleccion(); renderInv(); };
+  d.querySelector('#bulkGo').onclick=()=>aplicarBulk(sel,d);
+}
+function aplicarBulk(sel,panel){
+  const cambios={};
+  panel.querySelectorAll('[data-on]').forEach(chk=>{
+    if(!chk.checked) return;
+    const el=$('#bulk_'+chk.dataset.on);
+    cambios[chk.dataset.on]=String(el.value||'').trim();
+  });
+  const claves=Object.keys(cambios);
+  if(!claves.length){ toast('Marca al menos un campo para cambiar.','err'); return; }
+  const vacios=claves.filter(k=>cambios[k]==='');
+  if(vacios.length && !confirm('Vas a dejar en blanco: '+vacios.join(', ')+'.\n¿Continuar?')) return;
+  let n=0;
+  sel.forEach(e=>{
+    const antes={}; claves.forEach(k=>antes[k]=e[k]||'');
+    claves.forEach(k=>e[k]=cambios[k]);
+    Object.assign(e,normEquipo(e));
+    const dif=claves.filter(k=>String(antes[k])!==String(e[k]||''));
+    if(dif.length){ n++; invMarcar('Masiva · '+(e.serie||e.hostname||'(sin id)')+' · '+
+      dif.map(k=>k+': «'+antes[k]+'» → «'+(e[k]||'')+'»').join(' · ')); }
+  });
+  /* Un piso que no existe en la sede destino se marca para revisión, no se borra. */
+  const huerfanos=sel.filter(e=>e.piso&&e.localidadId&&pisosDeSede(e.localidadId).indexOf(e.piso)===-1);
+  if(huerfanos.length) toast(huerfanos.length+' equipo(s) quedaron con un piso que no existe en su sede. '+
+    'Al guardar podrás darlo de alta en el catálogo.','warn',9000);
+  if(!n){ toast('Los equipos ya tenían esos valores.','warn'); return; }
+  toast(n+' equipo(s) actualizados. Usa «Guardar cambios» para escribirlos.');
+  limpiarSeleccion(); renderInv();
+}
 async function exportarInventario(){
   const filas=invFiltrado();
   if(!filas.length){ toast('No hay equipos que exportar.','warn'); return; }
   const cli=((S.cat.clientes||[]).find(c=>c.id===$('#iCliente').value)||{}).nombre||'cliente';
   await escribirXlsx('Inventario_'+sanitizeName(cli)+'_'+todayISO(),
     [{nombre:'Inventario',cols:COLS_DISP,
-      filas:filas.map(e=>Object.assign({},e,{cliente:cli,localidad:nombreLoc(e.localidadId)})),
+      filas:filas.map(e=>Object.assign({},e,{cliente:cli,localidad:locLabel(e.localidadId)})),
       oblig:['hostname','serie','tipo','localidadId']},
      Object.assign({filas:filasReferencia()},HOJA_REF)]);
   logEvent('EXPORT_INVENTARIO',cli+' · '+filas.length+' equipos');
@@ -2644,6 +2765,7 @@ function irA(v){
   $$('.view').forEach(s=>s.classList.toggle('on',s.id===v));
   if(v==='vEstado') renderDash();
   if(v==='vInventario') renderInv();
+  else { const b=$('#bulkBar'); if(b) b.remove(); }
   if(v==='vCatalogos') renderCat();
   if(v==='vBitacora') renderBit();
 }
@@ -2713,14 +2835,16 @@ function enlazarEventos(){
     finally{ busy(this,false); } };
 
   // Inventario
-  $('#iCliente').onchange=()=>{ _invEdit=null; _invPage=1;
-    ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>{ const el=$('#'+id); if(el) el.selectedIndex=0; });
-    $('#iHost').value=''; $('#iSerie').value=''; renderInv(); };
-  ['iHost','iSerie'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
-  ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
-  $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value='';
-    ['iTipo','iModelo','iLocId','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
-  $('#iRefrescar').onclick=async function(){ busy(this,true); _invEdit=null; await invPull(); busy(this,false); };
+  $('#iCliente').onchange=()=>{ _invEdit=null; _invPage=1; limpiarSeleccion();
+    ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>{ const el=$('#'+id); if(el) el.selectedIndex=0; });
+    $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value=''; renderInv(); };
+  ['iHost','iSerie','iBuscar'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
+  ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
+  $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value='';
+    ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
+  $('#iRefrescar').onclick=async function(){
+    if(invSucio()&&!confirm('Tienes cambios sin guardar. Al refrescar se pierden.\n¿Continuar?')) return;
+    busy(this,true); _invEdit=null; limpiarSeleccion(); await invPull(); busy(this,false); };
   $('#iNuevo').onclick=nuevoEquipo;
   $('#iExport').onclick=()=>exportarInventario().catch(e=>toast(e.message,'err'));
 
@@ -2756,6 +2880,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   normEquipo:normEquipo,clienteDeEquipo:clienteDeEquipo,invFiltrado:invFiltrado,invVisible:invVisible,
   puedeEditarInventario:puedeEditarInventario,opciones:opciones,
   nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,
+  locLabel:locLabel,pisosDeSede:pisosDeSede,CAMPOS_BULK:CAMPOS_BULK,
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice()};
 </script>
