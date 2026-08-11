@@ -499,7 +499,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <button class="btn sec" id="iRefrescar">↻ Refrescar</button>
         <span class="right row" style="gap:8px">
           <span class="accwrap"><button class="btn sec" id="iAcciones" disabled>Acciones</button></span>
-          <button class="btn sec" id="iExport">⬇ Exportar a Excel</button>
           <button class="btn" id="iNuevo">+ Agregar equipo</button>
         </span>
       </div>
@@ -829,7 +828,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-11 · r24';
+const APP_VER = '2026-08-11 · r25';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2609,7 +2608,8 @@ function grafParaPdf(canvas,anchoPx){
 function pesoLegible(bytes){
   return bytes<1024?bytes+' B':(bytes<1048576?(bytes/1024).toFixed(0)+' KB':(bytes/1048576).toFixed(1)+' MB');
 }
-async function exportPDF(data,nombre,conGraficas){
+async function exportPDF(data,nombre,conGraficas,cols){
+  const CL=cols||COLS;
   if(!window.jspdf){ toast('jsPDF no disponible.','err'); return; }
   const {jsPDF}=window.jspdf;
   const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4',compress:true});
@@ -2639,8 +2639,8 @@ async function exportPDF(data,nombre,conGraficas){
       styles:{fontSize:6.5,cellPadding:2.5,overflow:'linebreak'},
       headStyles:{fillColor:[233,102,45],textColor:[255,255,255],fontStyle:'bold'},
       alternateRowStyles:{fillColor:[244,248,251]},
-      head:[COLS.map(c=>c[1])],
-      body:data.map(t=>COLS.map(c=>celda(t,c[0]))),
+      head:[CL.map(c=>c[1])],
+      body:data.map(t=>CL.map(c=>celda(t,c[0]))),
       didDrawPage:d=>{ if(d.pageNumber>1) cabecera(); }
     });
   }
@@ -3866,7 +3866,9 @@ function renderInv(){
     todosChk.onchange=()=>{ rows.forEach(e=>{ if(todosChk.checked) _invSel.add(e); else _invSel.delete(e); }); renderInv(); };
   }
   renderAcciones();
-  let pg='<span>Filas</span><select id="iSize" style="width:70px;padding:3px">'+
+  let pg='<button class="btn sec" data-ix="xls" style="padding:4px 11px;font-size:12px">⬇ Excel</button>'+
+    '<button class="btn sec" data-ix="pdf" style="padding:4px 11px;font-size:12px">⬇ PDF</button>'+
+    '<span style="width:14px"></span><span>Filas</span><select id="iSize" style="width:70px;padding:3px">'+
     [10,25,50,100].map(n=>'<option'+(n===_invSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
   pg+='<button data-p="'+(_invPage-1)+'"'+(_invPage<=1?' disabled':'')+'>‹</button>';
   for(let i=Math.max(1,_invPage-2);i<=Math.min(pages,_invPage+2);i++)
@@ -3875,6 +3877,9 @@ function renderInv(){
   $('#iPag').innerHTML=pg;
   $('#iPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{_invPage=Math.max(1,Math.min(pages,+b.dataset.p));renderInv();});
   const sz=$('#iSize'); if(sz) sz.onchange=()=>{_invSize=+sz.value;_invPage=1;renderInv();};
+  /* La paginación se redibuja en cada render: los botones se reconectan aquí. */
+  $('#iPag').querySelectorAll('[data-ix]').forEach(b=>b.onclick=()=>
+    exportarInventario(null,b.dataset.ix==='pdf'?'pdf':'xls').catch(e=>toast(e.message,'err',9000)));
 }
 /* Aplica la edición en memoria. La escritura ocurre en "Guardar cambios". */
 function aplicarFilaInv(i,btn){
@@ -3947,7 +3952,7 @@ function menuAcciones(){
   m.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
     const a=b.dataset.a; cerrarMenuAcciones();
     if(a==='editar') edicionMasiva(sel);
-    if(a==='exportar') exportarInventario(sel).catch(e=>toast(e.message,'err'));
+    if(a==='exportar') exportarInventario(sel,'xls').catch(e=>toast(e.message,'err'));
     if(a==='quitar'){ limpiarSeleccion(); renderInv(); }
     if(a==='borrar') borrarSeleccion(sel);
   });
@@ -4025,16 +4030,20 @@ function aplicarBulk(sel,panel){
   toast(n+' equipo(s) actualizados. Usa «Guardar cambios» para escribirlos.');
   panel.remove(); limpiarSeleccion(); renderInv();
 }
-async function exportarInventario(soloEstos){
+async function exportarInventario(soloEstos,tipo){
   const filas=(soloEstos&&soloEstos.length)?soloEstos:invFiltrado();
   if(!filas.length){ toast('No hay equipos que exportar.','warn'); return; }
   const cli=((S.cat.clientes||[]).find(c=>c.id===S.cliente)||{}).nombre||'cliente';
-  await escribirXlsx('Inventario_'+sanitizeName(cli)+'_'+todayISO(),
-    [{nombre:'Inventario',cols:COLS_DISP,
-      filas:filas.map(e=>Object.assign({},e,{cliente:cli,localidad:locLabel(e.localidadId)})),
-      oblig:['hostname','serie','tipo','localidadId']},
-     Object.assign({filas:filasReferencia()},HOJA_REF)]);
-  logEvent('EXPORT_INVENTARIO',cli+' · '+filas.length+' equipos');
+  const planas=filas.map(e=>Object.assign({},e,{cliente:cli,localidad:locLabel(e.localidadId)}));
+  const nombre='Inventario_'+sanitizeName(cli)+'_'+todayISO();
+  if(tipo==='pdf'){
+    await exportPDF(planas,'Inventario de dispositivos',false,COLS_DISP.map(c=>[c[0],c[1]]));
+  }else{
+    await escribirXlsx(nombre,
+      [{nombre:'Inventario',cols:COLS_DISP,filas:planas,oblig:['hostname','serie','tipo','localidadId']},
+       Object.assign({filas:filasReferencia()},HOJA_REF)]);
+  }
+  logEvent('EXPORT_INVENTARIO',cli+' · '+filas.length+' equipos · '+(tipo==='pdf'?'PDF':'Excel'));
 }
 
 /* ---------------------- 19quater. DATASETS DE SOLO LECTURA (CRQ · SIT) ----------------------
@@ -4316,9 +4325,7 @@ async function dsExportar(ds,filas,tipo){
     await escribirXlsx(nombre,[{nombre:ds.plural,cols:ds.cols.map(c=>[c.k,c.t,Math.min(60,Math.round(c.a/7))]),filas:datos}]);
     logEvent('EXPORT_'+ds.plural.toUpperCase(),filas.length+' registros');
   }else{
-    const guarda=COLS.slice();
-    try{ COLS.length=0; cols.forEach(c=>COLS.push(c)); await exportPDF(datos,'Reporte de '+ds.plural,false); }
-    finally{ COLS.length=0; guarda.forEach(c=>COLS.push(c)); }
+    await exportPDF(datos,'Reporte de '+ds.plural,false,cols);
   }
 }
 function dsBarraImport(ds){
@@ -4902,7 +4909,6 @@ function enlazarEventos(){
   $('#iNuevo').onclick=nuevoEquipo;
   $('#iAcciones').onclick=e=>{ e.stopPropagation(); menuAcciones(); };
   document.addEventListener('click',cerrarMenuAcciones);
-  $('#iExport').onclick=()=>exportarInventario().catch(e=>toast(e.message,'err'));
 
   // CRQ y SIT
   [['crq',DATASETS.crq],['sit',DATASETS.sit]].forEach(([k,ds])=>{
