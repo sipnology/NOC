@@ -46,6 +46,8 @@ main{padding:18px;max-width:1500px;margin:0 auto}
 .view{display:none}.view.on{display:block}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
 .panel>h2{font-size:15px;color:var(--brand2);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
+.panel .hrow{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.panel .hrow h2{margin:0;color:var(--brand2);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
 .grid.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
 .f{display:flex;flex-direction:column;gap:5px}
@@ -378,15 +380,13 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <button class="btn" id="btnFiltrar">Aplicar filtros</button>
       <button class="btn sec" id="btnLimpiaF">Limpiar</button>
       <button class="btn sec" id="btnRefrescar">↻ Refrescar desde SharePoint</button>
-      <span class="right row" style="gap:8px">
-        <span style="position:relative"><button class="btn sec" id="btnCols">⚙ Columnas</button></span>
-        <button class="btn sec" id="btnExpXlsSeg">Exportar Excel</button>
-        <button class="btn sec" id="btnExpPdfSeg">Exportar PDF</button>
-      </span>
     </div>
   </div>
   <div class="panel">
-    <h2>Tickets <span id="segCount" style="color:var(--muted);font-weight:400"></span></h2>
+    <div class="hrow">
+      <h2>Tickets <span id="segCount" style="color:var(--muted);font-weight:400;text-transform:none"></span></h2>
+      <span class="right" style="position:relative"><button class="btn sec" id="btnCols">⚙ Columnas</button></span>
+    </div>
     <div class="tw"><table id="tblSeg"><colgroup></colgroup><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="segPag"></div>
   </div>
@@ -671,7 +671,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r14';
+const APP_VER = '2026-08-10 · r15';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -1541,7 +1541,9 @@ function renderSeg(){
   habilitarResize(tb);
   $('#tblSeg').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirTicket(b.dataset.open));
   // paginación
-  let p='<span>Filas</span><select id="segSize" style="width:70px;padding:3px">'+
+  let p='<button class="btn sec" id="btnExpXlsSeg" style="padding:4px 11px;font-size:12px">⬇ Excel</button>'+
+    '<button class="btn sec" id="btnExpPdfSeg" style="padding:4px 11px;font-size:12px">⬇ PDF</button>'+
+    '<span style="width:14px"></span><span>Filas</span><select id="segSize" style="width:70px;padding:3px">'+
     [5,10,25,50].map(n=>'<option'+(n===S.segSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
   p+='<button data-p="'+(S.segPage-1)+'"'+(S.segPage<=1?' disabled':'')+'>‹</button>';
   for(let i=Math.max(1,S.segPage-2);i<=Math.min(pages,S.segPage+2);i++)
@@ -1550,6 +1552,10 @@ function renderSeg(){
   $('#segPag').innerHTML=p;
   $('#segPag').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{S.segPage=Math.max(1,Math.min(pages,+b.dataset.p));renderSeg();});
   const ss=$('#segSize'); if(ss) ss.onchange=()=>{S.segSize=+ss.value;S.segPage=1;renderSeg();};
+  /* Los botones de exportar viven dentro de la paginación, que se vuelve a dibujar
+     en cada render: hay que reconectarlos aquí y no en enlazarEventos. */
+  const bx=$('#btnExpXlsSeg'); if(bx) bx.onclick=()=>exportExcel(filtrar(leerFiltros()),'Tickets_'+todayISO());
+  const bp=$('#btnExpPdfSeg'); if(bp) bp.onclick=()=>exportPDF(filtrar(leerFiltros()),'Reporte de tickets',false);
   poblarResponsables();
 }
 
@@ -3352,8 +3358,6 @@ function enlazarEventos(){
   $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
   $('#btnCols').onclick=e=>{ e.stopPropagation(); panelColumnas(); };
   document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove(); });
-  $('#btnExpXlsSeg').onclick=()=>exportExcel(filtrar(leerFiltros()),'Tickets_'+todayISO());
-  $('#btnExpPdfSeg').onclick=()=>exportPDF(filtrar(leerFiltros()),'Reporte de tickets',false);
   $('#mClose').onclick=$('#mClose2').onclick=()=>{$('#mSeg').classList.remove('on');S.ticket=null;};
   $('#btnGuardarSeg').onclick=guardarSeguimiento;
   $('#btnMail').onclick=()=>{ if(S.ticket) abrirCorreo(S.ticket,S.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',sanitizeHtml($('#sNota').innerHTML)||S.ticket.descripcion); };
