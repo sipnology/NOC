@@ -119,6 +119,18 @@ tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 .bulk .campos .f label input[type=checkbox]{width:auto;margin:0;accent-color:var(--brand2)}
 .bulk .acciones{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 tr.sel td{background:rgba(59,130,246,.12)}
+.accwrap{position:relative}
+.accmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:150;background:var(--panel);
+ border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh);padding:6px;min-width:250px}
+.accmenu button{display:flex;align-items:center;gap:9px;width:100%;background:transparent;border:0;
+ color:var(--txt);padding:9px 11px;border-radius:7px;cursor:pointer;font-size:13px;text-align:left}
+.accmenu button:hover{background:var(--panel2)}
+.accmenu button.dan{color:#ff8f8f}
+.accmenu button.dan:hover{background:rgba(239,68,68,.14)}
+.accmenu hr{border:0;border-top:1px solid var(--line);margin:5px 0}
+.accmenu .ic{width:18px;text-align:center;flex:0 0 auto}
+.bulk .bx{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);
+ cursor:pointer;font-size:17px;line-height:1}
 @media(max-width:760px){.bulk{width:96vw}.bulk .campos{grid-template-columns:1fr 1fr}}
 .btn{background:var(--brand2);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:700;
  cursor:pointer;font-size:13px}
@@ -425,6 +437,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <button class="btn sec" id="iLimpiar">Limpiar filtros</button>
         <button class="btn sec" id="iRefrescar">↻ Refrescar</button>
         <span class="right row" style="gap:8px">
+          <span class="accwrap"><button class="btn sec" id="iAcciones" disabled>Acciones</button></span>
           <button class="btn sec" id="iExport">⬇ Exportar a Excel</button>
           <button class="btn" id="iNuevo">+ Agregar equipo</button>
         </span>
@@ -637,7 +650,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-10 · r11';
+const APP_VER = '2026-08-10 · r12';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -2809,7 +2822,7 @@ function renderInv(){
     todosChk.checked = rows.length>0 && rows.every(e=>_invSel.has(e));
     todosChk.onchange=()=>{ rows.forEach(e=>{ if(todosChk.checked) _invSel.add(e); else _invSel.delete(e); }); renderInv(); };
   }
-  renderBulk(filas);
+  renderAcciones();
   let pg='<span>Filas</span><select id="iSize" style="width:70px;padding:3px">'+
     [10,25,50,100].map(n=>'<option'+(n===_invSize?' selected':'')+'>'+n+'</option>').join('')+'</select>';
   pg+='<button data-p="'+(_invPage-1)+'"'+(_invPage<=1?' disabled':'')+'>‹</button>';
@@ -2866,13 +2879,52 @@ const CAMPOS_BULK=[
                     const loc=(l&&l.value)|| $('#iLoc').value; return loc? pisosDeSede(loc) : []; }},
   {k:'firmware',  t:'Versión firmware'}
 ];
-function renderBulk(visibles){
+function seleccionados(){ return [...(_invSel||[])].filter(e=>S.inv.indexOf(e)!==-1); }
+/* La selección ya no abre nada sola: solo habilita el botón «Acciones». */
+function renderAcciones(){
+  const b=$('#iAcciones'); if(!b) return;
+  const n=seleccionados().length;
+  b.disabled=!puedeEditarInventario()||n===0;
+  b.textContent = n? 'Acciones ('+n+') ▾' : 'Acciones';
+  if(!n){ cerrarMenuAcciones(); const p=$('#bulkBar'); if(p) p.remove(); }
+}
+function cerrarMenuAcciones(){ const m=$('#accMenu'); if(m) m.remove(); }
+function menuAcciones(){
+  if($('#accMenu')){ cerrarMenuAcciones(); return; }
+  const sel=seleccionados(); if(!sel.length) return;
+  const m=document.createElement('div');
+  m.id='accMenu'; m.className='accmenu';
+  m.innerHTML='<div style="padding:6px 11px;color:var(--muted);font-size:11.5px">'+sel.length+' equipo(s) seleccionados</div><hr>'+
+    '<button data-a="editar"><span class="ic">✎</span> Editar campos en bloque</button>'+
+    '<button data-a="exportar"><span class="ic">⬇</span> Exportar selección a Excel</button>'+
+    '<hr><button data-a="quitar"><span class="ic">✕</span> Quitar selección</button>'+
+    '<button class="dan" data-a="borrar"><span class="ic">🗑</span> Eliminar del inventario</button>';
+  $('#iAcciones').parentNode.appendChild(m);
+  m.onclick=e=>e.stopPropagation();
+  m.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+    const a=b.dataset.a; cerrarMenuAcciones();
+    if(a==='editar') edicionMasiva(sel);
+    if(a==='exportar') exportarInventario(sel).catch(e=>toast(e.message,'err'));
+    if(a==='quitar'){ limpiarSeleccion(); renderInv(); }
+    if(a==='borrar') borrarSeleccion(sel);
+  });
+}
+function borrarSeleccion(sel){
+  if(!confirm('¿Eliminar '+sel.length+' equipo(s) del inventario?\n'+
+    'Los tickets que los mencionan conservan el registro histórico.\n\n'+
+    'El cambio se aplica al guardar.')) return;
+  sel.forEach(e=>{ const i=S.inv.indexOf(e); if(i>=0){ S.inv.splice(i,1);
+    invMarcar('Baja · '+(e.serie||e.hostname||'(sin identificar)')); } });
+  toast(sel.length+' equipo(s) marcados para baja. Usa «Guardar cambios».');
+  limpiarSeleccion(); _invEdit=null; renderInv();
+}
+function edicionMasiva(sel){
   const previo=$('#bulkBar'); if(previo) previo.remove();
-  const sel=[...(_invSel||[])].filter(e=>S.inv.indexOf(e)!==-1);
-  if(!puedeEditarInventario()||sel.length<2) return;
+  if(!puedeEditarInventario()||!sel.length) return;
   const d=document.createElement('div');
   d.id='bulkBar'; d.className='bulk';
-  d.innerHTML='<div class="bh"><b>'+sel.length+' equipos seleccionados</b>'+
+  d.innerHTML='<button class="bx" id="bulkX" title="Cerrar">×</button>'+
+    '<div class="bh"><b>'+sel.length+' equipos seleccionados</b>'+
       '<span style="color:var(--muted);font-size:12px">Marca la casilla del campo que quieras cambiar. '+
       'Cliente, hostname y número de serie no se editan en bloque.</span></div>'+
     '<div class="campos">'+CAMPOS_BULK.map(c=>{
@@ -2885,7 +2937,7 @@ function renderBulk(visibles){
       return '<div class="f"><label><input type="checkbox" data-on="'+c.k+'"> '+esc(c.t)+'</label>'+ctrl+'</div>';
     }).join('')+'</div>'+
     '<div class="acciones"><button class="btn" id="bulkGo">Aplicar a los '+sel.length+'</button>'+
-    '<button class="btn sec" id="bulkClr">Quitar selección</button>'+
+    '<button class="btn sec" id="bulkClr">Cerrar</button>'+
     '<span id="bulkAviso" style="color:var(--warn);font-size:12px;align-self:center"></span></div>';
   document.body.appendChild(d);
   d.querySelectorAll('[data-on]').forEach(chk=>chk.onchange=()=>{
@@ -2899,7 +2951,7 @@ function renderBulk(visibles){
       lista.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');
     $('#bulkAviso').textContent='Revisa el piso: cambió la sede.';
   });
-  d.querySelector('#bulkClr').onclick=()=>{ limpiarSeleccion(); renderInv(); };
+  d.querySelector('#bulkClr').onclick=d.querySelector('#bulkX').onclick=()=>{ d.remove(); };
   d.querySelector('#bulkGo').onclick=()=>aplicarBulk(sel,d);
 }
 function aplicarBulk(sel,panel){
@@ -2928,10 +2980,10 @@ function aplicarBulk(sel,panel){
     'Al guardar podrás darlo de alta en el catálogo.','warn',9000);
   if(!n){ toast('Los equipos ya tenían esos valores.','warn'); return; }
   toast(n+' equipo(s) actualizados. Usa «Guardar cambios» para escribirlos.');
-  limpiarSeleccion(); renderInv();
+  panel.remove(); limpiarSeleccion(); renderInv();
 }
-async function exportarInventario(){
-  const filas=invFiltrado();
+async function exportarInventario(soloEstos){
+  const filas=(soloEstos&&soloEstos.length)?soloEstos:invFiltrado();
   if(!filas.length){ toast('No hay equipos que exportar.','warn'); return; }
   const cli=((S.cat.clientes||[]).find(c=>c.id===$('#iCliente').value)||{}).nombre||'cliente';
   await escribirXlsx('Inventario_'+sanitizeName(cli)+'_'+todayISO(),
@@ -2971,7 +3023,7 @@ function irA(v){
   $$('.view').forEach(s=>s.classList.toggle('on',s.id===v));
   if(v==='vEstado') renderDash();
   if(v==='vInventario') renderInv();
-  else { const b=$('#bulkBar'); if(b) b.remove(); }
+  else { const b=$('#bulkBar'); if(b) b.remove(); cerrarMenuAcciones(); }
   if(v==='vCatalogos') renderCat();
   if(v==='vBitacora') renderBit();
 }
@@ -3055,6 +3107,8 @@ function enlazarEventos(){
     if(invSucio()&&!confirm('Tienes cambios sin guardar. Al refrescar se pierden.\n¿Continuar?')) return;
     busy(this,true); _invEdit=null; limpiarSeleccion(); await invPull(); busy(this,false); };
   $('#iNuevo').onclick=nuevoEquipo;
+  $('#iAcciones').onclick=e=>{ e.stopPropagation(); menuAcciones(); };
+  document.addEventListener('click',cerrarMenuAcciones);
   $('#iExport').onclick=()=>exportarInventario().catch(e=>toast(e.message,'err'));
 
   // Bitácora / correo
@@ -3092,7 +3146,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   normEquipo:normEquipo,clienteDeEquipo:clienteDeEquipo,invFiltrado:invFiltrado,invVisible:invVisible,
   puedeEditarInventario:puedeEditarInventario,opciones:opciones,
   nuevosParaCatalogo:nuevosParaCatalogo,invSucio:invSucio,invMarcar:invMarcar,modalNuevos:modalNuevos,
-  locLabel:locLabel,pisosDeSede:pisosDeSede,CAMPOS_BULK:CAMPOS_BULK,
+  locLabel:locLabel,pisosDeSede:pisosDeSede,CAMPOS_BULK:CAMPOS_BULK,seleccionados:seleccionados,
   mapearColumnas:mapearColumnas,SINONIMOS:SINONIMOS,
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice()};
