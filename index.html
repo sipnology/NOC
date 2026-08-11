@@ -197,6 +197,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .chartbox canvas{max-height:260px}
 .chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
+.chartbox .cab{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-right:22px}
+.chartbox .cab h3{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chartbox .cab select{width:auto;min-width:104px;padding:3px 6px;font-size:11.5px;height:26px}
 /* ---------- Modal ---------- */
 .mask{position:fixed;inset:0;background:rgba(3,10,18,.75);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:22px;overflow:auto}
 .mask.on{display:flex}
@@ -755,7 +758,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-11 · r17';
+const APP_VER = '2026-08-11 · r18';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
@@ -765,6 +768,7 @@ const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin
 const S = {
   cat:null, inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
   cliente:'',              // cliente activo; '' = todos (solo para usuarios internos)
+  _cliExistentes:null,     // IDs de cliente ya publicados: su ID queda bloqueado
   dashMod:'tickets',       // apartado activo del tablero: tickets | crq | sit
   clienteScope:null,        // si es cliente externo: id del cliente al que se limita
   filtro:{}, segPage:1, segSize:25, bitPage:1,
@@ -1026,6 +1030,7 @@ async function catalogoPull(silent){
     if(remoto) S.cat.clientes=mergeClientes(def.clientes,remoto.clientes||def.clientes);
     if(!S.cat.logoOperador) S.cat.logoOperador=def.logoOperador;
     if(!S.cat.aliasSedes) S.cat.aliasSedes={};
+    S._cliExistentes=new Set((S.cat.clientes||[]).map(c=>c.id).filter(Boolean));
     if(!remoto && isAdmin()){ await gPutJson(h,P_CAT,S.cat); }   // siembra inicial
     poblarCatalogosUI();
     if(!silent) toast('Catálogo actualizado.');
@@ -2214,20 +2219,17 @@ function renderDashDs(ds){
   const defs=(_dashDefs[ds.k]||[]).slice();
   defs.forEach((k,i)=>{
     const dim=ds.dims.find(x=>x.k===k); if(!dim) return;
+    const tipo=tipoGraf(ds.k,k,dim.tipo);
     const box=document.createElement('div'); box.className='chartbox';
-    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button><h3>'+esc(dim.t)+'</h3><canvas></canvas>';
+    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
+      '<div class="cab"><h3 title="'+esc(dim.t)+'">'+esc(dim.t)+'</h3>'+selectorTipo(ds.k,k,tipo)+'</div><canvas></canvas>';
     $('#charts').appendChild(box);
     const g=agrupar(filas,dim.f), cols=g.map((_,j)=>PALETA[j%PALETA.length]);
-    S.charts.push(new Chart(box.querySelector('canvas'),{type:dim.tipo,
-      data:{labels:g.map(x=>x.k),datasets:[{label:ds.plural,data:g.map(x=>x.n),
-        backgroundColor:dim.tipo==='line'?'rgba(233,102,45,.25)':cols,
-        borderColor:dim.tipo==='line'?'#e9662d':'rgba(0,0,0,.15)',borderWidth:1,fill:dim.tipo==='line',tension:.3}]},
-      options:{responsive:true,maintainAspectRatio:true,animation:false,
-        plugins:{legend:{display:dim.tipo!=='bar',position:'bottom',labels:{color:'#93a0bd',boxWidth:12,font:{size:11}}}},
-        scales:dim.tipo==='doughnut'?{}:{x:{ticks:{color:'#93a0bd',font:{size:10},maxRotation:60}},
-          y:{beginAtZero:true,ticks:{color:'#93a0bd',precision:0}}}}}));
+    S.charts.push(new Chart(box.querySelector('canvas'),
+      configGrafica(tipo,ds.plural,g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
   $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ _dashDefs[ds.k].splice(+b.dataset.rm,1); renderDash(); });
+  enlazarSelectoresTipo($('#charts'),renderDash);
 }
 function renderDash(){
   if(!S.cat||typeof Chart==='undefined') return;
@@ -2243,24 +2245,65 @@ function renderDash(){
   $('#charts').innerHTML='';
   S.chartDefs.forEach((k,i)=>{
     const dim=DIMENSIONES.find(x=>x.k===k); if(!dim) return;
+    const tipo=tipoGraf('tickets',k,dim.tipo);
     const box=document.createElement('div'); box.className='chartbox';
-    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button><h3>'+esc(dim.t)+'</h3><canvas></canvas>';
+    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
+      '<div class="cab"><h3 title="'+esc(dim.t)+'">'+esc(dim.t)+'</h3>'+selectorTipo('tickets',k,tipo)+'</div><canvas></canvas>';
     $('#charts').appendChild(box);
     const g=agrupar(d,dim.f);
-    const cv=box.querySelector('canvas');
     const cols=g.map((_,j)=>PALETA[j%PALETA.length]);
-    S.charts.push(new Chart(cv,{
-      type:dim.tipo,
-      data:{labels:g.map(x=>x.k),datasets:[{label:'Tickets',data:g.map(x=>x.n),
-        backgroundColor:dim.tipo==='line'?'rgba(233,102,45,.25)':cols,
-        borderColor:dim.tipo==='line'?'#e9662d':'rgba(0,0,0,.15)',borderWidth:1,fill:dim.tipo==='line',tension:.3}]},
-      options:{responsive:true,maintainAspectRatio:true,animation:false,
-        plugins:{legend:{display:dim.tipo!=='bar',position:'bottom',labels:{color:'#93a0bd',boxWidth:12,font:{size:11}}}},
-        scales:dim.tipo==='doughnut'?{}:{x:{ticks:{color:'#93a0bd',font:{size:10},maxRotation:60,minRotation:0}},
-          y:{beginAtZero:true,ticks:{color:'#93a0bd',precision:0}},}}
-    }));
+    S.charts.push(new Chart(box.querySelector('canvas'),
+      configGrafica(tipo,'Tickets',g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
   $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.chartDefs.splice(+b.dataset.rm,1);renderDash();});
+  enlazarSelectoresTipo($('#charts'),renderDash);
+}
+
+/* ---- Tipo de gráfica, elegible por el usuario en cada tablero ---- */
+const TIPOS_GRAF=[['bar','Barras'],['barH','Barras horizontales'],['line','Líneas'],['area','Área'],
+  ['doughnut','Dona'],['pie','Pastel'],['polarArea','Área polar'],['radar','Radar']];
+const PREF_GRAF='sip_tkt_graficas';
+let _graf=null;
+function grafPrefs(){
+  if(_graf) return _graf;
+  try{ _graf=JSON.parse(localStorage.getItem(PREF_GRAF)||'{}'); }catch(e){ _graf={}; }
+  return _graf;
+}
+function tipoGraf(mod,k,porDefecto){
+  const g=grafPrefs()[mod]||{};
+  return g[k]||porDefecto||'bar';
+}
+function setTipoGraf(mod,k,v){
+  const g=grafPrefs(); g[mod]=g[mod]||{}; g[mod][k]=v;
+  try{ localStorage.setItem(PREF_GRAF,JSON.stringify(g)); }catch(e){}
+}
+function selectorTipo(mod,k,actual){
+  return '<select data-tipo="'+esc(k)+'" data-mod="'+esc(mod)+'" title="Tipo de gráfica">'+
+    TIPOS_GRAF.map(t=>'<option value="'+t[0]+'"'+(t[0]===actual?' selected':'')+'>'+t[1]+'</option>').join('')+'</select>';
+}
+/* Traduce el tipo elegido a la configuración de Chart.js. */
+function configGrafica(tipo,etiqueta,labels,datos,colores){
+  const circular=['doughnut','pie','polarArea','radar'].indexOf(tipo)!==-1;
+  const linea=tipo==='line'||tipo==='area';
+  const real=tipo==='barH'?'bar':(tipo==='area'?'line':tipo);
+  const ejeTexto={color:'#93a0bd',font:{size:10},maxRotation:60};
+  return {
+    type:real,
+    data:{labels:labels,datasets:[{label:etiqueta,data:datos,
+      backgroundColor:linea?'rgba(233,102,45,.25)':colores,
+      borderColor:linea?'#e9662d':(tipo==='radar'?'#e9662d':'rgba(0,0,0,.15)'),
+      borderWidth:1,fill:tipo==='area'||tipo==='radar',tension:.3}]},
+    options:{responsive:true,maintainAspectRatio:true,animation:false,
+      indexAxis:tipo==='barH'?'y':'x',
+      plugins:{legend:{display:circular,position:'bottom',labels:{color:'#93a0bd',boxWidth:12,font:{size:11}}}},
+      scales:circular?{}:{x:{ticks:ejeTexto},y:{beginAtZero:true,ticks:{color:'#93a0bd',precision:0}}}}
+  };
+}
+function enlazarSelectoresTipo(cont,alCambiar){
+  cont.querySelectorAll('[data-tipo]').forEach(sel=>sel.onchange=()=>{
+    setTipoGraf(sel.dataset.mod,sel.dataset.tipo,sel.value);
+    alCambiar();
+  });
 }
 
 /* ---------------------- 17. EXPORTACIÓN ---------------------- */
@@ -2616,14 +2659,27 @@ function leerLogo(file,maxAncho){
   });
 }
 const ETIQ_MOD={tickets:'Tickets',inventario:'Inventario',crq:'CRQs',sit:'SITs'};
+/* El ID se deriva del nombre para no capturar dos veces lo mismo. */
+function idDesdeNombre(n){
+  return String(n||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12);
+}
+function cliBloqueado(c){ return !!(S._cliExistentes&&c.id&&S._cliExistentes.has(c.id)); }
 function renderClientes(box,ro){
   const arr=S.cat.clientes||(S.cat.clientes=[]);
   box.innerHTML='<div class="note">Cada cliente decide qué módulos se le muestran. El logo aparece junto al '+
     'selector del encabezado y se guarda dentro del catálogo, así que no hay que subir archivos aparte.</div>'+
     arr.map((c,i)=>'<div class="panel" style="margin:0 0 12px">'+
       '<div class="grid">'+
-      '<div class="f"><label>ID</label><input data-c="id" data-i="'+i+'" value="'+esc(c.id||'')+'"'+(ro?' disabled':'')+'></div>'+
-      '<div class="f"><label>Nombre</label><input data-c="nombre" data-i="'+i+'" value="'+esc(c.nombre||'')+'"'+(ro?' disabled':'')+'></div>'+
+      '<div class="f"><label>Nombre del cliente</label><input data-c="nombre" data-i="'+i+'" value="'+esc(c.nombre||'')+'"'+(ro?' disabled':'')+'></div>'+
+      '<div class="f"><label>ID interno '+(cliBloqueado(c)?'🔒':'')+'</label>'+
+        '<input data-c="id" data-i="'+i+'" value="'+esc(c.id||'')+'"'+((ro||cliBloqueado(c))?' disabled':'')+
+        ' title="'+(cliBloqueado(c)
+          ?'Bloqueado: nombra la carpeta de SharePoint y está guardado dentro de cada ticket, equipo, CRQ y SIT.'
+          :'Se genera solo a partir del nombre. Puedes ajustarlo mientras el cliente no se haya guardado.')+'">'+
+        '<span style="font-size:11px;color:var(--muted)">'+(cliBloqueado(c)
+          ?'Clientes/'+esc(c.id)+'/ · no se puede cambiar'
+          :'se genera del nombre')+'</span></div>'+
       '<div class="f"><label>Dominios de correo (coma)</label><input data-c="dominios" data-i="'+i+'" value="'+esc((c.dominios||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
       '<div class="f"><label>Correos de notificación (coma)</label><input data-c="correosNotif" data-i="'+i+'" value="'+esc((c.correosNotif||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
       '</div>'+
@@ -2647,7 +2703,18 @@ function renderClientes(box,ro){
   box.querySelectorAll('input[data-c]').forEach(inp=>inp.onchange=()=>{
     const o=arr[+inp.dataset.i], k=inp.dataset.c;
     o[k]=(k==='dominios'||k==='correosNotif')? inp.value.split(',').map(x=>x.trim()).filter(Boolean) : inp.value.trim();
+    if(k==='nombre'&&!cliBloqueado(o)){
+      const sug=idDesdeNombre(o.nombre);
+      /* Solo se autocompleta si el ID venía vacío o seguía la derivación anterior. */
+      if(!o.id||o.id===idDesdeNombre(inp.dataset.antes||'')){ o.id=sug; renderCat(); return; }
+    }
+    if(k==='id'){
+      o.id=idDesdeNombre(o.id);
+      if(arr.filter(x=>x.id===o.id).length>1){ toast('Ya existe otro cliente con el ID '+o.id+'.','err',7000); o.id=''; }
+      renderCat();
+    }
   });
+  box.querySelectorAll('input[data-c="nombre"]').forEach(inp=>inp.dataset.antes=inp.value);
   box.querySelectorAll('input[data-m]').forEach(chk=>chk.onchange=()=>{
     const o=arr[+chk.dataset.i], m=chk.dataset.m;
     o.modulos=o.modulos||[];
@@ -2672,6 +2739,11 @@ function renderClientes(box,ro){
   });
   const add=box.querySelector('#cliAdd');
   if(add) add.onclick=()=>{ arr.push({id:'',nombre:'',dominios:[],correosNotif:[],modulos:['tickets','inventario']}); renderCat(); };
+  box.insertAdjacentHTML('beforeend','<div class="note" style="margin-top:12px">'+
+    '<b>Nombre e ID no son lo mismo.</b> El <b>nombre</b> es la etiqueta que se ve y se puede cambiar cuando quieras. '+
+    'El <b>ID</b> nombra la carpeta de SharePoint (<code>Clientes/&lt;ID&gt;/</code>) y queda escrito dentro de cada '+
+    'ticket, equipo, CRQ y SIT: por eso se bloquea en cuanto el cliente se guarda. Se genera solo a partir del nombre, '+
+    'así que en la práctica capturas uno solo.</div>');
 }
 
 /* Diccionario para traducir el texto libre de sede que traen los archivos del cliente. */
@@ -4231,7 +4303,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable,
   clientesVisibles:clientesVisibles,modulosDe:modulosDe,moduloActivo:moduloActivo,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
-  MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
+  MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
+  TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
+  idDesdeNombre:idDesdeNombre,cliBloqueado:cliBloqueado,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
   dsFiltrar:dsFiltrar,dsEst:dsEst,dsNormRegistro:dsNormRegistro,textoPlano:textoPlano};
 </script>
 </body>
