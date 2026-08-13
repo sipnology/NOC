@@ -739,6 +739,23 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
           <div class="f"><label>Responsable del cierre</label><input id="sRespCi" readonly></div>
           <div class="f"><label>Ticket del cliente (CRQ / INC)</label><input id="sCrq" placeholder="CRQ000000123456"></div>
         </div>
+        <div id="sPausaBox" class="hide" style="margin-top:12px">
+          <div class="note" style="border-left-color:var(--warn)">Poner el ticket <b>en espera</b> detiene el reloj del SLA
+            y el tiempo de afectación mientras la pelota está del otro lado. Para que la pausa sea defendible ante el
+            cliente hay que decir de quién depende, por qué y para cuándo se comprometió.</div>
+          <div class="grid">
+            <div class="f"><label>La espera depende de <span class="req">*</span></label><select id="sPauImp"></select></div>
+            <div class="f"><label>Tercero, proveedor o área <span class="req">*</span></label>
+              <input id="sPauTercero" placeholder="Ej. Proveedor de cableado ACME / Facilities BBVA"></div>
+            <div class="f"><label>Fecha comprometida <span class="req">*</span></label><input type="date" id="sPauFecha"></div>
+            <div class="f"><label>Hora comprometida <span class="req">*</span></label>
+              <div class="row" style="gap:6px"><input id="sPauHora" placeholder="hh:mm:ss" style="flex:1">
+              <select id="sPauAmPm" style="width:78px"><option>AM</option><option>PM</option></select></div></div>
+            <div class="f"><label>Folio o referencia externa</label><input id="sPauFolio" placeholder="Opcional: ticket del proveedor"></div>
+          </div>
+          <div class="f" style="margin-top:10px"><label>Motivo de la espera <span class="req">*</span></label>
+            <textarea id="sPauMotivo" placeholder="Qué se está esperando exactamente: validación de cable, ventana de cambio, refacción…"></textarea></div>
+        </div>
         <div class="f" style="margin-top:12px"><label>Notas y actividades <span class="req">*</span></label>
           <div class="rte-tb" data-for="sNota">
             <button type="button" data-c="bold"><b>B</b></button>
@@ -768,6 +785,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         </div>
         <div class="note">Los tickets no pueden eliminarse. Todo cambio queda registrado en la bitácora con usuario, fecha y hora.</div>
       </div>
+
+      <div id="mPausas"></div>
 
       <div class="panel" style="margin:0">
         <h2>Historial del ticket</h2>
@@ -900,7 +919,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r35';
+const APP_VER = '2026-08-13 · r36';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1352,7 +1371,12 @@ function idxEntry(t){
     fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
     imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respCi:t.respCi, status:t.status,
-    crq:t.crq, ruta:t.ruta, actualizado:t.actualizado};
+    crq:t.crq, ruta:t.ruta, actualizado:t.actualizado,
+    /* Solo lo necesario para recalcular el reloj sin abrir el expediente completo. */
+    pausas:(t.pausas||[]).map(p=>({desde:p.desde,hasta:p.hasta,imputable:p.imputable,
+      tercero:p.tercero,compromiso:p.compromiso})),
+    esperaMs:t.esperaMs||0, esperaDesde:t.esperaDesde||'',
+    slaHoras:t.slaHoras};
 }
 async function idxPull(silent){
   try{
@@ -1676,6 +1700,7 @@ function poblarCatalogosUI(){
   fillSel('#tPrioridad',pris,'— selecciona —');
   fillSel('#tColTipo',S.cat.tiposDispositivo||[],'Tipo de colateral');
   fillSel('#sImputable',S.cat.imputables||[],'— selecciona —');
+  fillSel('#sPauImp',S.cat.imputables||[],'— selecciona —');
 
   // filtros de seguimiento
   fillSel('#fCliente',cls,'Todos');
@@ -1987,19 +2012,55 @@ async function crearTicket(){
 }
 
 /* ---------------------- 14. SLA ---------------------- */
-/* Reloj de SLA: transcurrido desde la apertura MENOS el tiempo acumulado en "EN ESPERA". */
+/* ---- Pausas del SLA ----
+   Cada espera se registra como un intervalo con responsable, motivo y compromiso.
+   Solo descuentan del reloj las que dependen del cliente o de un tercero: si esperamos
+   algo nuestro, el tiempo es nuestro. Sin este detalle una pausa no se puede defender
+   ante el cliente, que es justo cuando se cuestiona. */
+function pausaDescuenta(p){
+  const i=String((p&&p.imputable)||'').toLowerCase();
+  if(!i) return false;
+  return i.indexOf('sipnology')===-1;
+}
+function pausaAbierta(t){
+  const a=(t&&t.pausas)||[];
+  for(let i=a.length-1;i>=0;i--) if(!a[i].hasta) return a[i];
+  return null;
+}
+/* soloDescontables=true → tiempo que se resta del SLA. false → toda la espera, para reportar. */
+function msPausas(t,soloDescontables,corte){
+  const fin=corte||Date.now(); let ms=0;
+  ((t&&t.pausas)||[]).forEach(p=>{
+    if(soloDescontables&&!pausaDescuenta(p)) return;
+    const d=new Date(p.desde).getTime(); if(isNaN(d)) return;
+    const h=p.hasta? new Date(p.hasta).getTime() : fin;
+    const cierre=Math.min(h,fin);
+    if(cierre>d) ms+=cierre-d;
+  });
+  /* Tickets anteriores al registro de pausas: se respeta su acumulado. */
+  if(!pausaAbierta(t)){
+    ms+=(t&&t.esperaMs)||0;
+    if(t&&t.status==='EN ESPERA'&&t.esperaDesde){
+      const d=new Date(t.esperaDesde).getTime();
+      if(!isNaN(d)&&fin>d) ms+=fin-d;
+    }
+  }
+  return ms;
+}
+function msDescontable(t,corte){ return msPausas(t,true,corte); }
+function msEspera(t,corte){ return msPausas(t,false,corte); }
+/* Reloj de SLA: transcurrido desde la apertura MENOS las esperas imputables a terceros. */
 function slaInfo(t){
   const ini=dt(t.fechaAp,t.horaAp); if(!ini) return {pct:0,txt:'',cls:''};
   const fin=(t.status==='CERRADO')? dt(t.fechaCie,t.horaCie) : new Date();
   if(!fin) return {pct:0,txt:'',cls:''};
-  let ms=fin-ini-(t.esperaMs||0);
-  if(t.status==='EN ESPERA'&&t.esperaDesde) ms-=(Date.now()-new Date(t.esperaDesde).getTime());
+  let ms=fin-ini-msDescontable(t,fin.getTime());
   if(ms<0) ms=0;
   const lim=(t.slaHoras||slaHoras(t.prioridad))*3600000;
   const pct=lim? ms/lim : 0;
   const cls = t.status==='CERRADO' ? (pct>1?'sla-bad':'sla-ok') : (pct>1?'sla-bad':(pct>=0.7?'sla-warn':'sla-ok'));
   const txt = durHMS(ms)+' / '+(t.slaHoras||slaHoras(t.prioridad))+'h'+(pct>1?' ⚠ VENCIDO':(pct>=0.7&&t.status!=='CERRADO'?' ⚠':''));
-  return {pct:pct,ms:ms,txt:txt,cls:cls,vencido:pct>1};
+  return {pct:pct,ms:ms,txt:txt,cls:cls,vencido:pct>1,pausado:msDescontable(t,fin.getTime()),bruto:Math.max(0,fin-ini)};
 }
 function alertasSLA(){
   if(S.role==='cliente') return;
@@ -2007,6 +2068,15 @@ function alertasSLA(){
   const p=S.idx.filter(t=>{const s=slaInfo(t);return t.status!=='CERRADO'&&!s.vencido&&s.pct>=0.7;});
   if(v.length) toast(v.length+' ticket(s) con SLA VENCIDO: '+v.slice(0,4).map(t=>t.id).join(', '),'err',12000);
   if(p.length) toast(p.length+' ticket(s) por vencer SLA: '+p.slice(0,4).map(t=>t.id).join(', '),'warn',10000);
+  /* Una espera sin vigilancia se vuelve permanente: se avisa cuando el tercero incumple. */
+  const c=S.idx.filter(t=>{
+    if(t.status!=='EN ESPERA') return false;
+    const ab=pausaAbierta(t);
+    return !!(ab&&ab.compromiso&&new Date(ab.compromiso).getTime()<Date.now());
+  });
+  if(c.length) toast(c.length+' ticket(s) en espera con el compromiso del tercero vencido: '+
+    c.slice(0,4).map(t=>t.id+' ('+((pausaAbierta(t)||{}).tercero||'')+')').join(', ')+
+    '. El reloj sigue detenido, pero hay que escalar.','warn',14000);
 }
 
 /* ---------------------- 15. MÓDULO 2 · SEGUIMIENTO ---------------------- */
@@ -2067,6 +2137,17 @@ const COLSEG=[
   {k:'tFalla',t:'T. Falla',          a:95,  cls:'mono', v:t=>esc(t.tFalla||'')},
   {k:'tAfect',t:'T. Afect.',         a:95,  cls:'mono', v:t=>esc(t.tAfect||'')},
   {k:'imputable',t:'Imputable',      a:120, def:false, v:t=>esc(t.imputable||'')},
+  {k:'espera',t:'T. en espera',      a:110, cls:'mono', def:false, v:t=>{
+     const c=(t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
+     const ms=msEspera(t,c); return ms? esc(durHMS(ms)) : ''; }},
+  {k:'esperaDesc',t:'Espera descontada',a:140, cls:'mono', def:false, v:t=>{
+     const c=(t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
+     const ms=msDescontable(t,c); return ms? esc(durHMS(ms)) : ''; }},
+  {k:'esperaDe',t:'Espera depende de',a:180, def:false, v:t=>{
+     const p=pausaAbierta(t); if(!p) return '';
+     const tarde=p.compromiso&&new Date(p.compromiso).getTime()<Date.now();
+     return '<span'+(tarde?' style="color:var(--warn);font-weight:700"':'')+'>'+
+       esc((p.imputable||'')+(p.tercero?' · '+p.tercero:''))+(tarde?' ⚠ compromiso vencido':'')+'</span>'; }},
   {k:'observaciones',t:'Observaciones',a:260, def:false, wrap:true, v:t=>esc(t.observaciones||'')},
   {k:'crq',   t:'CRQ / Ticket cliente',a:160, def:false, cls:'mono', v:t=>esc(t.crq||'')},
   {k:'respAp',t:'Resp. Ap.',         a:150, v:t=>esc(t.respAp||'')},
@@ -2193,6 +2274,46 @@ async function abrirTicket(id){
   }catch(err){ $('#mResumen').innerHTML='<div class="note">'+esc(err.message)+'</div>'; }
 }
 function campo(l,v){ return '<div class="f"><label>'+esc(l)+'</label><input readonly value="'+esc(v==null?'':v)+'"></div>'; }
+function fechaISOHumana(iso){
+  if(!iso) return '';
+  const d=new Date(iso); if(isNaN(d)) return String(iso);
+  const h=hora12(d); return todayISO(d)+' '+h.t+' '+h.ap;
+}
+/* Cronología de esperas: cada renglón es una pausa que alguien tendrá que justificar. */
+function pintarPausas(t){
+  const c=$('#mPausas'); if(!c) return;
+  const ps=(t.pausas||[]);
+  const abierta=pausaAbierta(t);
+  if(!ps.length&&!(t.esperaMs||t.esperaDesde)){ c.innerHTML=''; return; }
+  const corte=(t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
+  const filas=ps.map(p=>{
+    const d=new Date(p.desde).getTime();
+    const h=p.hasta? new Date(p.hasta).getTime() : corte;
+    const dur=(!isNaN(d)&&h>d)? durHMS(Math.min(h,corte)-d) : '—';
+    return '<tr'+(p.hasta?'':' style="background:rgba(233,102,45,.10)"')+'>'+
+      '<td class="mono">'+esc(fechaISOHumana(p.desde))+'</td>'+
+      '<td class="mono">'+esc(p.hasta? fechaISOHumana(p.hasta) : 'en curso')+'</td>'+
+      '<td class="mono">'+esc(dur)+'</td>'+
+      '<td>'+esc(p.imputable||'')+(pausaDescuenta(p)?'':' <span style="color:var(--muted)">(no descuenta)</span>')+'</td>'+
+      '<td>'+esc(p.tercero||'')+'</td>'+
+      '<td>'+esc(p.motivo||'')+'</td>'+
+      '<td class="mono">'+esc(p.compromiso? fechaISOHumana(p.compromiso):'')+'</td>'+
+      '<td class="mono">'+esc(p.folio||'')+'</td>'+
+      '<td>'+esc(p.por||'')+'</td></tr>';
+  }).join('');
+  const legado=(t.esperaMs||t.esperaDesde)&&!ps.length
+    ? '<div class="note" style="margin-top:8px">Este ticket viene de una versión anterior: se conservó el acumulado de espera, pero no el detalle de cada pausa.</div>' : '';
+  c.innerHTML='<div class="panel" style="margin:0 0 14px">'+
+    '<h2>Esperas registradas</h2>'+
+    '<div class="note"'+(abierta?' style="border-left-color:var(--warn)"':'')+'>'+
+      'Tiempo total en espera: <b>'+durHMS(msEspera(t,corte))+'</b> · '+
+      'descontado del SLA y de la afectación: <b>'+durHMS(msDescontable(t,corte))+'</b>'+
+      (abierta? ' · <b style="color:var(--warn)">Hay una espera abierta ahora mismo.</b>':'')+'</div>'+
+    (filas? '<div style="overflow:auto"><table><thead><tr><th>Desde</th><th>Hasta</th><th>Duración</th>'+
+      '<th>Depende de</th><th>Tercero / área</th><th>Motivo</th><th>Compromiso</th><th>Folio</th><th>Registró</th>'+
+      '</tr></thead><tbody>'+filas+'</tbody></table></div>' : '')+
+    legado+'</div>';
+}
 function pintarTicket(t){
   const s=slaInfo(t);
   $('#mStatus').className='pill s-'+(t.status==='EN ESPERA'?'ESPERA':t.status); $('#mStatus').textContent=t.status;
@@ -2231,6 +2352,11 @@ function pintarTicket(t){
     : '<option value="">— sin cambio —</option><option>EN ESPERA</option><option>CERRADO</option>';
   $$('#mSegForm input,#mSegForm select,#mSegForm textarea,#mSegForm button').forEach(el=>el.disabled=cerrado||S.role==='cliente');
   $('#sImputable').value=t.imputable||''; $('#sCrq').value=t.crq||'';
+  ['sPauTercero','sPauFecha','sPauFolio'].forEach(id=>{ const e=$('#'+id); if(e) e.value=''; });
+  if($('#sPauImp')) $('#sPauImp').value='';
+  if($('#sPauHora')) $('#sPauHora').value='';
+  if($('#sPauMotivo')) $('#sPauMotivo').value='';
+  togglePausa(); pintarPausas(t);
   $('#sFecRes').value=t.fechaRes||''; const hr=from24(t.horaRes); $('#sHoraRes').value=hr.t; $('#sAmPmRes').value=hr.ap;
   $('#sFecCie').value=t.fechaCie||''; const hc=from24(t.horaCie); $('#sHoraCie').value=hc.t; $('#sAmPmCie').value=hc.ap;
   $('#sTFalla').value=t.tFalla||''; $('#sTAfect').value=t.tAfect||'';
@@ -2439,13 +2565,27 @@ async function guardarEdicion(t,box,btn){
   }catch(e){ Object.assign(t,antes); toast('No se pudo guardar: '+e.message,'err',9000); pintarTicket(t); }
   finally{ busy(btn,false); }
 }
+/* El bloque de pausa solo aparece cuando de verdad se va a abrir una espera. */
+function togglePausa(){
+  const box=$('#sPausaBox'); if(!box) return;
+  const t=S.ticket;
+  const abriendo = $('#sStatus').value==='EN ESPERA' && !(t&&pausaAbierta(t));
+  box.classList.toggle('hide',!abriendo);
+}
 function recalcTiempos(){
   const t=S.ticket; if(!t) return;
   const ini=dt(t.fechaAp,t.horaAp);
   const fc=dt($('#sFecCie').value,to24($('#sHoraCie').value,$('#sAmPmCie').value));
   const fr=dt($('#sFecRes').value,to24($('#sHoraRes').value,$('#sAmPmRes').value));
   $('#sTFalla').value = (ini&&fc)? durHMS(fc-ini) : '';
-  if(ini&&fr&&!$('#sTAfect').dataset.manual) $('#sTAfect').value=durHMS(fr-ini);
+  /* La afectación descuenta las esperas de terceros: si el enlace no se pudo probar porque
+     el proveedor no llegó, ese tiempo no lo controlamos. El bruto queda visible en el tooltip. */
+  if(ini&&fr&&!$('#sTAfect').dataset.manual){
+    const pausa=msDescontable(t,fr.getTime());
+    $('#sTAfect').value=durHMS(Math.max(0,fr-ini-pausa));
+    $('#sTAfect').title='Restablecimiento − apertura − esperas de terceros (editable). '+
+      'Bruto: '+durHMS(Math.max(0,fr-ini))+' · descontado: '+durHMS(pausa);
+  }
 }
 async function guardarSeguimiento(){
   const t=S.ticket; if(!t) return;
@@ -2456,6 +2596,25 @@ async function guardarSeguimiento(){
     toast('Escribe una nota de actividad o adjunta evidencia.','err'); return; }
   const observ=$('#sObserv').value.trim();
   const conTiempos=categoriaConTiempos(t.categoria);
+  /* Una pausa sin responsable ni compromiso es tiempo regalado que nadie podrá justificar después. */
+  const abriendoPausa = nuevo==='EN ESPERA' && !pausaAbierta(t);
+  let nuevaPausa=null;
+  if(abriendoPausa){
+    const falta=[];
+    const imp=$('#sPauImp').value, ter=$('#sPauTercero').value.trim(), mot=$('#sPauMotivo').value.trim();
+    const hcomp=to24($('#sPauHora').value,$('#sPauAmPm').value);
+    if(!imp) falta.push('de quién depende la espera');
+    if(!ter) falta.push('tercero, proveedor o área');
+    if(!mot) falta.push('motivo de la espera');
+    if(!$('#sPauFecha').value) falta.push('fecha comprometida');
+    if(!hcomp) falta.push('hora comprometida');
+    if(falta.length){ toast('Para poner el ticket en espera falta: '+falta.join(', ')+'.','err',10000); return; }
+    const comp=dt($('#sPauFecha').value,hcomp);
+    if(comp&&comp.getTime()<Date.now()-60000){
+      toast('La fecha y hora comprometidas ya pasaron. Registra el compromiso real del tercero.','err',9000); return; }
+    nuevaPausa={ desde:new Date().toISOString(), hasta:'', imputable:imp, tercero:ter, motivo:mot,
+      compromiso:comp?comp.toISOString():'', folio:$('#sPauFolio').value.trim(), por:S.me.mail };
+  }
   if(nuevo==='CERRADO'){
     const falta=[];
     if(conTiempos&&!$('#sFecRes').value) falta.push('fecha de restablecimiento');
@@ -2491,9 +2650,27 @@ async function guardarSeguimiento(){
       t.adjuntos.push(a); nuevos.push(nom);
     }
     // control del reloj de espera
-    if(nuevo==='EN ESPERA' && t.status!=='EN ESPERA'){ t.esperaDesde=ahoraISO; }
-    if(t.status==='EN ESPERA' && nuevo && nuevo!=='EN ESPERA' && t.esperaDesde){
-      t.esperaMs=(t.esperaMs||0)+(Date.now()-new Date(t.esperaDesde).getTime()); t.esperaDesde='';
+    t.pausas=t.pausas||[];
+    let notaPausa='';
+    if(nuevaPausa){
+      nuevaPausa.desde=ahoraISO;
+      t.pausas.push(nuevaPausa);
+      notaPausa='<p><b>SLA en pausa</b> desde '+esc(fechaISOHumana(ahoraISO))+'. Depende de '+
+        esc(nuevaPausa.imputable)+' · '+esc(nuevaPausa.tercero)+
+        '. Compromiso: '+esc(fechaISOHumana(nuevaPausa.compromiso))+
+        (nuevaPausa.folio?' · Folio '+esc(nuevaPausa.folio):'')+'.</p><p>'+esc(nuevaPausa.motivo)+'</p>'+
+        (pausaDescuenta(nuevaPausa)?'':'<p>Esta espera depende de Sipnology, así que <b>no descuenta</b> del SLA.</p>');
+    }
+    if(nuevo && nuevo!=='EN ESPERA'){
+      const ab=pausaAbierta(t);
+      if(ab){ ab.hasta=ahoraISO; ab.cerroPor=S.me.mail;
+        const dur=durHMS(new Date(ahoraISO).getTime()-new Date(ab.desde).getTime());
+        notaPausa+='<p><b>Espera cerrada</b> tras '+esc(dur)+' ('+esc(ab.imputable)+' · '+esc(ab.tercero||'')+').</p>';
+      }
+      /* Acumulado heredado de versiones anteriores. */
+      if(t.esperaDesde){
+        t.esperaMs=(t.esperaMs||0)+(Date.now()-new Date(t.esperaDesde).getTime()); t.esperaDesde='';
+      }
     }
     t.imputable=$('#sImputable').value; t.crq=$('#sCrq').value.trim();
     if(observ) t.observaciones=observ;
@@ -2506,10 +2683,12 @@ async function guardarSeguimiento(){
     if(t.status==='CERRADO'){ t.respCi=S.me.name||S.me.mail; t.respCiMail=S.me.mail; }
     t.actualizado=ahoraISO;
     t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:nuevo?('CAMBIO A '+nuevo):'SEGUIMIENTO',
-      status:t.status,nota:notaHtml,observaciones:observ,archivos:nuevos});
+      status:t.status,nota:notaPausa+notaHtml,observaciones:observ,archivos:nuevos});
     await gPutJson(h,t.ruta+'/ticket.json',t);
     await idxUpsert(t);
     logEvent(nuevo==='CERRADO'?'TICKET_CERRADO':'TICKET_SEGUIMIENTO', t.id+' · status '+t.status);
+    if(nuevaPausa) logEvent('SLA_PAUSADO', t.id+' · '+nuevaPausa.imputable+' · '+nuevaPausa.tercero+
+      ' · compromiso '+fechaISOHumana(nuevaPausa.compromiso)+' · '+nuevaPausa.motivo.slice(0,160));
     toast('Seguimiento guardado en '+t.id+'.');
     pintarTicket(t); renderSeg(); renderDash();
     if($('#sMailAuto').checked) abrirCorreo(t, t.status==='CERRADO'?'CIERRE':'SEGUIMIENTO', notaHtml, nuevos);
@@ -2849,8 +3028,17 @@ const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad']
   ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['series','Número de serie'],['colaterales','Colaterales'],
   ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
   ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
-  ['imputable','Imputable'],['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
-const celda=(t,k)=>Array.isArray(t[k])?t[k].join(', '):(t[k]==null?'':String(t[k]));
+  ['imputable','Imputable'],['esperaTotal','Tiempo en espera'],['esperaDesc','Espera descontada del SLA'],
+  ['esperaDe','Espera depende de'],['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
+function corteDe(t){
+  return (t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
+}
+const celda=(t,k)=>{
+  if(k==='esperaTotal'){ const ms=msEspera(t,corteDe(t)); return ms? durHMS(ms):''; }
+  if(k==='esperaDesc'){ const ms=msDescontable(t,corteDe(t)); return ms? durHMS(ms):''; }
+  if(k==='esperaDe'){ const p=pausaAbierta(t); return p? ((p.imputable||'')+(p.tercero?' · '+p.tercero:'')):''; }
+  return Array.isArray(t[k])?t[k].join(', '):(t[k]==null?'':String(t[k]));
+};
 
 async function exportExcel(data,nombre){
   if(typeof ExcelJS==='undefined'){ toast('ExcelJS no disponible.','err'); return; }
@@ -2964,6 +3152,9 @@ function correoHTML(t,fase,nota){
      fila('Restablecimiento',t.fechaRes?fechaHumana(t.fechaRes,t.horaRes):'')+
      fila('Cierre',t.fechaCie?fechaHumana(t.fechaCie,t.horaCie)+(t.respCi?' — '+t.respCi:''):'')+
      fila('Tiempo de falla',t.tFalla)+fila('Tiempo de afectación',t.tAfect)+
+     ((t.pausas||[]).length? fila('Tiempo en espera de terceros',
+        durHMS(msDescontable(t,corteDe(t)))+' — '+(t.pausas||[]).map(p=>
+          (p.imputable||'')+(p.tercero?' ('+p.tercero+')':'')).join('; ')) : '')+
      fila('Imputable',t.imputable)+fila('Observaciones',t.observaciones)+fila('Ticket del cliente',t.crq)+
    '</table>'+
    (nota?'<div style="padding:14px 20px;background:#f7fafc;border-top:1px solid #dfe7ee"><div style="color:#7d8aa8;font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:6px">NOTAS Y ACTIVIDADES</div><div style="font-size:13px;color:#16213e;line-height:1.5">'+sanitizeHtml(nota)+'</div></div>':'')+
@@ -5405,6 +5596,7 @@ function enlazarEventos(){
   $('#sStatus').addEventListener('change',function(){
     if(this.value==='CERRADO'&&!$('#sFecCie').value){ const d=new Date(); $('#sFecCie').value=todayISO(d);
       const h=hora12(d); $('#sHoraCie').value=h.t; $('#sAmPmCie').value=h.ap; recalcTiempos(); }
+    togglePausa();
   });
 
   // Dashboard
@@ -5584,6 +5776,8 @@ window.addEventListener('DOMContentLoaded',function(){
 window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
+  pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
+  msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
   buscarPri:buscarPri,buscarCliente:buscarCliente,buscarLoc:buscarLoc,normStatus:normStatus,
