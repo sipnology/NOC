@@ -670,13 +670,28 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <section class="view" id="vBitacora">
   <div class="panel">
     <h2>Bitácora de auditoría</h2>
+    <div class="note">Se muestra la actividad de <b>todos los usuarios</b>, no solo la tuya.
+      Cada persona escribe su propio archivo mensual, así que dos operadores trabajando a la vez
+      no se borran registros entre sí.</div>
+    <div class="frow c4">
+      <div class="f"><label>Usuario</label><select id="bitUsuario"></select></div>
+      <div class="f"><label>Evento</label><select id="bitEvento"></select></div>
+      <div class="f"><label>Buscar</label><input id="bitQ" placeholder="texto en el detalle…"></div>
+      <div class="f"><label>Periodo</label><select id="bitMeses">
+        <option value="1">Este mes</option><option value="3" selected>Últimos 3 meses</option>
+        <option value="6">Últimos 6 meses</option><option value="12">Último año</option></select></div>
+    </div>
     <div class="row">
-      <select id="bitSize" style="width:110px"><option>5</option><option selected>10</option><option>25</option><option>50</option></select>
-      <input id="bitQ" placeholder="Buscar evento, usuario, detalle…" style="flex:1;max-width:340px">
+      <select id="bitSize" style="width:110px"><option>10</option><option selected>25</option><option>50</option><option>100</option></select>
       <button class="btn sec" id="btnBitRef">↻ Refrescar</button>
+      <span class="right row" style="gap:8px">
+        <button class="btn sec" id="btnBitXls">⬇ Exportar a Excel</button>
+        <span id="bitResumen" style="color:var(--muted);font-size:12.5px"></span>
+      </span>
     </div>
     <div class="tw" style="margin-top:12px"><table id="tblBit">
-      <thead><tr><th>Fecha</th><th>Hora</th><th>Usuario</th><th>Evento</th><th>Detalle</th></tr></thead><tbody></tbody></table></div>
+      <thead><tr><th style="width:100px">Fecha</th><th style="width:86px">Hora</th><th style="width:230px">Usuario</th>
+        <th style="width:210px">Evento</th><th>Detalle</th></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="bitPag"></div>
   </div>
 </section>
@@ -871,7 +886,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r28';
+const APP_VER = '2026-08-13 · r29';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -893,6 +908,7 @@ const S = {
   _cliExistentes:null,     // IDs de cliente ya publicados: su ID queda bloqueado
   dashMod:'tickets',       // apartado activo del tablero: tickets | crq | sit
   reportes:[],             // plantillas de reporte compartidas del cliente activo
+  bitMeses:3,              // meses de bitácora que se cargan
   clienteScope:null,        // si es cliente externo: id del cliente al que se limita
   filtro:{}, segPage:1, segSize:25, bitPage:1,
   ticket:null,              // ticket abierto en el modal
@@ -944,7 +960,11 @@ function sanitizeHtml(html){
 }
 /* Nombre seguro para carpetas/archivos en SharePoint */
 function sanitizeName(s){
-  return String(s==null?'':s).replace(/[\\/:*?"<>|#%]/g,'_').replace(/\.+$/,'').trim().slice(0,120) || 'sin_nombre';
+  return String(s==null?'':s)
+    .replace(/[\\/:*?"<>|#%]/g,'_')
+    .replace(/\.+$/,'')             /* puntos al final: SharePoint los rechaza */
+    .replace(/\.{2,}/g,'_')         /* y ninguna forma de «..» sobrevive dentro del nombre */
+    .trim().slice(0,120) || 'sin_nombre';
 }
 function graphEncPath(rel){ return String(rel).split('/').map(encodeURIComponent).join('/'); }
 
@@ -1056,7 +1076,14 @@ async function H(){ const t=await graphTokenSilent(); if(!t) throw new Error('Se
 /* ---------------------- 5. CAPA GRAPH / SHAREPOINT ---------------------- */
 /* Compartido entre clientes: solo el administrador escribe aquí. */
 const P_CAT = 'Sistema/_tickets_catalogo.json';
-const P_BIT = 'Sistema/_tickets_bitacora.json';
+/* La bitácora NO puede vivir en Sistema/: esa carpeta es de lectura para los operadores,
+   así que sus eventos se perdían con un 403 silencioso y solo quedaban los del administrador.
+   Ahora es una carpeta propia con un archivo por usuario y por mes: cada quien escribe el suyo,
+   nadie pisa el de otro y todos los internos los ven todos. */
+const P_BIT = 'Bitacora';
+const P_BIT_LEGACY = 'Sistema/_tickets_bitacora.json';
+const mesDe=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1);
+const rutaBit=(mes,mail)=>P_BIT+'/'+mes+'/'+sanitizeName(String(mail||'anonimo').toLowerCase())+'.json';
 /* Cada cliente tiene su carpeta. Cuando se invite a un cliente externo bastará con darle
    permiso sobre LA SUYA: el aislamiento deja de ser un filtro de interfaz y pasa a ser
    una regla que aplica SharePoint. */
@@ -1318,20 +1345,49 @@ function aplicarScopeCliente(){
 }
 
 /* ---------------------- 8. BITÁCORA ---------------------- */
+let _bitFallo=false;
 function logEvent(evento,detalle){
   const d=new Date();
   const entry={fecha:todayISO(d), hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()),
-    evento:evento, detalle:String(detalle||'').slice(0,500), usuario:S.me.mail||'(anónimo)'};
+    evento:evento, detalle:String(detalle||'').slice(0,500), usuario:S.me.mail||'(anónimo)',
+    cliente:S.cliente||''};
   S.bit.unshift(entry); renderBit();
+  const ruta=rutaBit(mesDe(d),entry.usuario);
   S._q = S._q.then(async()=>{
-    const h=await H(); let a=await gGetJson(h,P_BIT); a=Array.isArray(a)?a:[];
+    const h=await H();
+    let a=await gGetJson(h,ruta); a=Array.isArray(a)?a:[];
     a.unshift(entry); if(a.length>20000) a=a.slice(0,20000);
-    await gPutJson(h,P_BIT,a);
-  }).catch(()=>{});
+    await gPutJson(h,ruta,a);
+    _bitFallo=false;
+  }).catch(err=>{
+    /* Antes esto se tragaba el error y la bitácora quedaba incompleta sin que nadie lo notara. */
+    if(!_bitFallo){ _bitFallo=true;
+      toast('No se pudo escribir en la bitácora: '+err.message+
+        '. Revisa que tengas permiso de escritura en la carpeta Bitacora/.','err',14000); }
+  });
 }
-async function bitPull(){
-  try{ const h=await H(); const a=await gGetJson(h,P_BIT); S.bit=Array.isArray(a)?a:[]; renderBit(); }
-  catch(e){ toast('Bitácora no disponible: '+e.message,'err'); }
+/* Lee los archivos de todos los usuarios de los últimos meses y los mezcla. */
+async function bitPull(meses){
+  const n=meses||S.bitMeses||3;
+  S.bitMeses=n;
+  try{
+    const h=await H(); const out=[]; const hoy=new Date();
+    for(let i=0;i<n;i++){
+      const mes=mesDe(new Date(hoy.getFullYear(),hoy.getMonth()-i,1));
+      let hijos=[];
+      try{ hijos=await gList(h,P_BIT+'/'+mes); }catch(e){}
+      for(const f of hijos){
+        if(!/\.json$/i.test(f.name||'')) continue;
+        try{ const a=await gGetJson(h,P_BIT+'/'+mes+'/'+f.name);
+          (Array.isArray(a)?a:[]).forEach(x=>out.push(x)); }catch(e){}
+      }
+    }
+    /* Historial de la versión anterior, cuando todo vivía en un solo archivo. */
+    try{ const v=await gGetJson(h,P_BIT_LEGACY);
+      (Array.isArray(v)?v:[]).forEach(x=>out.push(Object.assign({_previo:true},x))); }catch(e){}
+    out.sort((a,b)=>String((b.fecha||'')+(b.hora||'')).localeCompare(String((a.fecha||'')+(a.hora||''))));
+    S.bit=out; renderBit();
+  }catch(e){ toast('Bitácora no disponible: '+e.message,'err',9000); }
 }
 
 /* ---------------------- 9. GATE / ROLES ---------------------- */
@@ -5117,17 +5173,41 @@ async function generarReporte(){
 }
 
 /* ---------------------- 20. BITÁCORA (render) ---------------------- */
-function renderBit(){
+function bitFiltrada(){
   const q=($('#bitQ')?$('#bitQ').value:'').toLowerCase();
-  const size=+($('#bitSize')?$('#bitSize').value:10);
-  const all=S.bit.filter(b=>!q||JSON.stringify(b).toLowerCase().indexOf(q)!==-1);
+  const u=($('#bitUsuario')?$('#bitUsuario').value:'');
+  const ev=($('#bitEvento')?$('#bitEvento').value:'');
+  return S.bit.filter(b=>{
+    if(u&&String(b.usuario||'')!==u) return false;
+    if(ev&&String(b.evento||'')!==ev) return false;
+    if(q&&JSON.stringify(b).toLowerCase().indexOf(q)===-1) return false;
+    return true;
+  });
+}
+function renderBit(){
+  const size=+($('#bitSize')?$('#bitSize').value:25);
+  const selU=$('#bitUsuario'), selE=$('#bitEvento');
+  if(selU){ const v=selU.value;
+    fillSel(selU,[...new Set(S.bit.map(b=>b.usuario).filter(Boolean))].sort(),'Todos los usuarios',v); }
+  if(selE){ const v=selE.value;
+    fillSel(selE,[...new Set(S.bit.map(b=>b.evento).filter(Boolean))].sort(),'Todos los eventos',v); }
+  const all=bitFiltrada();
+  const res=$('#bitResumen');
+  if(res) res.textContent=all.length+' de '+S.bit.length+' registro(s) · '+
+    [...new Set(S.bit.map(b=>b.usuario).filter(Boolean))].length+' usuario(s)';
   const pages=Math.max(1,Math.ceil(all.length/size));
   if(S.bitPage>pages) S.bitPage=pages;
   const rows=all.slice((S.bitPage-1)*size,(S.bitPage-1)*size+size);
   const tb=$('#tblBit'); if(!tb) return;
-  tb.tBodies[0].innerHTML=rows.map(b=>'<tr><td class="mono">'+esc(b.fecha)+'</td><td class="mono">'+esc(b.hora)+
-    '</td><td>'+esc(b.usuario)+'</td><td><b>'+esc(b.evento)+'</b></td><td>'+esc(b.detalle)+'</td></tr>').join('')
-    ||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Sin registros</td></tr>';
+  const yo=(S.me.mail||'').toLowerCase();
+  tb.tBodies[0].innerHTML=rows.map(b=>{
+    const propio=String(b.usuario||'').toLowerCase()===yo;
+    return '<tr><td class="mono">'+esc(b.fecha)+'</td><td class="mono">'+esc(b.hora)+
+    '</td><td'+(propio?' style="color:var(--brand2)"':'')+'>'+esc(b.usuario)+
+    (b._previo?' <span style="color:var(--muted);font-size:10px">(previo)</span>':'')+
+    '</td><td><b>'+esc(b.evento)+'</b></td><td class="wrap">'+esc(b.detalle)+'</td></tr>';
+  }).join('')
+    ||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Sin registros con esos filtros</td></tr>';
   let p='<button data-p="'+(S.bitPage-1)+'"'+(S.bitPage<=1?' disabled':'')+'>‹</button>';
   for(let i=Math.max(1,S.bitPage-2);i<=Math.min(pages,S.bitPage+2);i++)
     p+='<button data-p="'+i+'" class="'+(i===S.bitPage?'on':'')+'">'+i+'</button>';
@@ -5337,8 +5417,23 @@ function enlazarEventos(){
 
   // Bitácora / correo
   $('#bitQ').oninput=()=>{S.bitPage=1;renderBit();};
+  ['bitUsuario','bitEvento'].forEach(id=>$('#'+id).onchange=()=>{S.bitPage=1;renderBit();});
   $('#bitSize').onchange=()=>{S.bitPage=1;renderBit();};
-  $('#btnBitRef').onclick=bitPull;
+  $('#bitMeses').onchange=async function(){ S.bitPage=1; await bitPull(+this.value); };
+  $('#btnBitRef').onclick=async function(){ busy(this,true); await bitPull(); busy(this,false); };
+  $('#btnBitXls').onclick=async function(){
+    const filas=bitFiltrada();
+    if(!filas.length){ toast('No hay registros que exportar.','warn'); return; }
+    busy(this,true);
+    try{
+      await escribirXlsx('Bitacora_'+todayISO(),[{nombre:'Bitácora',
+        cols:[['fecha','Fecha',13],['hora','Hora',11],['usuario','Usuario',34],
+              ['evento','Evento',30],['cliente','Cliente',12],['detalle','Detalle',90]],
+        filas:filas}]);
+      logEvent('EXPORT_BITACORA',filas.length+' registro(s)');
+    }catch(e){ toast('No se pudo exportar: '+e.message,'err',9000); }
+    finally{ busy(this,false); }
+  };
   $('#mmClose').onclick=$('#mmCancel').onclick=()=>$('#mMail').classList.remove('on');
   $('#mmSend').onclick=enviarCorreo;
 
@@ -5387,6 +5482,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
+  rutaBit:rutaBit,mesDe:mesDe,bitFiltrada:bitFiltrada,P_BIT:P_BIT,P_BIT_LEGACY:P_BIT_LEGACY,
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
