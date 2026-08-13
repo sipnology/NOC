@@ -919,7 +919,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r36';
+const APP_VER = '2026-08-13 · r38';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1505,7 +1505,7 @@ function aplicarModulosUI(){
   const vis={vApertura:interno&&moduloActivo('tickets'), vSeguimiento:moduloActivo('tickets'),
              vEstado:true, vInventario:moduloActivo('inventario'),
              vCRQ:moduloActivo('crq'), vSIT:moduloActivo('sit'), vReportes:true,
-             vCatalogos:S.role==='admin', vBitacora:interno};
+             vCatalogos:S.role==='admin', vBitacora:S.role==='admin'};
   Object.keys(vis).forEach(v=>{
     const b=$('#tabs').querySelector('[data-v="'+v+'"]');
     if(b) b.classList.toggle('hide',!vis[v]);
@@ -1589,7 +1589,7 @@ async function unlockApp(){
   pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI();
   await migrarSiHaceFalta();
   await cargarDatos(true);
-  if(S.role!=='cliente') bitPull();
+  if(isAdmin()) bitPull();
   logEvent('LOGIN','rol '+S.role);
   clearInterval(S._timer);
   S._timer=setInterval(()=>{ catalogoPull(true); if(!invSucio()) cargarDatos(true); }, POLL_MS);
@@ -1606,7 +1606,11 @@ async function initAuthGate(){
   $('#btnLogin').onclick=async function(){
     busy(this,true);
     try{ await graphToken({forceLogin:true}); await unlockApp(); }
-    catch(e){ $('#gateMsg').innerHTML='<b style="color:var(--p1)">No fue posible iniciar sesión.</b><br>'+esc(e.message); }
+    catch(e){
+      $('#gateMsg').innerHTML='<b style="color:var(--p1)">No fue posible iniciar sesión.</b><br>'+esc(e.message);
+      /* Un acceso fallido es información de seguridad: se intenta registrar aunque no haya sesión. */
+      try{ logEvent('LOGIN_FALLIDO',String(e.message||'').slice(0,200)); }catch(_){}
+    }
     finally{ busy(this,false); }
   };
 }
@@ -2003,7 +2007,8 @@ async function crearTicket(){
     await gPutJson(h,ruta+'/ticket.json',t);
     // 3) índice + bitácora
     await idxUpsert(t);
-    logEvent('TICKET_ABIERTO',id+' · '+t.cliente+' · '+t.localidad+' · '+t.prioridad);
+    logEvent('TICKET_ABIERTO',id+' · '+t.cliente+' · '+t.localidad+' · '+t.prioridad+
+    ' · '+((t.adjuntos||[]).length)+' evidencia(s)');
     toast('Ticket '+id+' creado.');
     if($('#tMail').checked) abrirCorreo(t,'APERTURA');
     limpiarApertura(); renderSeg(); renderDash();
@@ -2640,6 +2645,7 @@ async function guardarSeguimiento(){
     if(fr&&fc&&fc<fr){ toast('El cierre no puede ser anterior al restablecimiento.','err',8000); return; }
   }
   const btn=$('#btnGuardarSeg'); busy(btn,true);
+  const statusPrevio=t.status;
   try{
     const h=await H(); const ahoraISO=new Date().toISOString();
     const nuevos=[];
@@ -2686,7 +2692,9 @@ async function guardarSeguimiento(){
       status:t.status,nota:notaPausa+notaHtml,observaciones:observ,archivos:nuevos});
     await gPutJson(h,t.ruta+'/ticket.json',t);
     await idxUpsert(t);
-    logEvent(nuevo==='CERRADO'?'TICKET_CERRADO':'TICKET_SEGUIMIENTO', t.id+' · status '+t.status);
+    logEvent(nuevo==='CERRADO'?'TICKET_CERRADO':(nuevo?'TICKET_CAMBIO_STATUS':'TICKET_SEGUIMIENTO'),
+      t.id+' · status '+t.status+(nuevo?' (antes '+statusPrevio+')':'')+
+      ' · '+nuevos.length+' evidencia(s)'+(observ?' · con observaciones':''));
     if(nuevaPausa) logEvent('SLA_PAUSADO', t.id+' · '+nuevaPausa.imputable+' · '+nuevaPausa.tercero+
       ' · compromiso '+fechaISOHumana(nuevaPausa.compromiso)+' · '+nuevaPausa.motivo.slice(0,160));
     toast('Seguimiento guardado en '+t.id+'.');
@@ -3878,7 +3886,9 @@ function barraEquipos(box,ro){
             S.inv=Object.keys(m).map(k=>m[k]).concat(extras);
           }
           const nuevosTipos=r.ok.filter(e=>e.tipo&&(S.cat.tiposDispositivo||[]).indexOf(e.tipo)===-1).map(e=>e.tipo);
-          if(await invPush('importación de '+r.ok.length+' equipo(s)')){
+          if(await invPush('importación de '+r.ok.length+' equipo(s) · modo '+
+              (d.querySelector('#eqModo').value==='replace'?'reemplazar todo':'acumular')+
+              ' · archivo: '+f.name)){
             if(nuevosTipos.length&&isAdmin()){
               [...new Set(nuevosTipos)].forEach(t=>S.cat.tiposDispositivo.push(t));
               try{ await catalogoPush(); }catch(e){}
@@ -5085,7 +5095,9 @@ async function dsImportar(ds,files,modo){
             if(!(ya.sip.sedes||[]).length) ya.sip.sedes=r.sip.sedes;
           });
         }
-        if(await dsPush(ds,'importación de '+nuevos.length+' registro(s)')){
+        if(await dsPush(ds,'importación de '+nuevos.length+' registro(s) · modo '+
+            (modo==='replace'?'reemplazar todo':'acumular por ID')+' · archivo(s): '+
+            [...files].map(f=>f.name).join(', ').slice(0,220))){
           toast(ds.plural+': '+S[ds.st].length+' registros en total.');
           caja.remove(); dsRender(ds); renderDash();
         }
@@ -5480,6 +5492,7 @@ function bitFiltrada(){
    de «los demás no tienen permiso de escritura». */
 function renderBitDiag(){
   const c=$('#bitDiag'); if(!c) return;
+  if(!isAdmin()){ c.innerHTML=''; return; }
   const d=S.bitDiag; if(!d){ c.innerHTML=''; return; }
   const err=(d.errores||[]).length, esc2=x=>esc(String(x));
   const escribe=S.bitEscribe&&S.bitEscribe!=='ok'
@@ -5494,6 +5507,8 @@ function renderBitDiag(){
     escribe+'</div>';
 }
 function renderBit(){
+  /* Un operador nunca debe ver la actividad de los demás, ni siquiera si la vista se abre por accidente. */
+  if(!isAdmin()){ const tb=$('#tblBit'); if(tb) tb.innerHTML=''; const d=$('#bitDiag'); if(d) d.innerHTML=''; return; }
   renderBitDiag();
   const size=+($('#bitSize')?$('#bitSize').value:25);
   const selU=$('#bitUsuario'), selE=$('#bitEvento');
@@ -5545,12 +5560,14 @@ async function irA(v){
   else { const b=$('#bulkBar'); if(b) b.remove(); cerrarMenuAcciones(); }
   if(v==='vReportes') renderReportes();
   if(v==='vCatalogos') renderCat();
-  if(v==='vBitacora') renderBit();
+  if(v==='vBitacora'){ if(!isAdmin()){ toast('La bitácora es solo para administradores.','err'); return irA('vSeguimiento'); } renderBit(); }
 }
 function enlazarEventos(){
   $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
   $('#selCliente').onchange=function(){ cambiarCliente(this.value); };
   $('#btnLogout').onclick=async()=>{
+    /* El cierre de sesión se escribe antes de soltar el token: después ya no habría con qué. */
+    try{ await new Promise(r=>{ logEvent('LOGOUT','salida manual'); S._q.then(r).catch(r); }); }catch(e){}
     sessionStorage.removeItem(AUTH_CLAVE);
     try{ const app=msalApp(); await app.initialize();
       const acc=app.getAllAccounts()[0];
