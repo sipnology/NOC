@@ -824,6 +824,18 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </div>
 
+<!-- ============ MODAL DE CAMBIOS PENDIENTES ============ -->
+<div class="mask" id="mPend">
+  <div class="modal" style="width:min(760px,96vw)">
+    <div class="mh"><h2>Cambios de inventario sin guardar</h2><button class="close" id="mpX">×</button></div>
+    <div class="mb" id="mpBody"></div>
+    <div class="mf">
+      <button class="btn" id="mpGuardar">Guardar y continuar</button>
+      <button class="btn sec" id="mpVolver">Volver al inventario</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ MODAL DE CORREO ============ -->
 <div class="mask" id="mMail">
   <div class="modal" style="width:min(760px,96vw)">
@@ -887,7 +899,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r33';
+const APP_VER = '2026-08-13 · r34';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1435,7 +1447,7 @@ function aplicarModulosUI(){
   }
 }
 async function cambiarCliente(id){
-  if(invSucio()&&!confirm('Tienes cambios de inventario sin guardar. Al cambiar de cliente se pierden.\n¿Continuar?')){
+  if(invSucio()&&!await modalPendientes('otro cliente')){
     $('#selCliente').value=S.cliente; return; }
   S.cliente=id||'';
   try{ localStorage.setItem(PREF_CLI,S.cliente); }catch(e){}
@@ -3052,7 +3064,7 @@ function renderTabla(k,esq,box,ro){
   });
   const reset=box.querySelector('#catReset');
   if(reset) reset.onclick=()=>{ _catOrden={tabla:k,col:null,dir:1}; _catFiltros={}; renderCat(); };
-  if(k==='equipos') box.addEventListener('change',()=>{ if(!invSucio()) invMarcar('Edición desde Catálogos'); });
+  if(k==='equipos') box.addEventListener('change',()=>{ if(!invSucio()) invMarcar('Edición de la tabla de equipos','Catálogos → Equipos'); });
   box.querySelectorAll('input[data-c]').forEach(inp=>{
     inp.dataset.antes=inp.value;
     inp.onchange=async()=>{
@@ -3899,7 +3911,46 @@ let _invCambios=[], _invSnap=null;
    porque los índices se mueven al dar de alta o de baja. */
 let _invSel=new Set();
 function invSucio(){ return _invCambios.length>0; }
-function invMarcar(desc){ _invCambios.push(desc); }
+/* Cada cambio guarda de dónde salió y a qué hora, para poder explicarlo al salir. */
+function invMarcar(desc,seccion){
+  const d=new Date();
+  _invCambios.push({txt:String(desc==null?'':desc), sec:seccion||'Inventario',
+    hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds())});
+}
+function cambioTxt(c){ return typeof c==='string'? c : (c&&c.txt)||''; }
+function cambioSec(c){ return typeof c==='string'? 'Inventario' : ((c&&c.sec)||'Inventario'); }
+function cambioHora(c){ return typeof c==='string'? '' : ((c&&c.hora)||''); }
+function pendientesPorSeccion(){
+  const g={}; _invCambios.forEach(c=>{ const k=cambioSec(c); (g[k]=g[k]||[]).push(c); }); return g;
+}
+/* Nombre visible de una vista, tal como aparece en la pestaña. */
+function nombreVista(v){
+  const t=$('#tabs'); const b=t&&t.querySelector('button[data-v="'+v+'"]');
+  return b? b.textContent.trim() : v;
+}
+/* Bloquea la salida mientras haya cambios en memoria: solo devuelve true si se guardaron. */
+function modalPendientes(destino){
+  return new Promise(res=>{
+    const g=pendientesPorSeccion();
+    const bloques=Object.keys(g).map(sec=>
+      '<div class="panel" style="margin:0 0 12px"><h2>'+esc(sec)+' · '+g[sec].length+' cambio(s)</h2>'+
+      '<table><thead><tr><th style="width:80px">Hora</th><th>Detalle del cambio</th></tr></thead><tbody>'+
+      g[sec].map(c=>'<tr><td>'+esc(cambioHora(c))+'</td><td>'+esc(cambioTxt(c))+'</td></tr>').join('')+
+      '</tbody></table></div>').join('');
+    $('#mpBody').innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+      '<b>'+_invCambios.length+' cambio(s)</b> siguen solo en memoria: todavía no se escriben en SharePoint.'+
+      (destino?' Para continuar a <b>'+esc(destino)+'</b> hay que guardarlos o descartarlos desde el inventario.':'')+
+      '</div>'+bloques;
+    $('#mPend').classList.add('on');
+    const cerrar=v=>{ $('#mPend').classList.remove('on'); res(v); };
+    $('#mpGuardar').onclick=async function(){ busy(this,true);
+      try{
+        if(await guardarInventario()){ toast('Inventario guardado.'); cerrar(true); }
+      }catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
+      finally{ busy(this,false); } };
+    $('#mpVolver').onclick=$('#mpX').onclick=()=>{ cerrar(false); };
+  });
+}
 function invConfirmado(){ _invCambios=[]; _invSnap=JSON.stringify(S.inv); }
 function limpiarSeleccion(){ _invSel=new Set(); }
 function invDescartar(){
@@ -4030,7 +4081,7 @@ function renderPendientes(){
   c.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
     '<b>'+_invCambios.length+' cambio(s) sin guardar.</b> No se han escrito en SharePoint todavía.'+
     '<div style="margin-top:6px;font-size:11.5px;color:var(--muted)">'+
-    _invCambios.slice(-6).map(esc).join('<br>')+(_invCambios.length>6?'<br>…':'')+'</div>'+
+    _invCambios.slice(-6).map(c=>esc(cambioHora(c)+' · '+cambioSec(c)+' · '+cambioTxt(c))).join('<br>')+(_invCambios.length>6?'<br>…':'')+'</div>'+
     '<div class="row" style="margin-top:10px">'+
     '<button class="btn" id="iGuardar">Guardar cambios</button>'+
     '<button class="btn sec" id="iDescartar">Descartar</button></div></div>';
@@ -5218,10 +5269,15 @@ function renderBit(){
 }
 
 /* ---------------------- 21. NAVEGACIÓN Y EVENTOS ---------------------- */
-function irA(v){
-  if(invSucio()&&v!=='vInventario'&&v!=='vCatalogos'&&
-     !confirm('Tienes '+_invCambios.length+' cambio(s) de inventario sin guardar.\n'+
-              'Si sales de la vista siguen pendientes, pero no se habrán escrito en SharePoint.\n\n¿Continuar?')) return;
+async function irA(v){
+  /* No se sale del inventario con cambios en memoria: o se guardan o se descartan. */
+  if(invSucio()&&v!=='vInventario'&&v!=='vCatalogos'){
+    if(!await modalPendientes(nombreVista(v))){
+      $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v==='vInventario'));
+      $$('.view').forEach(x=>x.classList.toggle('on',x.id==='vInventario'));
+      return;
+    }
+  }
   $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
   $$('.view').forEach(s=>s.classList.toggle('on',s.id===v));
   if(v==='vEstado') renderDash();
@@ -5328,7 +5384,7 @@ function enlazarEventos(){
   $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value='';
     ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
   $('#iRefrescar').onclick=async function(){
-    if(invSucio()&&!confirm('Tienes cambios sin guardar. Al refrescar se pierden.\n¿Continuar?')) return;
+    if(invSucio()&&!await modalPendientes('la versión de SharePoint')) return;
     busy(this,true); _invEdit=null; limpiarSeleccion(); await invPull(); busy(this,false); };
   $('#iNuevo').onclick=nuevoEquipo;
   $('#iAcciones').onclick=e=>{ e.stopPropagation(); menuAcciones(); };
@@ -5473,6 +5529,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   mapearColumnas:mapearColumnas,SINONIMOS:SINONIMOS,
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice(),
+  cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
   EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable,
   clientesVisibles:clientesVisibles,modulosDe:modulosDe,moduloActivo:moduloActivo,
   categoriaConTiempos:categoriaConTiempos,comprimirImagen:comprimirImagen,pesoRTE:pesoRTE,
