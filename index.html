@@ -265,7 +265,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   <div class="card">
     <div class="logo"><div class="mark">S</div><div class="name">SIP<span>NOLOGY</span></div></div>
     <div class="sub">Sistema de Control de Tickets · NOC<br><span id="verGate" style="font-size:11px;opacity:.7"></span></div>
-    <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.</div>
+    <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.
+      La sesión se cierra al salir de la pestaña, así que se pide autenticación cada vez.</div>
     <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
     <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
       Clientes externos: usen el correo con el que fueron invitados.
@@ -870,8 +871,17 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r27';
-const AUTH_TTL   = 3*60*60*1000;      // 3 h
+const APP_VER = '2026-08-13 · r28';
+const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
+/* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
+   desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
+   OJO: la app NO puede decidir por sí sola si Entra pide el segundo factor; eso lo
+   determina la directiva del tenant. Ver GUIA_DESPLIEGUE_Y_SEGURIDAD.md, sección 4. */
+const AUTH_CLAVE = 'sip_tkt_auth_at';
+/* Poner en true SOLO después de crear el contexto de autenticación «c1» en Entra con una
+   directiva de acceso condicional que exija MFA. Sin esa directiva, el reto falla. */
+const MFA_ESTRICTO = false;
+const CLAIMS_MFA = JSON.stringify({access_token:{acrs:{essential:true,value:'c1'}}});
 const POLL_MS    = 5*60*1000;         // refresco automático de catálogo/índice
 const MAX_ADJ_MB = 25;                // límite por archivo
 const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin sesión de carga)
@@ -1001,7 +1011,8 @@ function msalApp(){
   _msalApp = new msal.PublicClientApplication({
     auth:{ clientId:cfg.clientId, authority:'https://login.microsoftonline.com/'+cfg.tenantId,
            redirectUri: location.origin+location.pathname },
-    cache:{ cacheLocation:'localStorage', storeAuthStateInCookie:false }
+    /* sessionStorage y no localStorage: los tokens mueren al cerrar la pestaña. */
+    cache:{ cacheLocation:'sessionStorage', storeAuthStateInCookie:false }
   });
   return _msalApp;
 }
@@ -1021,13 +1032,16 @@ function esInterno(){
 async function graphToken(opts){
   const app=msalApp(); await app.initialize();
   const req={scopes:cfg.scopes};
+  if(MFA_ESTRICTO) req.claims=CLAIMS_MFA;
   const acc=app.getAllAccounts()[0];
   try{
     if(acc && !(opts&&opts.forceLogin)) return (await app.acquireTokenSilent(Object.assign({account:acc},req))).accessToken;
-    const r=await app.loginPopup(Object.assign({prompt:'select_account'},req));
+    /* prompt:'login' obliga a reautenticarse en vez de reusar la sesión del navegador.
+       Es lo que hace que Entra vuelva a pedir credenciales y, con ellas, el segundo factor. */
+    const r=await app.loginPopup(Object.assign({prompt:'login'},req));
     return (await app.acquireTokenSilent({account:r.account,scopes:cfg.scopes})).accessToken;
   }catch(e){
-    const r=await app.acquireTokenPopup(req); return r.accessToken;
+    const r=await app.acquireTokenPopup(Object.assign({prompt:'login'},req)); return r.accessToken;
   }
 }
 async function graphTokenSilent(){
@@ -1424,7 +1438,7 @@ async function unlockApp(){
   S.me={name:a.name||a.username||'', mail:(a.username||'').toLowerCase()};
   $('#whoName').textContent=S.me.name; $('#whoMail').textContent=S.me.mail;
   $('#tRespAp').value=S.me.name||S.me.mail;
-  localStorage.setItem('sip_tkt_auth_at',String(Date.now()));
+  sessionStorage.setItem(AUTH_CLAVE,String(Date.now()));
   $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
   await catalogoPull(true);
   resolverRol();
@@ -1440,11 +1454,13 @@ async function unlockApp(){
   setTimeout(()=>{ toast('Sesión expirada por seguridad (3 h).','warn',9000); location.reload(); }, AUTH_TTL);
 }
 async function initAuthGate(){
-  const at=+(localStorage.getItem('sip_tkt_auth_at')||0);
+  /* Solo se reanuda una sesión abierta en ESTA pestaña. Si se cerró, no hay nada que reanudar. */
+  const at=+(sessionStorage.getItem(AUTH_CLAVE)||0);
   if(at && (Date.now()-at)<AUTH_TTL){
     const t=await graphTokenSilent();
     if(t){ await unlockApp(); return; }
   }
+  sessionStorage.removeItem(AUTH_CLAVE);
   $('#btnLogin').onclick=async function(){
     busy(this,true);
     try{ await graphToken({forceLogin:true}); await unlockApp(); }
@@ -5139,8 +5155,15 @@ function irA(v){
 function enlazarEventos(){
   $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
   $('#selCliente').onchange=function(){ cambiarCliente(this.value); };
-  $('#btnLogout').onclick=async()=>{ localStorage.removeItem('sip_tkt_auth_at');
-    try{ await msalApp().logoutPopup(); }catch(e){} location.reload(); };
+  $('#btnLogout').onclick=async()=>{
+    sessionStorage.removeItem(AUTH_CLAVE);
+    try{ const app=msalApp(); await app.initialize();
+      const acc=app.getAllAccounts()[0];
+      await app.logoutPopup(acc?{account:acc}:{});
+    }catch(e){}
+    try{ sessionStorage.clear(); }catch(e){}
+    location.reload();
+  };
 
   // Apertura
   msInit('#tPiso','— selecciona piso(s) —',()=>{ refrescarEquiposMS(); });
@@ -5325,6 +5348,8 @@ function enlazarEventos(){
 
 /* ---------------------- 22. ARRANQUE ---------------------- */
 window.addEventListener('beforeunload',function(e){
+  /* La sesión no debe sobrevivir al cierre, ni siquiera si el navegador restaura pestañas. */
+  try{ sessionStorage.removeItem(AUTH_CLAVE); }catch(err){}
   if(invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
 });
 window.addEventListener('DOMContentLoaded',function(){
@@ -5361,6 +5386,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
   colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
+  AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
