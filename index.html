@@ -329,12 +329,15 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 
 <!-- ============ VISTA 1: APERTURA ============ -->
 <section class="view on" id="vApertura">
-  <div class="panel">
-    <h2>Apertura de ticket</h2>
+  <div class="panel hide" id="tSinCliente">
+    <div class="note" style="border-left-color:var(--warn)">Selecciona un cliente concreto en el encabezado
+      para abrir un ticket. Con «Todos los clientes» no se puede: el folio y el expediente dependen del cliente.</div>
+  </div>
+  <div class="panel" id="tPanel">
+    <h2>Apertura de ticket <span id="tClienteAct" style="color:var(--muted);font-weight:400;text-transform:none"></span></h2>
     <div class="grid">
       <div class="f"><label>ID del ticket</label>
         <input id="tId" readonly placeholder="Se genera automáticamente"></div>
-      <div class="f"><label>Cliente <span class="req">*</span></label><select id="tCliente"></select></div>
       <div class="f"><label>Localidad / Sede <span class="req">*</span></label><select id="tLocalidad"></select></div>
       <div class="f"><label>Piso(s) <span class="req">*</span></label><div class="ms" id="tPiso"></div></div>
     </div>
@@ -947,7 +950,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r50';
+const APP_VER = '2026-08-13 · r51';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1555,7 +1558,7 @@ async function cambiarCliente(id){
     $('#selCliente').value=S.cliente; return; }
   S.cliente=id||'';
   try{ localStorage.setItem(PREF_CLI,S.cliente); }catch(e){}
-  pintarMarca(); aplicarModulosUI();
+  pintarMarca(); aplicarModulosUI(); aplicarClienteApertura();
   await cargarDatos(true);
   logEvent('CLIENTE_ACTIVO',S.cliente||'(todos)');
 }
@@ -1597,6 +1600,17 @@ async function migrarSiHaceFalta(){
     toast('Migración completa: '+nIdx+' ticket(s) y '+nInv+' equipo(s) ahora viven por cliente.',null,10000);
   }catch(e){ toast('No se pudo migrar automáticamente: '+e.message,'err',10000); }
 }
+/* Sin un cliente concreto no hay folio posible: se oculta el formulario en vez de
+   dejar que alguien lo llene y falle al guardar. */
+function aplicarClienteApertura(){
+  const hay=!!S.cliente;
+  const p=$('#tPanel'), aviso=$('#tSinCliente');
+  if(p) p.classList.toggle('hide',!hay);
+  if(aviso) aviso.classList.toggle('hide',hay);
+  const et=$('#tClienteAct');
+  if(et) et.textContent = hay? '· '+nombreCliente() : '';
+  if(hay) calcFolio();
+}
 function aplicarPermisosUI(){
   const admin=S.role==='admin', interno=S.role!=='cliente';
   $$('#vApertura input,#vApertura select,#vApertura textarea,#vApertura button').forEach(el=>{ if(!interno) el.disabled=true; });
@@ -1617,7 +1631,7 @@ async function unlockApp(){
   resolverRol();
   try{ S.cliente=localStorage.getItem(PREF_CLI)||''; }catch(e){ S.cliente=''; }
   if(S.role==='cliente') S.cliente=S.clienteScope||'';
-  pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI();
+  pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
   await migrarSiHaceFalta();
   await cargarDatos(true);
   if(isAdmin()) bitPull();
@@ -1730,7 +1744,8 @@ function poblarCatalogosUI(){
   const cats=Object.keys(S.cat.categorias||{});
   const pris=(S.cat.prioridades||[]).map(p=>({v:p.id,t:p.nombre}));
 
-  fillSel('#tCliente',cls,'— selecciona —');
+  /* El cliente lo fija el selector del encabezado: aquí solo se ofrecen sus sedes. */
+  fillSel('#tLocalidad',locsDe(S.cliente).map(l=>({v:l.id,t:l.nombre+' ['+l.id+']'})),'— selecciona —');
   fillSel('#tCategoria',cats,'— selecciona —');
   fillSel('#tPrioridad',pris,'— selecciona —');
   fillSel('#tColTipo',S.cat.tiposDispositivo||[],'Tipo de colateral');
@@ -1763,10 +1778,6 @@ function poblarResponsables(){
   fillSel('#fRespAp',ap,'Todos',a); fillSel('#fRespCi',ci,'Todos',b);
 }
 function enlazarCascadas(){
-  $('#tCliente').onchange=function(){
-    fillSel('#tLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre+' ['+l.id+']'})),'— selecciona —');
-    msSet('#tPiso',[],[]); msSet('#tEquipoMS',[],[]); calcFolio();
-  };
   $('#tLocalidad').onchange=function(){
     msSet('#tPiso',pisosDe(this.value).map(x=>({v:x,l1:x})),[]);
     refrescarEquiposMS(); calcFolio();
@@ -1840,7 +1851,7 @@ function calcFolio(){
   const b=baseFolio($('#tLocalidad').value,$('#tFecha').value);
   $('#tId').value = b? b+'-'+pad2(siguienteConsecutivo(b)) : '';
   const f=$('#tFecha').value;
-  const cliF=$('#tCliente').value;
+  const cliF=S.cliente;
   $('#tFolderHint').textContent = f? pCasos(cliF)+'/'+f.slice(0,7)+'/'+($('#tId').value||'<ID>')+'/' : pCasos(cliF||'<cliente>')+'/AAAA-MM/<ID>/';
 }
 
@@ -1976,8 +1987,8 @@ function renderChips(){
   $('#tColaterales').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{_colaterales.splice(+b.dataset.i,1);renderChips();});
 }
 function limpiarApertura(){
-  ['tCliente','tLocalidad','tPiso','tCategoria','tSubcategoria','tTipo','tPrioridad','tEqLibre','tSerieLibre','tColNota'].forEach(id=>$('#'+id).value='');
-  fillSel('#tLocalidad',[],'— selecciona —');
+  ['tLocalidad','tPiso','tCategoria','tSubcategoria','tTipo','tPrioridad','tEqLibre','tSerieLibre','tColNota'].forEach(id=>$('#'+id).value='');
+  fillSel('#tLocalidad',locsDe(S.cliente).map(l=>({v:l.id,t:l.nombre+' ['+l.id+']'})),'— selecciona —');
   fillSel('#tSubcategoria',[],'— selecciona —'); fillSel('#tTipo',[],'— selecciona —');
   msSet('#tPiso',[],[]); msSet('#tEquipoMS',[],[]); msDisabled('#tEquipoMS',true);
   _equipos=[]; _colaterales=[]; S.filesNew=[]; $('#tSinCol').checked=false;
@@ -1989,7 +2000,8 @@ function ahora(){
   const h=hora12(d); $('#tHora').value=h.t; $('#tAmPm').value=h.ap;
 }
 function validarApertura(){
-  const req=[['tCliente','Cliente'],['tLocalidad','Localidad'],['tCategoria','Categoría'],
+  if(!S.cliente){ toast('Selecciona un cliente en el encabezado antes de abrir el ticket.','err',8000); return null; }
+  const req=[['tLocalidad','Localidad'],['tCategoria','Categoría'],
     ['tSubcategoria','Subcategoría'],['tTipo','Tipo de incidente'],['tPrioridad','Prioridad'],['tFecha','Fecha de apertura']];
   for(const [id,lbl] of req){ if(!$('#'+id).value){ toast('Falta: '+lbl,'err'); $('#'+id).focus(); return null; } }
   if(!msVal('#tPiso').length){ toast('Selecciona al menos un piso.','err'); return null; }
@@ -2011,7 +2023,7 @@ async function crearTicket(){
     const id=$('#tId').value; if(!id) throw new Error('No se pudo generar el ID.');
     const fecha=$('#tFecha').value, mes=fecha.slice(0,7);
     const ruta=pCasos(cli.id)+'/'+mes+'/'+sanitizeName(id);
-    const cli=(S.cat.clientes||[]).find(c=>c.id===$('#tCliente').value)||{};
+    const cli=(S.cat.clientes||[]).find(c=>c.id===S.cliente)||{};
     const t={
       id:id, ruta:ruta,
       clienteId:cli.id||'', cliente:cli.nombre||'',
