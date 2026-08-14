@@ -509,6 +509,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <div class="frow c4">
         <div class="f"><label>Hostname</label><input id="iHost" placeholder="contiene…"></div>
         <div class="f"><label>No. de serie</label><input id="iSerie" placeholder="contiene…"></div>
+        <div class="f"><label>IP Address</label><input id="iIp" placeholder="contiene…"></div>
         <div class="f"><label>Tipo</label><select id="iTipo"></select></div>
         <div class="f"><label>Modelo</label><select id="iModelo"></select></div>
       </div>
@@ -537,7 +538,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div class="tw"><table id="tblInv">
       <thead><tr>
         <th style="width:1%"><input type="checkbox" id="iTodos" title="Seleccionar todo lo visible"></th>
-        <th>Cliente</th><th>Hostname</th><th>No. de serie</th><th>Tipo</th><th>Modelo</th>
+        <th>Cliente</th><th>Hostname</th><th>No. de serie</th><th>IP Address</th><th>Tipo</th><th>Modelo</th>
         <th>Localidad</th><th>Piso</th><th>Versión firmware</th><th></th>
       </tr></thead><tbody></tbody></table></div>
     <div class="pag" id="iPag"></div>
@@ -939,7 +940,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r47';
+const APP_VER = '2026-08-13 · r48';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1334,7 +1335,8 @@ function clienteDeEquipo(e){
   return l? l.clienteId||'' : '';
 }
 function normEquipo(e){
-  const o=Object.assign({hostname:'',serie:'',tipo:'',modelo:'',localidadId:'',piso:'',firmware:''},e||{});
+  const o=Object.assign({hostname:'',serie:'',ip:'',tipo:'',modelo:'',localidadId:'',piso:'',firmware:''},e||{});
+  o.ip=String(o.ip==null?'':o.ip).trim();
   /* Excel entrega los IDs numéricos sin ceros a la izquierda: 05 llega como 5. */
   o.localidadId=String(o.localidadId==null?'':o.localidadId).trim();
   if(/^\d$/.test(o.localidadId)) o.localidadId='0'+o.localidadId;
@@ -1387,7 +1389,9 @@ function idxEntry(t){
     pisos:(t.pisos&&t.pisos.length? t.pisos : (t.piso?String(t.piso).split(/\s*,\s*/).filter(Boolean):[])),
     piso:(t.pisos&&t.pisos.length? t.pisos.join(', ') : t.piso), categoria:t.categoria, subcategoria:t.subcategoria, tipo:t.tipo, prioridad:t.prioridad,
     equipos:(t.equipos||[]).map(e=>eqNorm(e).hostname).filter(Boolean),
-    series:(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean), colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
+    series:(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean),
+    ips:(t.equipos||[]).map(e=>eqNorm(e).ip).filter(Boolean),
+    colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
     fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
     imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respCi:t.respCi, status:t.status,
@@ -1773,10 +1777,10 @@ function enlazarCascadas(){
    los miembros de un stack comparten hostname y modelo. */
 function eqNorm(x){
   if(x&&typeof x==='object') return {hostname:String(x.hostname||'').trim(),serie:String(x.serie||'').trim(),
-    tipo:String(x.tipo||'').trim(),modelo:String(x.modelo||'').trim()};
+    ip:String(x.ip||'').trim(),tipo:String(x.tipo||'').trim(),modelo:String(x.modelo||'').trim()};
   const t=String(x==null?'':x).trim();
   const m=/^(.*?)\s*(?:·|\||\(S\/N:?)\s*([A-Za-z0-9-]{4,})\)?$/.exec(t);
-  return m? {hostname:m[1].trim(),serie:m[2].trim(),tipo:'',modelo:''} : {hostname:t,serie:'',tipo:'',modelo:''};
+  return m? {hostname:m[1].trim(),serie:m[2].trim(),ip:'',tipo:'',modelo:''} : {hostname:t,serie:'',ip:'',tipo:'',modelo:''};
 }
 function eqLabel(e){ e=eqNorm(e); return e.serie? e.hostname+' · '+e.serie : e.hostname; }
 function eqClave(e){ e=eqNorm(e); return e.serie? 'S:'+e.serie.toUpperCase() : 'H:'+e.hostname.toUpperCase(); }
@@ -1794,7 +1798,8 @@ function refrescarEquiposMS(){
   const lista=equiposDe(loc,pisos);
   const items=lista.map(e=>({v:eqClave(e),
     l1:e.hostname+(e.piso?'  ·  '+e.piso:''),
-    l2:(e.serie?'S/N '+e.serie:'sin número de serie')+(e.modelo||e.tipo?'  ·  '+[e.tipo,e.modelo].filter(Boolean).join(' '):'')}));
+    l2:(e.serie?'S/N '+e.serie:'sin número de serie')+(e.ip?'  ·  IP '+e.ip:'')+
+       (e.modelo||e.tipo?'  ·  '+[e.tipo,e.modelo].filter(Boolean).join(' '):'')}));
   const antes=msVal('#tEquipoMS');
   const ahora=msSet('#tEquipoMS',items);
   msDisabled('#tEquipoMS',!loc);
@@ -1949,8 +1954,10 @@ function renderFiles(listSel,bucket){
 /* ---------------------- 13. MÓDULO 1 · APERTURA ---------------------- */
 let _equipos=[], _colaterales=[];
 function renderChips(){
-  $('#tEquipos').innerHTML=_equipos.map((e,i)=>'<span class="chip" title="'+esc(e.serie?'No. de serie '+e.serie:'sin número de serie')+'">'+
+  $('#tEquipos').innerHTML=_equipos.map((e,i)=>'<span class="chip" title="'+
+    esc((e.serie?'No. de serie '+e.serie:'sin número de serie')+(e.ip?' · IP '+e.ip:''))+'">'+
     esc(e.hostname)+(e.serie?' <span style="color:var(--muted);font-family:ui-monospace,monospace">'+esc(e.serie)+'</span>':'')+
+    (e.ip?' <span style="color:var(--brand2);font-family:ui-monospace,monospace">'+esc(e.ip)+'</span>':'')+
     (e.manual?' <span style="color:var(--warn);font-size:10px">manual</span>':'')+
     '<button class="rm" data-i="'+i+'">×</button></span>').join('');
   $('#tEquipos').querySelectorAll('.rm').forEach(b=>b.onclick=()=>{
@@ -2154,6 +2161,7 @@ const COLSEG=[
   {k:'tipo',  t:'Tipo de incidente', a:230, v:t=>esc(t.tipo)},
   {k:'equipos',t:'Equipo',           a:190, v:t=>esc((t.equipos||[]).join(', '))},
   {k:'series',t:'No. de serie',      a:150, cls:'mono', v:t=>esc((t.series||[]).join(', '))},
+  {k:'ips',   t:'IP Address',        a:130, cls:'mono', def:false, v:t=>esc((t.ips||[]).join(', '))},
   {k:'colaterales',t:'Colaterales',  a:170, def:false, v:t=>esc((t.colaterales||[]).join(', '))},
   {k:'apertura',t:'Apertura',        a:150, cls:'mono', v:t=>esc(fechaHumana(t.fechaAp,t.horaAp))},
   {k:'restablecimiento',t:'Restablecimiento',a:150, cls:'mono', def:false, v:t=>esc(fechaHumana(t.fechaRes,t.horaRes))},
@@ -2383,6 +2391,7 @@ function pintarTicket(t){
     campo('Piso(s)',(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso)),
     campo('Categoría',t.categoria),campo('Subcategoría',t.subcategoria),campo('Tipo de incidente',t.tipo),
     campo('Prioridad',t.prioridad),campo('Equipo(s)',(t.equipos||[]).map(eqLabel).join(', ')),
+    campo('IP Address',(t.equipos||[]).map(e=>eqNorm(e).ip).filter(Boolean).join(', ')),
     campo('Colaterales',(t.colaterales||[]).length? t.colaterales.map(c=>c.tipo+' × '+c.cant).join(', ')
       : (t.sinColaterales?'Sin afectación colateral':'')),
     campo('Fecha de apertura',fechaHumana(t.fechaAp)),campo('Hora de apertura',from24(t.horaAp).t+' '+from24(t.horaAp).ap),
@@ -3252,7 +3261,7 @@ async function bandaMarcaXlsx(wb,ws,titulo,nCols){
 }
 const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad'],['cliente','Cliente'],
   ['localidad','Localidad'],['piso','Piso'],['categoria','Categoría'],['subcategoria','Subcategoría'],
-  ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['series','Número de serie'],['colaterales','Colaterales'],
+  ['tipo','Tipo de incidente'],['equipos','Equipo afectado'],['series','Número de serie'],['ips','IP Address'],['colaterales','Colaterales'],
   ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
   ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
   ['imputable','Imputable'],['esperaTotal','Tiempo en espera'],['esperaDesc','Espera descontada del SLA'],
@@ -3392,6 +3401,7 @@ function correoHTML(t,fase,nota,paraEnvio){
      fila('Localidad / Piso',t.localidad+' · '+(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso))+fila('Categoría',t.categoria+' / '+t.subcategoria)+
      fila('Tipo de incidente',t.tipo)+fila('Equipo(s) afectado(s)',(t.equipos||[]).map(eqLabel).join(', '))+
      fila('Número(s) de serie',(t.equipos||[]).map(e=>eqNorm(e).serie).filter(Boolean).join(', '))+
+     fila('IP Address',(t.equipos||[]).map(e=>eqNorm(e).ip).filter(Boolean).join(', '))+
      fila('Colaterales',(t.colaterales||[]).map(c=>c.tipo+' × '+c.cant).join(', '))+
      fila('Apertura',fechaHumana(t.fechaAp,t.horaAp)+' — '+t.respAp)+
      fila('Restablecimiento',t.fechaRes?fechaHumana(t.fechaRes,t.horaRes):'')+
@@ -3472,7 +3482,7 @@ const ESQUEMAS={
   localidades:{titulo:'Localidades / Sedes',cols:[['id','ID (2 dígitos)',12],['clienteId','Cliente',12],['nombre','Nombre',26]],
     nota:'El ID de 2 dígitos es el prefijo del folio. Ej.: sede 98 → ticket 98090826-01.'},
   prioridades:{titulo:'Prioridades y SLA',cols:[['id','ID',8],['nombre','Nombre visible',22],['slaHoras','SLA (horas)',10]],num:['slaHoras']},
-  equipos:{titulo:'Equipos / Dispositivos',cols:[['clienteId','Cliente',12],['hostname','Hostname',24],['serie','No. de serie',20],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Loc.',9],['localidad','Localidad',20],['piso','Piso',10],['firmware','Versión firmware',18]],
+  equipos:{titulo:'Equipos / Dispositivos',cols:[['clienteId','Cliente',12],['hostname','Hostname',24],['serie','No. de serie',20],['ip','IP Address',16],['tipo','Tipo',16],['modelo','Modelo',18],['localidadId','ID Loc.',9],['localidad','Localidad',20],['piso','Piso',10],['firmware','Versión firmware',18]],
     derivadas:{localidad:e=>nombreLoc(e.localidadId)},
     nota:'El inventario se guarda en Inventario/_inventario.json y lo pueden editar los operadores del NOC, no solo el administrador. El número de serie identifica al equipo físico: los miembros de un stack comparten hostname y modelo, así que van como filas distintas con el mismo hostname y series diferentes. Si dejas el cliente vacío, se hereda de la localidad.'},
   clientesExternos:{titulo:'Usuarios cliente (acceso externo)',cols:[['correo','Correo (invitado B2B)',30],['nombre','Nombre',22],['clienteId','Cliente que puede ver',14]],
@@ -3950,6 +3960,9 @@ const SINONIMOS=[
   {campo:'serie',     exactos:['nodeserie','numerodeserie','noserie','numserie','nserie','nrodeserie','nroserie',
                                'serie','serial','serialnumber','serialno','sn','numeroserie','numerodeseriesn'],
                       contiene:[/serie/,/serial/,/^sn$/]},
+  {campo:'ip',        exactos:['ipaddress','ip','direccionip','directionip','ipadress','ipdegestion','ipgestion',
+                               'ipmgmt','managementip','direccion','addressip'],
+                      contiene:[/^ip($|address|v4|gestion|mgmt)/,/direccion.*ip/,/ip.*address/]},
   {campo:'tipo',      exactos:['tipo','tipodedispositivo','tipodispositivo','tipodeequipo','type','devicetype'],
                       contiene:[/^tipo/]},
   {campo:'modelo',    exactos:['modelo','model','modelodeequipo','plataforma','platform'], contiene:[/modelo/,/model/]},
@@ -3977,7 +3990,7 @@ function mapearColumnas(encabezados){
 
 /* ---- Dispositivos ---- */
 const COLS_DISP=[['cliente','Cliente *',16],['hostname','Hostname *',26],['serie','No. de serie *',20],
-  ['tipo','Tipo *',18],['modelo','Modelo',20],['localidadId','ID Localidad *',14],
+  ['ip','IP Address',17],['tipo','Tipo *',18],['modelo','Modelo',20],['localidadId','ID Localidad *',14],
   ['localidad','Localidad (referencia)',24],['piso','Piso',10],['firmware','Versión firmware',18]];
 function filasReferencia(){
   const ref=[];
@@ -4646,19 +4659,20 @@ function locLabel(id){ if(!id) return ''; const n=nombreLoc(id); return '['+id+'
 function invFiltrado(){
   const cli=S.cliente; if(!cli) return [];
   const g=id=>String(($(id)||{}).value||'').trim().toLowerCase();
-  const host=g('#iHost'), serie=g('#iSerie'), libre=g('#iBuscar');
+  const host=g('#iHost'), serie=g('#iSerie'), ip=g('#iIp'), libre=g('#iBuscar');
   const tipo=$('#iTipo').value, modelo=$('#iModelo').value,
         loc=$('#iLoc').value, piso=$('#iPiso').value, fw=$('#iFw').value;
   return invVisible().filter(e=>{
     if(clienteDeEquipo(e)!==cli) return false;
     if(host && String(e.hostname||'').toLowerCase().indexOf(host)===-1) return false;
     if(serie && String(e.serie||'').toLowerCase().indexOf(serie)===-1) return false;
+    if(ip && String(e.ip||'').toLowerCase().indexOf(ip)===-1) return false;
     if(tipo && e.tipo!==tipo) return false;
     if(modelo && e.modelo!==modelo) return false;
     if(loc && e.localidadId!==loc) return false;
     if(piso && e.piso!==piso) return false;
     if(fw && String(e.firmware||'')!==fw) return false;
-    if(libre && [e.hostname,e.serie,e.tipo,e.modelo,locLabel(e.localidadId),e.piso,e.firmware]
+    if(libre && [e.hostname,e.serie,e.ip,e.tipo,e.modelo,locLabel(e.localidadId),e.piso,e.firmware]
         .join(' ').toLowerCase().indexOf(libre)===-1) return false;
     return true;
   });
@@ -4711,6 +4725,7 @@ function renderInv(){
     ['Sedes',new Set(todos.map(e=>e.localidadId).filter(Boolean)).size,''],
     ['Modelos distintos',new Set(todos.map(e=>e.modelo).filter(Boolean)).size,''],
     ['Sin número de serie',todos.filter(e=>!e.serie).length,todos.some(e=>!e.serie)?'color:var(--warn)':''],
+    ['Sin IP',todos.filter(e=>!e.ip).length,todos.some(e=>!e.ip)?'color:var(--warn)':''],
     ['Sin firmware',todos.filter(e=>!e.firmware).length,todos.some(e=>!e.firmware)?'color:var(--warn)':'']
   ].map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
   $('#iCount').textContent='· '+filas.length+' de '+todos.length;
@@ -4719,7 +4734,7 @@ function renderInv(){
   $('#iNuevo').classList.toggle('hide',!puede);
   const cel=(e,c)=> _invEdit===S.inv.indexOf(e)
     ? '<td><input data-e="'+c+'" value="'+esc(e[c]==null?'':e[c])+'"></td>'
-    : '<td'+(c==='serie'||c==='firmware'?' class="mono"':'')+'>'+esc(e[c]||'')+'</td>';
+    : '<td'+(c==='serie'||c==='firmware'||c==='ip'?' class="mono"':'')+'>'+esc(e[c]||'')+'</td>';
   const sedes=(S.cat.localidades||[]).filter(l=>!l.clienteId||l.clienteId===cli);
   const celLoc=e=> _invEdit===S.inv.indexOf(e)
     ? '<td><select data-e="localidadId">'+
@@ -4732,14 +4747,14 @@ function renderInv(){
     return '<tr'+(marcado?' class="sel"':'')+'>'+
       '<td>'+(puede?'<input type="checkbox" data-sel="'+i+'"'+(marcado?' checked':'')+'>':'')+'</td>'+
       '<td>'+esc((( S.cat.clientes||[]).find(c=>c.id===clienteDeEquipo(e))||{}).nombre||clienteDeEquipo(e))+'</td>'+
-      cel(e,'hostname')+cel(e,'serie')+cel(e,'tipo')+cel(e,'modelo')+celLoc(e)+cel(e,'piso')+cel(e,'firmware')+
+      cel(e,'hostname')+cel(e,'serie')+cel(e,'ip')+cel(e,'tipo')+cel(e,'modelo')+celLoc(e)+cel(e,'piso')+cel(e,'firmware')+
       '<td style="white-space:nowrap">'+(puede? (edit
         ? '<button class="btn" style="padding:3px 9px" data-ok="'+i+'" title="Aplicar (se guarda con «Guardar cambios»)">✓</button> '+
           '<button class="btn sec" style="padding:3px 9px" data-cancel="1" title="Cancelar">✕</button>'
         : '<button class="btn sec" style="padding:3px 9px" data-edit="'+i+'" title="Editar">✎</button> '+
           '<button class="btn dan" style="padding:3px 9px" data-rm="'+i+'" title="Eliminar">🗑</button>') : '')+'</td>'+
     '</tr>';
-  }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">'+
+  }).join('') : '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:22px">'+
       (todos.length? 'Sin equipos que coincidan con el filtro'
                    : 'Este cliente no tiene equipos. Usa «+ Agregar equipo» o carga la plantilla desde Catálogos → Equipos.')+'</td></tr>';
   $('#tblInv').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{ _invEdit=+b.dataset.edit; renderInv(); });
@@ -4816,7 +4831,8 @@ const CAMPOS_BULK=[
   {k:'localidadId',t:'Localidad',      lista:()=>(S.cat.localidades||[]).map(l=>({v:l.id,t:locLabel(l.id)}))},
   {k:'piso',      t:'Piso',            lista:()=>{ const l=$('#bulk_localidadId');
                     const loc=(l&&l.value)|| $('#iLoc').value; return loc? pisosDeSede(loc) : []; }},
-  {k:'firmware',  t:'Versión firmware'}
+  {k:'firmware',  t:'Versión firmware'},
+  {k:'ip',        t:'IP Address'}
 ];
 function seleccionados(){ return [...(_invSel||[])].filter(e=>S.inv.indexOf(e)!==-1); }
 /* La selección ya no abre nada sola: solo habilita el botón «Acciones». */
@@ -5991,12 +6007,12 @@ function enlazarEventos(){
     finally{ busy(this,false); } };
 
   // Inventario
-  ['iHost','iSerie','iBuscar'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
+  ['iHost','iSerie','iIp','iBuscar'].forEach(id=>$('#'+id).oninput=()=>{ _invPage=1; renderInv(); });
   ['iTipo','iModelo','iFw'].forEach(id=>$('#'+id).onchange=()=>{ _invPage=1; renderInv(); });
   $('#iPiso').onchange=()=>{ _invPage=1; renderInv(); };
   /* Al cambiar de localidad se limpia el piso: los de la sede anterior ya no aplican. */
   $('#iLoc').onchange=()=>{ $('#iPiso').value=''; _invPage=1; limpiarSeleccion(); renderInv(); };
-  $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value=''; $('#iBuscar').value='';
+  $('#iLimpiar').onclick=()=>{ $('#iHost').value=''; $('#iSerie').value=''; $('#iIp').value=''; $('#iBuscar').value='';
     ['iTipo','iModelo','iLoc','iPiso','iFw'].forEach(id=>$('#'+id).selectedIndex=0); _invPage=1; renderInv(); };
   $('#iRefrescar').onclick=async function(){
     if(invSucio()&&!await modalPendientes('la versión de SharePoint')) return;
