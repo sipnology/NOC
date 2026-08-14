@@ -151,6 +151,14 @@ tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 .colpanel .it .mv button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
  border-radius:4px;width:20px;height:20px;font-size:9px;cursor:pointer;padding:0}
 /* ---------- Barra flotante de edición masiva ---------- */
+/* Aviso de proceso en curso: cambiar de módulo a media escritura deja los datos a medias. */
+#tareaBar{position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:400;display:none;
+ align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--brand);border-radius:999px;
+ padding:9px 18px;box-shadow:var(--sh);font-size:12.5px;color:var(--txt);max-width:92vw}
+#tareaBar.on{display:flex}
+#tareaBar b{color:var(--brand)}
+nav.tabs.bloqueado button:not(.on){opacity:.35;cursor:not-allowed}
+.selcli.bloqueado{opacity:.45;pointer-events:none}
 .bulk{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:180;
  background:var(--panel);border:1px solid var(--brand2);border-radius:12px;box-shadow:var(--sh);
  padding:12px 16px;max-width:min(1180px,96vw);width:max-content}
@@ -875,6 +883,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </div>
 
+<div id="tareaBar"><span class="spin"></span><span id="tareaTxt"></span></div>
+
 <!-- ============ MODAL DE CAMBIOS PENDIENTES ============ -->
 <div class="mask" id="mPend">
   <div class="modal" style="width:min(760px,96vw)">
@@ -950,7 +960,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r51';
+const APP_VER = '2026-08-13 · r52';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1083,6 +1093,42 @@ function fillSel(sel,arr,ph,val){
     (arr||[]).map(o=>{const v=(typeof o==='object')?o.v:o, t=(typeof o==='object')?o.t:o;
       return '<option value="'+esc(v)+'">'+esc(t)+'</option>';}).join('');
   if(val!=null) e.value=val;
+}
+/* ---- Tareas en curso ----
+   Mientras se escribe en SharePoint no se puede cambiar de módulo ni de cliente:
+   una importación de 250 expedientes interrumpida a la mitad deja el índice
+   desalineado con las carpetas y no hay forma automática de saber dónde se quedó. */
+let _tareas=[], _tareaSeq=0;
+function tareaIniciar(desc){
+  const id=++_tareaSeq;
+  _tareas.push({id:id,desc:String(desc||'Procesando…')});
+  pintarTarea(); return id;
+}
+function tareaAvance(id,desc){
+  const t=_tareas.find(x=>x.id===id); if(t){ t.desc=String(desc||t.desc); pintarTarea(); }
+}
+function tareaFin(id){ _tareas=_tareas.filter(x=>x.id!==id); pintarTarea(); }
+function hayTarea(){ return _tareas.length>0; }
+function tareaDesc(){ return _tareas.length? _tareas[_tareas.length-1].desc : ''; }
+function pintarTarea(){
+  const bar=$('#tareaBar'), txt=$('#tareaTxt');
+  if(bar) bar.classList.toggle('on',hayTarea());
+  if(txt) txt.innerHTML='<b>Proceso en curso:</b> '+esc(tareaDesc())+' · no cambies de módulo ni cierres la página';
+  const nav=$('#tabs'); if(nav) nav.classList.toggle('bloqueado',hayTarea());
+  const sc=document.querySelector('.selcli'); if(sc) sc.classList.toggle('bloqueado',hayTarea());
+}
+/* Envuelve un proceso largo: marca, informa y desmarca pase lo que pase. */
+async function conTarea(desc,fn){
+  const id=tareaIniciar(desc);
+  try{ return await fn(p=>tareaAvance(id,p)); }
+  finally{ tareaFin(id); }
+}
+/* Puerta única: la usan la navegación, el cambio de cliente y el cierre de sesión. */
+function bloqueadoPorTarea(){
+  if(!hayTarea()) return false;
+  toast('Hay un proceso en curso ('+tareaDesc()+'). Espera a que termine: si sales ahora, '+
+        'los datos quedan a medio escribir.','warn',9000);
+  return true;
 }
 function busy(btn,on){ if(!btn) return; btn.disabled=!!on;
   if(on){ btn.dataset.txt=btn.innerHTML; btn.innerHTML='<span class="spin"></span>'; }
@@ -1554,6 +1600,7 @@ function aplicarModulosUI(){
   }
 }
 async function cambiarCliente(id){
+  if(bloqueadoPorTarea()){ $('#selCliente').value=S.cliente; return; }
   if(invSucio()&&!await modalPendientes('otro cliente')){
     $('#selCliente').value=S.cliente; return; }
   S.cliente=id||'';
@@ -2636,6 +2683,7 @@ async function borrarTicketsLote(lista,btn){
       'Se eliminan sus carpetas, evidencias y entradas del índice.')) return;
   if(btn) busy(btn,true);
   const prog=$('#segBorrando');
+  const tarea=tareaIniciar('eliminando '+lista.length+' ticket(s)');
   try{
     const h=await H();
     let n=0, fallos=[];
@@ -2643,6 +2691,7 @@ async function borrarTicketsLote(lista,btn){
       if(t.ruta){ try{ await gDelete(h,t.ruta); }catch(e){ fallos.push(t.id+': '+e.message); } }
       n++;
       if(prog) prog.textContent='Eliminando '+n+' de '+lista.length+'…';
+      tareaAvance(tarea,'eliminando ticket '+n+' de '+lista.length);
     }
     const ids=new Set(lista.map(t=>t.id));
     const porCli={}; lista.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(t); });
@@ -2660,7 +2709,7 @@ async function borrarTicketsLote(lista,btn){
     if(fallos.length) console.warn('Carpetas no eliminadas:',fallos);
     renderSeg(); renderDash();
   }catch(e){ toast('No se pudo eliminar: '+e.message,'err',10000); }
-  finally{ if(btn) busy(btn,false); if(prog) prog.textContent=''; }
+  finally{ tareaFin(tarea); if(btn) busy(btn,false); if(prog) prog.textContent=''; }
 }
 /* CRQs y SITs viven en un solo archivo por cliente: basta reescribirlo sin los borrados. */
 async function borrarDsLote(ds,lista,btn){
@@ -2669,6 +2718,7 @@ async function borrarDsLote(ds,lista,btn){
   if(!confirmarBorrado(ds.titulo+'(s)',lista.length,
       'Se eliminan del archivo del cliente junto con las notas y sedes que Sipnology les agregó.')) return;
   if(btn) busy(btn,true);
+  const tarea=tareaIniciar('eliminando '+lista.length+' '+ds.titulo+'(s)');
   try{
     const ids=new Set(lista.map(r=>r.id));
     S[ds.st]=(S[ds.st]||[]).filter(r=>!ids.has(r.id));
@@ -2680,7 +2730,7 @@ async function borrarDsLote(ds,lista,btn){
     toast(lista.length+' '+ds.titulo+'(s) eliminados.');
     dsRender(ds); renderDash();
   }catch(e){ toast('No se pudo eliminar: '+e.message,'err',10000); }
-  finally{ if(btn) busy(btn,false); }
+  finally{ tareaFin(tarea); if(btn) busy(btn,false); }
 }
 async function reabrirTicket(t,motivo,btn){
   if(!motivo){ toast('El motivo de la reapertura es obligatorio.','err'); return; }
@@ -3513,6 +3563,7 @@ async function enviarCorreo(){
   const to=$('#mmTo').value.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
   if(!to.length){ toast('Indica al menos un destinatario.','err'); return; }
   const btn=$('#mmSend'); busy(btn,true);
+  const tareaMail=tareaIniciar('enviando el correo con sus adjuntos');
   try{
     const h=await H();
     const extra=sanitizeHtml($('#mmBody').innerHTML);
@@ -3542,7 +3593,7 @@ async function enviarCorreo(){
     logEvent('CORREO_ENVIADO',m.t.id+' · '+m.fase+' · '+to.join(','));
     $('#mMail').classList.remove('on');
   }catch(e){ toast('No se pudo enviar: '+e.message,'err',9000); }
-  finally{ busy(btn,false); }
+  finally{ tareaFin(tareaMail); busy(btn,false); }
 }
 
 /* ---------------------- 19. CATÁLOGOS (solo administrador) ---------------------- */
@@ -3764,6 +3815,7 @@ async function purgar(mod,cli,btn){
   if(escrito===null) return;
   if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',7000); return; }
   busy(btn,true);
+  const tarea=tareaIniciar('vaciando '+mod+' de '+cli);
   try{
     const h=await H();
     if(mod==='tickets'){
@@ -3788,7 +3840,7 @@ async function purgar(mod,cli,btn){
     }
     renderDash(); renderCat();
   }catch(e){ toast('No se pudo vaciar: '+e.message,'err',10000); }
-  finally{ busy(btn,false); }
+  finally{ tareaFin(tarea); busy(btn,false); }
 }
 
 /* Reduce una imagen y la devuelve como data URL, para que el logo viaje dentro del catálogo. */
@@ -4217,9 +4269,10 @@ function barraEquipos(box,ro){
             S.inv=Object.keys(m).map(k=>m[k]).concat(extras);
           }
           const nuevosTipos=r.ok.filter(e=>e.tipo&&(S.cat.tiposDispositivo||[]).indexOf(e.tipo)===-1).map(e=>e.tipo);
-          if(await invPush('importación de '+r.ok.length+' equipo(s) · modo '+
-              (d.querySelector('#eqModo').value==='replace'?'reemplazar todo':'acumular')+
-              ' · archivo: '+f.name)){
+          if(await conTarea('importando '+r.ok.length+' equipo(s) de inventario',()=>
+              invPush('importación de '+r.ok.length+' equipo(s) · modo '+
+                (d.querySelector('#eqModo').value==='replace'?'reemplazar todo':'acumular')+
+                ' · archivo: '+f.name))){
             if(nuevosTipos.length&&isAdmin()){
               [...new Set(nuevosTipos)].forEach(t=>S.cat.tiposDispositivo.push(t));
               try{ await catalogoPush(); }catch(e){}
@@ -4518,7 +4571,8 @@ function renderHistorico(box,ro){
         busy(this,true);
         const pr=rep.querySelector('#hProg');
         try{
-          await ejecutarImportacion(lista,(n,t)=>{ pr.textContent=n+' / '+t; });
+          await conTarea('importando '+lista.length+' ticket(s)',avisar=>
+            ejecutarImportacion(lista,(n,t)=>{ pr.textContent=n+' / '+t; avisar('importando ticket '+n+' de '+t); }));
           toast(lista.length+' ticket(s) importados.');
           renderSeg(); renderDash(); poblarCatalogosUI();
           rep.innerHTML='<div class="note"><b>Importación completa:</b> '+lista.length+' ticket(s). Revísalos en Seguimiento.</div>';
@@ -4678,7 +4732,11 @@ async function guardarInventario(detalle){
     if(r.accion==='cancelar') return false;
     if(r.accion==='catalogo') alta=r;
   }
-  if(!await invPush(detalle||(_invCambios.length+' cambio(s)'))) return false;
+  const tareaInv=tareaIniciar('guardando el inventario');
+  let escrito=false;
+  try{ escrito=await invPush(detalle||(_invCambios.length+' cambio(s)')); }
+  finally{ tareaFin(tareaInv); }
+  if(!escrito) return false;
   if(alta && isAdmin()){
     alta.clientes.forEach(c=>{ if(!(S.cat.clientes||[]).some(x=>x.id===c.id))
       S.cat.clientes.push({id:c.id,nombre:c.nombre,dominios:[],correosNotif:[]}); });
@@ -5507,9 +5565,10 @@ async function dsImportar(ds,files,modo){
             if(!(ya.sip.sedes||[]).length) ya.sip.sedes=r.sip.sedes;
           });
         }
-        if(await dsPush(ds,'importación de '+nuevos.length+' registro(s) · modo '+
-            (modo==='replace'?'reemplazar todo':'acumular por ID')+' · archivo(s): '+
-            [...files].map(f=>f.name).join(', ').slice(0,220))){
+        if(await conTarea('importando '+nuevos.length+' '+ds.titulo+'(s)',()=>
+            dsPush(ds,'importación de '+nuevos.length+' registro(s) · modo '+
+              (modo==='replace'?'reemplazar todo':'acumular por ID')+' · archivo(s): '+
+              [...files].map(f=>f.name).join(', ').slice(0,220)))){
           toast(ds.plural+': '+S[ds.st].length+' registros en total.');
           caja.remove(); dsRender(ds); renderDash();
         }
@@ -5965,6 +6024,7 @@ function renderBit(){
 
 /* ---------------------- 21. NAVEGACIÓN Y EVENTOS ---------------------- */
 async function irA(v){
+  if(bloqueadoPorTarea()) return;
   /* No se sale del inventario con cambios en memoria: o se guardan o se descartan. */
   if(invSucio()&&v!=='vInventario'&&v!=='vCatalogos'){
     if(!await modalPendientes(nombreVista(v))){
@@ -5988,6 +6048,8 @@ function enlazarEventos(){
   $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
   $('#selCliente').onchange=function(){ cambiarCliente(this.value); };
   $('#btnLogout').onclick=async()=>{
+    if(bloqueadoPorTarea()) return;
+    if(invSucio()&&!confirm('Tienes cambios de inventario sin guardar. Si cierras la sesión se pierden.\n\n¿Salir de todos modos?')) return;
     /* El cierre de sesión se escribe antes de soltar el token: después ya no habría con qué. */
     try{ await new Promise(r=>{ logEvent('LOGOUT','salida manual'); S._q.then(r).catch(r); }); }catch(e){}
     sessionStorage.removeItem(AUTH_CLAVE);
@@ -6200,9 +6262,11 @@ function enlazarEventos(){
 
 /* ---------------------- 22. ARRANQUE ---------------------- */
 window.addEventListener('beforeunload',function(e){
+  /* Con un proceso a medias no se borra el token todavía: si el usuario decide
+     quedarse, la sesión debe seguir viva. */
+  if(hayTarea()||invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
   /* La sesión no debe sobrevivir al cierre, ni siquiera si el navegador restaura pestañas. */
   try{ sessionStorage.removeItem(AUTH_CLAVE); }catch(err){}
-  if(invSucio()){ e.preventDefault(); e.returnValue=''; return ''; }
 });
 window.addEventListener('DOMContentLoaded',function(){
   /* La versión solo se muestra en la pantalla de acceso: sirve para verificar qué
@@ -6218,6 +6282,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   ORDENABLES:ORDENABLES,ordenarSeg:ordenarSeg,alternarOrden:alternarOrden,orden:()=>_segOrden,flechaOrden:flechaOrden,
+  tareaIniciar:tareaIniciar,tareaFin:tareaFin,tareaAvance:tareaAvance,hayTarea:hayTarea,tareaDesc:tareaDesc,
+  conTarea:conTarea,bloqueadoPorTarea:bloqueadoPorTarea,
   moverGrafica:moverGrafica,defsDe:defsDe,setDefs:setDefs,cargarOrdenGraficas:cargarOrdenGraficas,
   borrarTicketsLote:borrarTicketsLote,borrarDsLote:borrarDsLote,confirmarBorrado:confirmarBorrado,
   selSeg:()=>[..._segSel],selDs:k=>[...(_dsSel[k]||[])],limpiarSelSeg:limpiarSelSeg,
