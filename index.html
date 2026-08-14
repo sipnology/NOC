@@ -960,7 +960,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r52';
+const APP_VER = '2026-08-14 · r53';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4297,6 +4297,7 @@ const COLS_HIST=[['id','# de Ticket',16],['cliente','Cliente',14],['localidad','
   ['horaCie','Hora de cierre',13],['imputable','Imputable a:',16],['notas','Notas y Actividades',44],
   ['observaciones','Observaciones',34],['respAp','Responsable Apertura',22],['respCi','Respolsable Cierre',22],
   ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24],['series','Número(s) de serie (opcional)',26],
+  ['ips','IP Address (opcional)',18],
   /* Esperas: sin estas columnas un ticket importado «EN ESPERA» corre el reloj de SLA
      como si nadie lo hubiera detenido, que era justo lo que pasaba con el histórico. */
   ['esperaIni','Inicio de espera (opcional)',24],['esperaFin','Fin de espera (opcional)',24],
@@ -4307,7 +4308,8 @@ async function plantillaHistorico(){
     [{nombre:'Tickets',cols:COLS_HIST,oblig:['cliente','localidad','categoria','prioridad','fechaAp','status'],
       filas:[{id:'98090824-01',cliente:'BBVA',localidad:'Tecno Parque',piso:'P02',categoria:'Falla',
         subcategoria:'Dispositivo',tipo:'Falla de configuración',prioridad:'Baja (P3)',
-        equipos:'SW94071-IDF1-Tecno',series:'FOC2345X6Y7, FOC2345X6Y8',colaterales:'Apagado controlado de equipos',
+        equipos:'SW94071-IDF1-Tecno',series:'FOC2345X6Y7, FOC2345X6Y8',ips:'10.20.30.40, 10.20.30.41',
+        colaterales:'Apagado controlado de equipos',
         fechaAp:'09/08/2024',horaAp:'08:33:00 PM',tFalla:'1:02:00',tAfect:'0:00:00',horaRes:'09:35:00 PM',
         fechaCie:'09/08/2024',horaCie:'09:35:00 PM',imputable:'Cliente',
         notas:'Apagado controlado de equipos por mantenimiento eléctrico.',observaciones:'Al finalizar se encienden equipos.',
@@ -4424,14 +4426,24 @@ async function analizarHistorico(file){
       .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
     if(series.length && hosts.length && series.length!==hosts.length)
       avisos.push('Fila '+L+': hay '+hosts.length+' equipo(s) y '+series.length+' serie(s); se emparejan por posición.');
+    const ipsCol=String(g('ipaddressopcional','ipaddress','ip','direccionip')||'')
+      .split(/[\n;,]+/).map(x=>x.trim()).filter(Boolean);
     const equipos=(hosts.length?hosts:series.map(()=> '')).map((h,i)=>{
       const sn=series[i]||'';
+      /* La serie identifica al equipo físico: si viene, se resuelve todo desde el
+         inventario, incluida la IP, sin pedirla en el archivo. */
+      if(sn){
+        const c=S.inv.find(e=>String(e.serie||'').toLowerCase()===sn.toLowerCase());
+        if(c) return {hostname:h||c.hostname||'',serie:sn,ip:ipsCol[i]||c.ip||'',
+                      tipo:c.tipo||'',modelo:c.modelo||''};
+      }
       if(h&&!sn){  /* si el hostname es único en el catálogo, toma su serie */
         const c=S.inv.filter(e=>String(e.hostname).toLowerCase()===h.toLowerCase());
-        if(c.length===1) return {hostname:h,serie:c[0].serie||'',tipo:c[0].tipo||'',modelo:c[0].modelo||''};
+        if(c.length===1) return {hostname:h,serie:c[0].serie||'',ip:ipsCol[i]||c[0].ip||'',
+                                 tipo:c[0].tipo||'',modelo:c[0].modelo||''};
         if(c.length>1) avisos.push('Fila '+L+': «'+h+'» tiene '+c.length+' equipos en el catálogo (stack); sin serie no se puede saber cuál.');
       }
-      return {hostname:h,serie:sn,tipo:'',modelo:''};
+      return {hostname:h,serie:sn,ip:ipsCol[i]||'',tipo:'',modelo:''};
     }).filter(e=>e.hostname||e.serie);
     const colTxt=String(g('colateralesafectados','colaterales')||'').trim();
     const ini=dt(fap,hap), fin=dt(fcie,hcie);
