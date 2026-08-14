@@ -198,6 +198,11 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .chartbox canvas{max-height:280px}
 .chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
+.chartbox .mv{background:transparent;border:0;color:var(--muted);cursor:grab;font-size:15px;padding:0 2px;line-height:1}
+.chartbox .mv:hover{color:var(--brand)}
+.chartbox .mv:active{cursor:grabbing}
+.chartbox.arrastrando{opacity:.45;border-color:var(--brand)}
+.chartbox.destino{border-color:var(--brand);box-shadow:0 0 0 2px rgba(233,102,45,.35)}
 .chartbox .cab{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-right:22px}
 .chartbox .cab h3{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chartbox .cab select{width:auto;min-width:104px;padding:3px 6px;font-size:11.5px;height:26px}
@@ -424,6 +429,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     </div>
     <div class="tw"><table id="tblSeg"><colgroup></colgroup><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="segPag"></div>
+    <div id="segBorrar"></div>
   </div>
 </section>
 
@@ -439,7 +445,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   <div class="panel" id="dashFiltrosTk">
     <h2>Filtros del tablero</h2>
     <div class="grid">
-      <div class="f"><label>Cliente</label><select id="dCliente"></select></div>
       <div class="f"><label>Localidad</label><select id="dLocalidad"></select></div>
       <div class="f"><label>Piso</label><select id="dPiso"></select></div>
       <div class="f"><label>Categoría</label><select id="dCategoria"></select></div>
@@ -545,6 +550,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       editan completos con el lápiz.</div>
     <div class="tw"><table id="tblCRQ"><colgroup></colgroup><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="crqPag"></div>
+    <div id="crqBorrar"></div>
   </div>
 </section>
 
@@ -564,6 +570,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       un campo propio de Sipnology.</div>
     <div class="tw"><table id="tblSIT"><colgroup></colgroup><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="pag" id="sitPag"></div>
+    <div id="sitBorrar"></div>
   </div>
 </section>
 
@@ -919,7 +926,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r40';
+const APP_VER = '2026-08-13 · r43';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1716,8 +1723,8 @@ function poblarCatalogosUI(){
   fillSel('#fStatus',S.cat.estatus||[],'Todos');
   fillSel('#fPiso',[],'Todos');
   // dashboard
-  fillSel('#dCliente',cls,'Todos');
-  fillSel('#dLocalidad',(S.cat.localidades||[]).map(l=>({v:l.id,t:l.nombre})),'Todas');
+  /* El cliente lo manda el selector del encabezado: aquí solo se ofrecen sus sedes. */
+  fillSel('#dLocalidad',locsDe(S.cliente).map(l=>({v:l.id,t:l.nombre})),'Todas');
   fillSel('#dPiso',[],'Todos');
   fillSel('#dCategoria',cats,'Todas');
   fillSel('#dPrioridad',pris,'Todas');
@@ -1747,7 +1754,6 @@ function enlazarCascadas(){
   $('#fLocalidad').onchange=function(){ fillSel('#fPiso',pisosDe(this.value),'Todos'); };
   $('#fCategoria').onchange=function(){ fillSel('#fSubcategoria',subsDe(this.value),'Todas'); fillSel('#fTipo',[],'Todos'); };
   $('#fSubcategoria').onchange=function(){ fillSel('#fTipo',tiposDe(this.value),'Todos'); };
-  $('#dCliente').onchange=function(){ fillSel('#dLocalidad',locsDe(this.value).map(l=>({v:l.id,t:l.nombre})),'Todas'); fillSel('#dPiso',[],'Todos'); };
   $('#dLocalidad').onchange=function(){ fillSel('#dPiso',pisosDe(this.value),'Todos'); };
 }
 /* Un equipo es {hostname,serie,tipo,modelo}. La serie es la identidad real:
@@ -2176,6 +2182,27 @@ function anchoCol(k){ const c=COLSEG.find(x=>x.k===k)||{}; return cargarCols().a
 function pillStatus(s){ const k=s==='EN ESPERA'?'ESPERA':s; return '<span class="pill s-'+k+'">'+esc(s)+'</span>'; }
 function pillPri(p){ return '<span class="pill pr-'+esc(p)+'">'+esc(p)+'</span>'; }
 
+/* Barra de acciones de borrado: aparece bajo la tabla, no como menú flotante,
+   porque la acción es destructiva y conviene que se vea junto a lo que se va a borrar. */
+function barraBorrado(admin,filtrados){
+  const c=$('#segBorrar'); if(!c) return;
+  if(!admin){ c.innerHTML=''; return; }
+  const n=_segSel.size;
+  const vivos=S.idx.filter(t=>_segSel.has(t.id));
+  c.innerHTML='<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">'+
+    '<span style="color:var(--muted);font-size:12.5px">'+(n? '<b>'+n+'</b> seleccionado(s)' : 'Selecciona tickets con las casillas para eliminarlos')+'</span>'+
+    (n? '<button class="btn dan" id="segDelSel" style="padding:4px 12px;font-size:12px">🗑 Eliminar selección ('+n+')</button>'+
+        '<button class="btn sec" id="segDelClr" style="padding:4px 11px;font-size:12px">Quitar selección</button>' : '')+
+    (filtrados.length? '<button class="btn sec" id="segDelFil" style="padding:4px 12px;font-size:12px;border-color:var(--p1);color:var(--p1)">'+
+        '🗑 Eliminar los '+filtrados.length+' del filtro actual</button>' : '')+
+    '<span id="segBorrando" style="color:var(--warn);font-size:12px"></span></div>';
+  const bs=c.querySelector('#segDelSel');
+  if(bs) bs.onclick=function(){ borrarTicketsLote(vivos,this); };
+  const bc=c.querySelector('#segDelClr');
+  if(bc) bc.onclick=()=>{ limpiarSelSeg(); renderSeg(); };
+  const bf=c.querySelector('#segDelFil');
+  if(bf) bf.onclick=function(){ borrarTicketsLote(filtrados.slice(),this); };
+}
 function renderSeg(){
   if(!S.cat) return;
   const all=filtrar(S.filtro=Object.keys(S.filtro||{}).length?S.filtro:leerFiltros());
@@ -2185,16 +2212,30 @@ function renderSeg(){
   $('#segCount').textContent='· '+all.length+' resultado(s)';
   const cols=cargarCols().orden.map(k=>COLSEG.find(c=>c.k===k)).filter(Boolean);
   const tb=$('#tblSeg');
-  tb.querySelector('colgroup').innerHTML=cols.map(c=>'<col style="width:'+anchoCol(c.k)+'px">').join('')+'<col style="width:78px">';
+  /* La casilla de selección solo existe para el administrador: es la que habilita el borrado. */
+  const admin=isAdmin();
+  const sel=admin?'<col style="width:34px">':'';
+  tb.querySelector('colgroup').innerHTML=sel+cols.map(c=>'<col style="width:'+anchoCol(c.k)+'px">').join('')+'<col style="width:78px">';
+  const todosMarcados=rows.length&&rows.every(t=>_segSel.has(t.id));
   tb.querySelector('thead').querySelector('tr').innerHTML=
+    (admin?'<th><input type="checkbox" id="segTodos" title="Seleccionar los de esta página"'+(todosMarcados?' checked':'')+'></th>':'')+
     cols.map(c=>'<th title="'+esc(c.t)+'">'+esc(c.t)+'<span class="rz" data-rz="'+c.k+'"></span></th>').join('')+'<th></th>';
-  tb.tBodies[0].innerHTML = rows.length? rows.map(t=>'<tr>'+
+  tb.tBodies[0].innerHTML = rows.length? rows.map(t=>'<tr'+(_segSel.has(t.id)?' class="sel"':'')+'>'+
+      (admin?'<td><input type="checkbox" data-sel="'+esc(t.id)+'"'+(_segSel.has(t.id)?' checked':'')+'></td>':'')+
       cols.map(c=>'<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(String(c.v(t)).replace(/<[^>]*>/g,''))+'">'+c.v(t)+'</td>').join('')+
       '<td><button class="btn sec" style="padding:4px 10px" data-open="'+esc(t.id)+'">Abrir</button></td>'+
     '</tr>').join('')
-    : '<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
+    : '<tr><td colspan="'+(cols.length+1+(admin?1:0))+'" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
   habilitarResize(tb);
   $('#tblSeg').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirTicket(b.dataset.open));
+  if(admin){
+    tb.querySelectorAll('[data-sel]').forEach(c=>c.onchange=()=>{
+      if(c.checked) _segSel.add(c.dataset.sel); else _segSel.delete(c.dataset.sel);
+      renderSeg(); });
+    const th=$('#segTodos');
+    if(th) th.onchange=()=>{ rows.forEach(t=>{ if(th.checked) _segSel.add(t.id); else _segSel.delete(t.id); }); renderSeg(); };
+  }
+  barraBorrado(admin,all);
   // paginación
   let p='<button class="btn sec" id="btnExpXlsSeg" style="padding:4px 11px;font-size:12px">⬇ Excel</button>'+
     '<button class="btn sec" id="btnExpPdfSeg" style="padding:4px 11px;font-size:12px">⬇ PDF</button>'+
@@ -2481,6 +2522,76 @@ async function borrarTicket(t){
     renderSeg(); renderDash();
   }catch(e){ toast('No se pudo eliminar: '+e.message,'err',10000); }
 }
+/* ---- Borrado por selección o por lote ----
+   Existe para limpiar la carga de demostración antes de arrancar en producción.
+   Pide escribir una frase porque un solo clic no debería poder vaciar el histórico. */
+let _segSel=new Set();
+const _dsSel={crq:new Set(),sit:new Set()};
+function limpiarSelSeg(){ _segSel=new Set(); }
+/* Confirmación proporcional al daño: cuenta, alcance y frase escrita a mano. */
+function confirmarBorrado(que,n,detalle){
+  const frase='BORRAR '+String(n);
+  const escrito=prompt('Vas a eliminar '+n+' '+que+'.\n'+detalle+'\n\nNo hay deshacer.\n\n'+
+    'Escribe exactamente: '+frase);
+  if(escrito===null) return false;
+  if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',7000); return false; }
+  return true;
+}
+/* Borra tickets agrupando por cliente: un solo reescrito de índice por cliente
+   en vez de uno por ticket, que con 250 folios serían 250 escrituras a SharePoint. */
+async function borrarTicketsLote(lista,btn){
+  if(!isAdmin()){ toast('Solo el administrador puede eliminar tickets.','err'); return; }
+  if(!lista.length){ toast('No hay tickets seleccionados.','warn'); return; }
+  if(!confirmarBorrado('ticket(s) con TODO su expediente en SharePoint',lista.length,
+      'Se eliminan sus carpetas, evidencias y entradas del índice.')) return;
+  if(btn) busy(btn,true);
+  const prog=$('#segBorrando');
+  try{
+    const h=await H();
+    let n=0, fallos=[];
+    for(const t of lista){
+      if(t.ruta){ try{ await gDelete(h,t.ruta); }catch(e){ fallos.push(t.id+': '+e.message); } }
+      n++;
+      if(prog) prog.textContent='Eliminando '+n+' de '+lista.length+'…';
+    }
+    const ids=new Set(lista.map(t=>t.id));
+    const porCli={}; lista.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(t); });
+    for(const cli of Object.keys(porCli)){
+      const ruta=pIdx(cli);
+      let a=await gGetJson(h,ruta); a=Array.isArray(a)?a:[];
+      await gPutJson(h,ruta,a.filter(x=>!ids.has(x.id)));
+    }
+    S.idx=S.idx.filter(x=>!ids.has(x.id));
+    limpiarSelSeg();
+    logEvent('TICKETS_ELIMINADOS_LOTE',n+' ticket(s) · '+Object.keys(porCli).join(', ')+
+      ' · folios: '+lista.slice(0,20).map(t=>t.id).join(', ')+(lista.length>20?' …':''));
+    toast(n+' ticket(s) eliminados'+(fallos.length?', '+fallos.length+' carpeta(s) con problema':'')+'.',
+      fallos.length?'warn':null, 9000);
+    if(fallos.length) console.warn('Carpetas no eliminadas:',fallos);
+    renderSeg(); renderDash();
+  }catch(e){ toast('No se pudo eliminar: '+e.message,'err',10000); }
+  finally{ if(btn) busy(btn,false); if(prog) prog.textContent=''; }
+}
+/* CRQs y SITs viven en un solo archivo por cliente: basta reescribirlo sin los borrados. */
+async function borrarDsLote(ds,lista,btn){
+  if(!isAdmin()){ toast('Solo el administrador puede eliminar registros.','err'); return; }
+  if(!lista.length){ toast('No hay registros seleccionados.','warn'); return; }
+  if(!confirmarBorrado(ds.titulo+'(s)',lista.length,
+      'Se eliminan del archivo del cliente junto con las notas y sedes que Sipnology les agregó.')) return;
+  if(btn) busy(btn,true);
+  try{
+    const ids=new Set(lista.map(r=>r.id));
+    S[ds.st]=(S[ds.st]||[]).filter(r=>!ids.has(r.id));
+    const h=await H();
+    await escribirPorCliente(h,ds.ruta,S[ds.st]);
+    _dsSel[ds.k]=new Set();
+    logEvent(ds.plural.toUpperCase()+'_ELIMINADOS_LOTE',lista.length+' registro(s) · '+
+      lista.slice(0,20).map(r=>r.id).join(', ')+(lista.length>20?' …':''));
+    toast(lista.length+' '+ds.titulo+'(s) eliminados.');
+    dsRender(ds); renderDash();
+  }catch(e){ toast('No se pudo eliminar: '+e.message,'err',10000); }
+  finally{ if(btn) busy(btn,false); }
+}
 async function reabrirTicket(t,motivo,btn){
   if(!motivo){ toast('El motivo de la reapertura es obligatorio.','err'); return; }
   busy(btn,true);
@@ -2729,8 +2840,9 @@ const PALETA=['#5b9bd5','#ed8a4e','#6fbf8b','#e8c468','#a58bd0','#5fc2c2',
 
 function dashFiltrado(){
   return S.idx.filter(t=>{
-    const g=id=>$(id).value;
-    if(g('#dCliente')&&t.clienteId!==g('#dCliente')) return false;
+    const g=id=>{ const e=$(id); return e?e.value:''; };
+    /* Sin filtro de cliente: el alcance ya viene del selector del encabezado. */
+    if(S.cliente&&t.clienteId!==S.cliente) return false;
     if(g('#dLocalidad')&&t.localidadId!==g('#dLocalidad')) return false;
     if(g('#dPiso')&&t.piso!==g('#dPiso')) return false;
     if(g('#dCategoria')&&t.categoria!==g('#dCategoria')) return false;
@@ -2759,6 +2871,66 @@ function renderKPIs(d){
   $('#kpis').innerHTML=K.map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
 }
 const _dashDefs={crq:['estado','sede','mes'],sit:['estado','sede','elemento','config']};
+/* El orden de las gráficas es una preferencia del usuario: se guarda en el navegador
+   para que el tablero se vea igual la próxima vez que entre. */
+const PREF_ORDEN='sip_tkt_orden_graficas';
+function defsDe(mod){ return mod==='tickets'? S.chartDefs : (_dashDefs[mod]||[]); }
+function setDefs(mod,arr){
+  if(mod==='tickets') S.chartDefs=arr; else _dashDefs[mod]=arr;
+  guardarOrdenGraficas();
+}
+function guardarOrdenGraficas(){
+  try{ localStorage.setItem(PREF_ORDEN,JSON.stringify(
+    {tickets:S.chartDefs,crq:_dashDefs.crq,sit:_dashDefs.sit})); }catch(e){}
+}
+function cargarOrdenGraficas(){
+  let g=null; try{ g=JSON.parse(localStorage.getItem(PREF_ORDEN)||'null'); }catch(e){}
+  if(!g) return;
+  const validas=(arr,ok)=>Array.isArray(arr)? arr.filter(k=>ok.indexOf(k)!==-1) : null;
+  const dt=validas(g.tickets,DIMENSIONES.map(d=>d.k));
+  if(dt&&dt.length) S.chartDefs=dt;
+  ['crq','sit'].forEach(k=>{
+    const v=validas(g[k],DATASETS[k].dims.map(d=>d.k));
+    if(v&&v.length) _dashDefs[k]=v;
+  });
+}
+/* Mueve una gráfica de una posición a otra y vuelve a dibujar el tablero. */
+function moverGrafica(mod,de,a){
+  const arr=defsDe(mod).slice();
+  if(de===a||de<0||a<0||de>=arr.length||a>=arr.length) return false;
+  arr.splice(a,0,arr.splice(de,1)[0]);
+  setDefs(mod,arr); renderDash(); return true;
+}
+/* Arrastre entre tarjetas. Se deja también un par de flechas: arrastrar es cómodo
+   con ratón, pero con teclado o en pantalla táctil pequeña no siempre lo es. */
+function habilitarArrastreGraficas(mod){
+  const cont=$('#charts'); if(!cont) return;
+  let origen=null;
+  cont.querySelectorAll('.chartbox').forEach(box=>{
+    box.draggable=true;
+    box.addEventListener('dragstart',e=>{ origen=+box.dataset.i;
+      box.classList.add('arrastrando'); try{e.dataTransfer.setData('text/plain',String(origen));}catch(_){}
+      e.dataTransfer.effectAllowed='move'; });
+    box.addEventListener('dragend',()=>{ origen=null;
+      cont.querySelectorAll('.chartbox').forEach(b=>b.classList.remove('arrastrando','destino')); });
+    box.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move';
+      if(+box.dataset.i!==origen) box.classList.add('destino'); });
+    box.addEventListener('dragleave',()=>box.classList.remove('destino'));
+    box.addEventListener('drop',e=>{ e.preventDefault(); box.classList.remove('destino');
+      let de=origen; if(de==null){ const t=e.dataTransfer.getData('text/plain'); de=t===''?null:+t; }
+      if(de!=null) moverGrafica(mod,de,+box.dataset.i); });
+  });
+  cont.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.i; moverGrafica(mod,i,i+(b.dataset.mv==='izq'?-1:1)); });
+}
+/* Encabezado común de cada tarjeta de gráfica. */
+function cabGrafica(mod,i,total,titulo,sel){
+  return '<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
+    '<div class="cab">'+
+      '<button class="mv" data-mv="izq" data-i="'+i+'" title="Mover a la izquierda"'+(i===0?' disabled style="opacity:.3"':'')+'>‹</button>'+
+      '<button class="mv" data-mv="der" data-i="'+i+'" title="Mover a la derecha"'+(i===total-1?' disabled style="opacity:.3"':'')+'>›</button>'+
+      '<h3 title="'+esc(titulo)+' · arrastra la tarjeta para reordenarla">'+esc(titulo)+'</h3>'+sel+'</div><canvas></canvas>';
+}
 function renderDashDs(ds){
   dsPintarFiltros(ds,'#dashFiltrosDs');
   const filas=dsFiltrar(ds);
@@ -2776,16 +2948,17 @@ function renderDashDs(ds){
   defs.forEach((k,i)=>{
     const dim=ds.dims.find(x=>x.k===k); if(!dim) return;
     const tipo=tipoGraf(ds.k,k,dim.tipo);
-    const box=document.createElement('div'); box.className='chartbox';
-    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
-      '<div class="cab"><h3 title="'+esc(dim.t)+'">'+esc(dim.t)+'</h3>'+selectorTipo(ds.k,k,tipo)+'</div><canvas></canvas>';
+    const box=document.createElement('div'); box.className='chartbox'; box.dataset.i=i;
+    box.innerHTML=cabGrafica(ds.k,i,defs.length,dim.t,selectorTipo(ds.k,k,tipo));
     $('#charts').appendChild(box);
     const g=agrupar(filas,dim.f), cols=g.map((_,j)=>PALETA[j%PALETA.length]);
     S.charts.push(new Chart(box.querySelector('canvas'),
       configGrafica(tipo,ds.plural,g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
-  $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ _dashDefs[ds.k].splice(+b.dataset.rm,1); renderDash(); });
+  $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{
+    _dashDefs[ds.k].splice(+b.dataset.rm,1); guardarOrdenGraficas(); renderDash(); });
   enlazarSelectoresTipo($('#charts'),renderDash);
+  habilitarArrastreGraficas(ds.k);
 }
 function renderDash(){
   if(!S.cat||typeof Chart==='undefined') return;
@@ -2796,23 +2969,24 @@ function renderDash(){
   if(mod!=='tickets'){ renderDashDs(DATASETS[mod]); return; }
   const d=dashFiltrado();
   renderKPIs(d);
-  if(!S.chartDefs.length) S.chartDefs=['status','cliente','localidad','prioridad','dia','tipo'];
+  if(!S.chartDefs.length){ S.chartDefs=['status','cliente','localidad','prioridad','dia','tipo']; cargarOrdenGraficas(); }
   S.charts.forEach(c=>{try{c.destroy();}catch(e){}}); S.charts=[];
   $('#charts').innerHTML='';
   S.chartDefs.forEach((k,i)=>{
     const dim=DIMENSIONES.find(x=>x.k===k); if(!dim) return;
     const tipo=tipoGraf('tickets',k,dim.tipo);
-    const box=document.createElement('div'); box.className='chartbox';
-    box.innerHTML='<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
-      '<div class="cab"><h3 title="'+esc(dim.t)+'">'+esc(dim.t)+'</h3>'+selectorTipo('tickets',k,tipo)+'</div><canvas></canvas>';
+    const box=document.createElement('div'); box.className='chartbox'; box.dataset.i=i;
+    box.innerHTML=cabGrafica('tickets',i,S.chartDefs.length,dim.t,selectorTipo('tickets',k,tipo));
     $('#charts').appendChild(box);
     const g=agrupar(d,dim.f);
     const cols=g.map((_,j)=>PALETA[j%PALETA.length]);
     S.charts.push(new Chart(box.querySelector('canvas'),
       configGrafica(tipo,'Tickets',g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
-  $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.chartDefs.splice(+b.dataset.rm,1);renderDash();});
+  $('#charts').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{
+    S.chartDefs.splice(+b.dataset.rm,1); guardarOrdenGraficas(); renderDash();});
   enlazarSelectoresTipo($('#charts'),renderDash);
+  habilitarArrastreGraficas('tickets');
 }
 
 /* ---- Etiquetas de valor dibujadas sobre la gráfica ----
@@ -2851,11 +3025,24 @@ const PLUGIN_VALORES={
       let x,y,claro=true;
       if(circular){
         const ang=Math.abs((el.endAngle||0)-(el.startAngle||0));
-        if(tipo!=='polarArea'&&ang<0.30) return;      // rebanada demasiado delgada
-        const p=el.tooltipPosition? el.tooltipPosition() : el.getCenterPoint();
-        x=p.x; y=p.y;
+        if(tipo!=='polarArea'&&ang<0.22) return;      // rebanada demasiado delgada
+        /* El centroide de una rebanada delgada cae casi en el borde y la etiqueta
+           termina medio fuera. Se coloca sobre la bisectriz, dentro del radio. */
+        const med=((el.startAngle||0)+(el.endAngle||0))/2;
+        const rInt=el.innerRadius||0, rExt=el.outerRadius||0;
+        const r=rInt+(rExt-rInt)*(rInt?0.5:0.62);
+        if(rExt&&isFinite(med)){ x=el.x+Math.cos(med)*r; y=el.y+Math.sin(med)*r; }
+        else { const p=el.tooltipPosition? el.tooltipPosition() : el.getCenterPoint(); x=p.x; y=p.y; }
         const c=Array.isArray(colores)?colores[i%colores.length]:colores;
-        claro=colorTextoSobre(String(c))==='#ffffff';
+        /* Fondo propio: así la cifra se lee igual si la rebanada es clara, oscura,
+           o si la etiqueta alcanza a salirse del sector. */
+        const w=ctx.measureText(txt).width+12, h=17;
+        ctx.fillStyle='rgba(12,20,36,.88)';
+        ctx.strokeStyle=String(c); ctx.lineWidth=1;
+        if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x-w/2,y-h/2,w,h,5); ctx.fill(); ctx.stroke(); }
+        else ctx.fillRect(x-w/2,y-h/2,w,h);
+        ctx.lineWidth=0; ctx.fillStyle='#ffffff'; ctx.fillText(txt,x,y);
+        return;
       }else if(tipo==='bar'){
         const p=el.getCenterPoint();
         if(chart.options.indexAxis==='y'){ x=el.x+16; y=p.y; }
@@ -2921,7 +3108,8 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
       layout:{padding:radial?16:{top:20,right:tipo==='barH'?38:8,bottom:4,left:4}},
       plugins:{
         legend:{display:circular,position:'bottom',
-          labels:{color:gris,boxWidth:11,boxHeight:11,padding:10,font:{size:11},usePointStyle:true,
+          /* Texto claro, no gris: sobre el panel oscuro el gris apagado se pierde. */
+          labels:{color:'#e8edf7',boxWidth:11,boxHeight:11,padding:10,font:{size:11.5,weight:'500'},usePointStyle:true,
             /* La leyenda también lleva la cifra: se lee sin pasar el cursor. */
             generateLabels:function(ch){
               const d=ch.data, ds=d.datasets[0]||{}, vals=ds.data||[];
@@ -3943,7 +4131,12 @@ const COLS_HIST=[['id','# de Ticket',16],['cliente','Cliente',14],['localidad','
   ['tAfect','Tiempo de afectacion',16],['horaRes','Hora de reestablecimiento',20],['fechaCie','Fecha de cierre',15],
   ['horaCie','Hora de cierre',13],['imputable','Imputable a:',16],['notas','Notas y Actividades',44],
   ['observaciones','Observaciones',34],['respAp','Responsable Apertura',22],['respCi','Respolsable Cierre',22],
-  ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24],['series','Número(s) de serie (opcional)',26]];
+  ['status','Estatus',12],['fechaRes','Fecha de reestablecimiento (opcional)',24],['crq','Ticket cliente / CRQ (opcional)',24],['series','Número(s) de serie (opcional)',26],
+  /* Esperas: sin estas columnas un ticket importado «EN ESPERA» corre el reloj de SLA
+     como si nadie lo hubiera detenido, que era justo lo que pasaba con el histórico. */
+  ['esperaIni','Inicio de espera (opcional)',24],['esperaFin','Fin de espera (opcional)',24],
+  ['esperaImputable','Espera depende de (opcional)',26],['esperaTercero','Tercero o área en espera (opcional)',30],
+  ['esperaMotivo','Motivo de la espera (opcional)',40],['esperaCompromiso','Compromiso del tercero (opcional)',28]];
 async function plantillaHistorico(){
   await escribirXlsx('Plantilla_Historico_Tickets_Sipnology',
     [{nombre:'Tickets',cols:COLS_HIST,oblig:['cliente','localidad','categoria','prioridad','fechaAp','status'],
@@ -3953,7 +4146,17 @@ async function plantillaHistorico(){
         fechaAp:'09/08/2024',horaAp:'08:33:00 PM',tFalla:'1:02:00',tAfect:'0:00:00',horaRes:'09:35:00 PM',
         fechaCie:'09/08/2024',horaCie:'09:35:00 PM',imputable:'Cliente',
         notas:'Apagado controlado de equipos por mantenimiento eléctrico.',observaciones:'Al finalizar se encienden equipos.',
-        respAp:'Maximiliano Barrera',respCi:'Maximiliano Barrera',status:'CERRADO',fechaRes:'09/08/2024',crq:''}]},
+        respAp:'Maximiliano Barrera',respCi:'Maximiliano Barrera',status:'CERRADO',fechaRes:'09/08/2024',crq:''},
+       {id:'98090824-02',cliente:'BBVA',localidad:'Tecno Parque',piso:'P02',categoria:'Falla',
+        subcategoria:'LAN_Hardware',tipo:'Falla Usuario (Problema de conexión física LAN)',prioridad:'Alta (P1)',
+        equipos:'SW94071-IDF1-Tecno',series:'FOC2345X6Y7',colaterales:'Access Point x 4',
+        fechaAp:'12/08/2024',horaAp:'10:15:00 AM',
+        notas:'Puerto sin enlace. Se solicita revisión de cableado al proveedor.',
+        observaciones:'',respAp:'Maximiliano Barrera',status:'EN ESPERA',
+        esperaIni:'12/08/2024 11:40:00 AM',esperaImputable:'Proveedor/Tercero',
+        esperaTercero:'Proveedor de cableado estructurado',
+        esperaMotivo:'Validación física del enlace en el IDF; requiere acceso al sitio.',
+        esperaCompromiso:'13/08/2024 10:00:00 AM'}]},
      Object.assign({filas:filasReferencia()},HOJA_REF)]);
   logEvent('PLANTILLA_HISTORICO','descargada');
 }
@@ -3963,7 +4166,8 @@ function parseFecha(v){
   if(v instanceof Date && !isNaN(v)) return todayISO(v);
   const t=String(v).trim();
   let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(t); if(m) return m[1]+'-'+m[2]+'-'+m[3];
-  m=/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(t);
+  /* «13/08/2026 09:00:00 PM» en una sola celda: la hora se ignora al leer la fecha. */
+  m=/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[\sT].*)?$/.exec(t);
   if(m){ let a=m[3]; if(a.length===2) a=(+a>70?'19':'20')+a; return a+'-'+pad2(+m[2])+'-'+pad2(+m[1]); }
   const d=new Date(t); return isNaN(d)?'':todayISO(d);
 }
@@ -4066,12 +4270,42 @@ async function analizarHistorico(file){
     }).filter(e=>e.hostname||e.serie);
     const colTxt=String(g('colateralesafectados','colaterales')||'').trim();
     const ini=dt(fap,hap), fin=dt(fcie,hcie);
+    /* Espera importada: si el archivo trae cuándo empezó, el reloj de SLA la descuenta.
+       Sin estos datos un ticket EN ESPERA seguiría corriendo, que es lo que inflaba
+       el incumplimiento del histórico. */
+    const pausas=[];
+    const pIni=g('iniciodeesperaopcional','iniciodeespera','esperainicio');
+    if(pIni){
+      const fd=parseFecha(pIni), hd=parseHora(pIni)||'00:00:00';
+      const pFin=g('findeesperaopcional','findeespera','esperafin');
+      const ff=parseFecha(pFin), hf=parseHora(pFin)||'00:00:00';
+      const pCom=g('compromisodelterceroopcional','compromisodeltercero','esperacompromiso');
+      const fc2=parseFecha(pCom), hc2=parseHora(pCom)||'00:00:00';
+      const dd=fd? dt(fd,hd) : null;
+      if(!dd) avisos.push('Fila '+L+': el inicio de espera «'+pIni+'» no se pudo leer; el ticket queda sin pausa.');
+      else{
+        const hh=ff? dt(ff,hf) : null;
+        if(hh&&hh<dd){ avisos.push('Fila '+L+': el fin de espera es anterior al inicio; se ignora el fin.'); }
+        pausas.push({desde:dd.toISOString(), hasta:(hh&&hh>=dd)?hh.toISOString():'',
+          imputable:String(g('esperadependedeopcional','esperadependede','esperaimputable')||'Proveedor/Tercero').trim(),
+          tercero:String(g('tercerooareaenesperaopcional','tercerooareaenespera','esperatercero')||'').trim(),
+          motivo:String(g('motivodelaesperaopcional','motivodelaespera','esperamotivo')||'').trim(),
+          compromiso:(fc2?dt(fc2,hc2).toISOString():''), folio:'', por:S.me.mail, importada:true});
+      }
+    }
+    if(st==='EN ESPERA'&&!pausas.length)
+      avisos.push('Fila '+L+': ticket EN ESPERA sin datos de espera; su reloj de SLA seguirá corriendo. '+
+                  'Llena «Inicio de espera» para que se descuente.');
+    if(st!=='EN ESPERA'&&pausas.length&&!pausas[0].hasta){
+      pausas[0].hasta=(fin||new Date()).toISOString();
+      avisos.push('Fila '+L+': la espera no traía fin y el ticket no está EN ESPERA; se cierra con la fecha de cierre.');
+    }
     ok.push({
       id:id, ruta:pCasos(cli.id)+'/'+fap.slice(0,7)+'/'+sanitizeName(id), folioOriginal:String(g('deticket','ticket','id')||''),
       clienteId:cli.id, cliente:cli.nombre, localidadId:loc.id, localidad:loc.nombre,
       piso:String(g('piso')||'').trim(), categoria:cat, subcategoria:String(g('subcategoria')||'').trim(),
       tipo:String(g('tipodeincidente','tipo')||'').trim(), prioridad:pri, slaHoras:slaHoras(pri),
-      equipos:equipos, colaterales:[], colateralNota:colTxt,
+      equipos:equipos, colaterales:[], colateralNota:colTxt, pausas:pausas,
       fechaAp:fap, horaAp:hap, respAp:String(g('responsableapertura')||'').trim(), respApMail:'',
       status:st, imputable:String(g('imputablea','imputable')||'').trim(),
       fechaRes:fres, horaRes:hres, fechaCie:fcie, horaCie:hcie,
@@ -4962,6 +5196,23 @@ function dsPintarFiltros(ds,sel){
       if(S.dashMod===ds.k) renderDash(); };
   });
 }
+function barraBorradoDs(ds,admin,filtrados,SEL){
+  const c=$('#'+ds.k+'Borrar'); if(!c) return;
+  if(!admin){ c.innerHTML=''; return; }
+  const vivos=dsLista(ds).filter(r=>SEL.has(r.id));
+  const n=vivos.length;
+  c.innerHTML='<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">'+
+    '<span style="color:var(--muted);font-size:12.5px">'+(n? '<b>'+n+'</b> seleccionado(s)' :
+      'Selecciona registros con las casillas para eliminarlos')+'</span>'+
+    (n? '<button class="btn dan" data-b="sel" style="padding:4px 12px;font-size:12px">🗑 Eliminar selección ('+n+')</button>'+
+        '<button class="btn sec" data-b="clr" style="padding:4px 11px;font-size:12px">Quitar selección</button>' : '')+
+    (filtrados.length? '<button class="btn sec" data-b="fil" style="padding:4px 12px;font-size:12px;border-color:var(--p1);color:var(--p1)">'+
+        '🗑 Eliminar los '+filtrados.length+' del filtro actual</button>' : '')+'</div>';
+  const b=k=>c.querySelector('[data-b="'+k+'"]');
+  if(b('sel')) b('sel').onclick=function(){ borrarDsLote(ds,vivos,this); };
+  if(b('clr')) b('clr').onclick=()=>{ _dsSel[ds.k]=new Set(); dsRender(ds); };
+  if(b('fil')) b('fil').onclick=function(){ borrarDsLote(ds,filtrados.slice(),this); };
+}
 function dsRender(ds){
   if(!S.cat||!$(ds.tabla)) return;
   dsPintarFiltros(ds);
@@ -4972,13 +5223,21 @@ function dsRender(ds){
   const rows=filas.slice((e.page-1)*e.size,(e.page-1)*e.size+e.size);
   const cols=ds.cols.filter(c=>c.def!==false);
   const puede=S.role!=='cliente';
+  const admin=isAdmin();
+  const SEL=_dsSel[ds.k]||(_dsSel[ds.k]=new Set());
   const tb=$(ds.tabla);
-  tb.querySelector('colgroup').innerHTML=cols.map(c=>'<col style="width:'+c.a+'px">').join('')+(puede?'<col style="width:70px">':'');
-  tb.querySelector('thead').querySelector('tr').innerHTML=cols.map(c=>'<th>'+esc(c.t)+'</th>').join('')+(puede?'<th></th>':'');
+  tb.querySelector('colgroup').innerHTML=(admin?'<col style="width:34px">':'')+
+    cols.map(c=>'<col style="width:'+c.a+'px">').join('')+(puede?'<col style="width:70px">':'');
+  const todosM=rows.length&&rows.every(r=>SEL.has(r.id));
+  tb.querySelector('thead').querySelector('tr').innerHTML=
+    (admin?'<th><input type="checkbox" data-todos="1" title="Seleccionar los de esta página"'+(todosM?' checked':'')+'></th>':'')+
+    cols.map(c=>'<th>'+esc(c.t)+'</th>').join('')+(puede?'<th></th>':'');
   $(ds.cuenta).textContent='· '+filas.length+' de '+todos.length;
   tb.tBodies[0].innerHTML = rows.length? rows.map(r=>{
     const i=dsLista(ds).indexOf(r), edit=e.edit===i;
-    return '<tr>'+cols.map(c=>{
+    return '<tr'+(SEL.has(r.id)?' class="sel"':'')+'>'+
+      (admin?'<td><input type="checkbox" data-sel="'+esc(r.id)+'"'+(SEL.has(r.id)?' checked':'')+'></td>':'')+
+      cols.map(c=>{
       if(edit&&c.k==='sedes') return '<td><select multiple size="4" data-ed="sedes">'+
         (S.cat.localidades||[]).map(l=>'<option value="'+esc(l.id)+'"'+((r.sip.sedes||[]).indexOf(l.id)!==-1?' selected':'')+'>'+esc(locLabel(l.id))+'</option>').join('')+'</select></td>';
       if(edit&&c.k==='nota') return '<td><input data-ed="nota" value="'+esc(r.sip.nota||'')+'"></td>';
@@ -4989,8 +5248,15 @@ function dsRender(ds){
       : '<button class="btn sec" style="padding:3px 9px" data-ed2="'+i+'" title="Editar los campos de Sipnology">✎</button>'+
         (isAdmin()?' <button class="btn dan" style="padding:3px 9px" data-del2="'+i+'" title="Eliminar registro">🗑</button>':''))+'</td>':'')+
     '</tr>';
-  }).join('') : '<tr><td colspan="'+(cols.length+(puede?1:0))+'" style="text-align:center;color:var(--muted);padding:22px">'+
+  }).join('') : '<tr><td colspan="'+(cols.length+(puede?1:0)+(admin?1:0))+'" style="text-align:center;color:var(--muted);padding:22px">'+
       (todos.length?'Sin coincidencias con el filtro':'Todavía no se ha importado ningún '+ds.titulo+'.')+'</td></tr>';
+  if(admin){
+    tb.querySelectorAll('[data-sel]').forEach(c=>c.onchange=()=>{
+      if(c.checked) SEL.add(c.dataset.sel); else SEL.delete(c.dataset.sel); dsRender(ds); });
+    const th=tb.querySelector('[data-todos]');
+    if(th) th.onchange=()=>{ rows.forEach(r=>{ if(th.checked) SEL.add(r.id); else SEL.delete(r.id); }); dsRender(ds); };
+  }
+  barraBorradoDs(ds,admin,filas,SEL);
   tb.querySelectorAll('[data-ed2]').forEach(b=>b.onclick=()=>{
     const r=dsLista(ds)[+b.dataset.ed2];
     /* Un CRQ capturado aquí se edita completo; uno importado solo en los campos de Sipnology. */
@@ -5663,7 +5929,7 @@ function enlazarEventos(){
   $('#dashDsLimpiar').onclick=()=>{ const ds=DATASETS[S.dashMod]; if(!ds) return;
     dsEst(ds).f={}; dsRender(ds); renderDash(); };
   $('#dashDsAdd').onclick=()=>{ const ds=DATASETS[S.dashMod]; if(!ds) return;
-    const k=$('#dashDsNuevo').value; if(k&&(_dashDefs[ds.k]||[]).indexOf(k)===-1){ _dashDefs[ds.k].push(k); renderDash(); } };
+    const k=$('#dashDsNuevo').value; if(k&&(_dashDefs[ds.k]||[]).indexOf(k)===-1){ _dashDefs[ds.k].push(k); guardarOrdenGraficas(); renderDash(); } };
   $('#dashDsExport').onchange=async function(){
     const v=this.value; this.selectedIndex=0; if(!v) return;
     const ds=DATASETS[S.dashMod]; if(!ds) return;
@@ -5672,7 +5938,8 @@ function enlazarEventos(){
   };
   $('#btnDash').onclick=renderDash;
   $('#btnDashClr').onclick=()=>{ $$('#vEstado input').forEach(i=>i.value=''); $$('#vEstado select').forEach(s=>s.selectedIndex=0); renderDash(); };
-  $('#btnAddChart').onclick=()=>{ const k=$('#dNuevo').value; if(k&&S.chartDefs.indexOf(k)===-1){S.chartDefs.push(k);renderDash();} };
+  $('#btnAddChart').onclick=()=>{ const k=$('#dNuevo').value;
+    if(k&&S.chartDefs.indexOf(k)===-1){S.chartDefs.push(k);guardarOrdenGraficas();renderDash();} };
   $('#dExport').onchange=async function(){
     const v=this.value; this.selectedIndex=0; if(!v) return;
     const d=dashFiltrado();
@@ -5835,6 +6102,10 @@ window.addEventListener('DOMContentLoaded',function(){
 window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
+  moverGrafica:moverGrafica,defsDe:defsDe,setDefs:setDefs,cargarOrdenGraficas:cargarOrdenGraficas,
+  borrarTicketsLote:borrarTicketsLote,borrarDsLote:borrarDsLote,confirmarBorrado:confirmarBorrado,
+  selSeg:()=>[..._segSel],selDs:k=>[...(_dsSel[k]||[])],limpiarSelSeg:limpiarSelSeg,
+  guardarOrdenGraficas:guardarOrdenGraficas,PREF_ORDEN:PREF_ORDEN,_dashDefs:_dashDefs,
   pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
