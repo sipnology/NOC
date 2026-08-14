@@ -960,7 +960,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r53';
+const APP_VER = '2026-08-14 · r54';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4165,7 +4165,7 @@ async function importarDispositivos(file,modo){
     if(!serie) err.push('Fila '+f._fila+': sin número de serie. Se identificará solo por hostname, así que no podrás distinguir miembros de un stack.');
     if(tipo && tipos.indexOf(tipo)===-1) err.push('Fila '+f._fila+': tipo «'+tipo+'» no está en el catálogo (se agregará igual).');
     if(loc && locs.indexOf(loc)===-1) err.push('Fila '+f._fila+': ID de localidad «'+loc+'» no existe.');
-    const eq=normEquipo({clienteId:cli||'',hostname:host,serie:serie,tipo:tipo,
+    const eq=normEquipo({clienteId:cli||'',hostname:host,serie:serie,ip:V(f,'ip'),tipo:tipo,
              modelo:V(f,'modelo'),localidadId:loc,
              piso:V(f,'piso'),firmware:fw});
     /* Se recuerda el nombre que traía el archivo por si hay que dar de alta la sede. */
@@ -4224,9 +4224,9 @@ function barraEquipos(box,ro){
         e.firmware?'fw '+e.firmware:''].filter(Boolean).join(' · ');
       const choques=r.modo==='replace'? [] : r.ok.filter(e=>actuales[eqClave(e)])
         .map(e=>({clave:eqClave(e),titulo:e.serie||e.hostname,actual:desc(actuales[eqClave(e)]),nuevo:desc(e)}));
-      const ESP={cliente:'Cliente',hostname:'Hostname',serie:'No. de serie',tipo:'Tipo',modelo:'Modelo',
+      const ESP={cliente:'Cliente',hostname:'Hostname',serie:'No. de serie',ip:'IP Address',tipo:'Tipo',modelo:'Modelo',
         localidadId:'ID Localidad',localidad:'Localidad',piso:'Piso',firmware:'Versión firmware'};
-      const faltan=['hostname','serie','tipo','firmware'].filter(k=>!r.cols.usados[k]);
+      const faltan=['hostname','serie','ip','tipo','firmware'].filter(k=>!r.cols.usados[k]);
       const mapaHtml='<div class="note"'+(faltan.length?' style="border-left-color:var(--warn)"':'')+'>'+
         '<b>Columnas detectadas en tu archivo</b><div class="tw" style="max-height:200px;margin-top:8px">'+
         '<table><thead><tr><th>Campo del sistema</th><th>Columna de tu archivo</th></tr></thead><tbody>'+
