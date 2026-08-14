@@ -919,7 +919,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r38';
+const APP_VER = '2026-08-13 · r40';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -3143,12 +3143,30 @@ async function exportPDF(data,nombre,conGraficas,cols){
 }
 
 /* ---------------------- 18. CORREO ENRIQUECIDO (Graph Mail.Send) ---------------------- */
-function correoHTML(t,fase,nota){
+/* Los clientes de correo bloquean las imágenes en data URI, así que al enviar se usan
+   referencias cid: contra adjuntos en línea. En la vista previa sí van embebidas. */
+const CID_SIP='sipnologia', CID_CLI='logocliente';
+function logosCorreo(t,paraEnvio){
+  const sip=(S.cat&&S.cat.logoOperador)||'';
+  const cli=logoDe(t.clienteId);
+  return { sip: sip? (paraEnvio?'cid:'+CID_SIP:sip) : '',
+           cli: cli? (paraEnvio?'cid:'+CID_CLI:cli) : '' };
+}
+function correoHTML(t,fase,nota,paraEnvio){
+  const L=logosCorreo(t,paraEnvio);
   const C={APERTURA:['#3b82f6','APERTURA DE TICKET'],SEGUIMIENTO:['#f59e0b','ACTUALIZACIÓN DE TICKET'],CIERRE:['#22c55e','CIERRE DE TICKET']}[fase]||['#e9662d','TICKET'];
   const fila=(l,v)=>v?'<tr><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;color:#7d8aa8;font-size:12px;width:190px">'+esc(l)+'</td><td style="padding:6px 10px;border-bottom:1px solid #e6edf3;font-size:13px;color:#16213e"><b>'+esc(v)+'</b></td></tr>':'';
   return '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;border:1px solid #dfe7ee;border-radius:10px;overflow:hidden">'+
-   '<div style="background:#0f172a;padding:16px 20px"><span style="color:#e9662d;font-size:19px;font-weight:800;letter-spacing:1px">SIPNOLOGY</span>'+
-   '<span style="color:#93a0bd;font-size:12px;margin-left:10px">Sistema de Tickets · NOC</span></div>'+
+   '<table style="width:100%;border-collapse:collapse;background:#0f172a"><tr>'+
+     '<td style="padding:14px 20px;vertical-align:middle">'+
+       (L.sip
+         ? '<img src="'+L.sip+'" alt="Sipnology" height="34" style="height:34px;width:auto;vertical-align:middle;margin-right:12px">'
+         : '<span style="color:#e9662d;font-size:19px;font-weight:800;letter-spacing:1px;vertical-align:middle">SIPNOLOGY</span>')+
+       '<span style="color:#93a0bd;font-size:12px;vertical-align:middle">Sistema de Tickets · NOC</span></td>'+
+     (L.cli?'<td style="padding:14px 20px;text-align:right;vertical-align:middle">'+
+       '<img src="'+L.cli+'" alt="'+esc(t.cliente||'')+'" height="28" style="height:28px;width:auto;vertical-align:middle">'+
+       '</td>':'')+
+   '</tr></table>'+
    '<div style="background:'+C[0]+';color:#fff;padding:10px 20px;font-weight:700;font-size:13px;letter-spacing:.5px">'+C[1]+' · '+esc(t.id)+'</div>'+
    '<table style="width:100%;border-collapse:collapse;background:#fff">'+
      fila('Status',t.status)+fila('Prioridad',t.prioridad)+fila('Cliente',t.cliente)+
@@ -3180,6 +3198,19 @@ function abrirCorreo(t,fase,nota,archivos){
     '<div style="background:#fff;border-radius:8px;padding:6px;max-height:300px;overflow:auto">'+correoHTML(t,fase,S._mail.nota)+'</div>';
   $('#mMail').classList.add('on');
 }
+/* Convierte los logos en adjuntos en línea. Sin esto el correo llegaría con dos cruces rojas. */
+function adjuntosLogo(t){
+  const out=[];
+  const meter=(uri,cid,nombre)=>{
+    const m=/^data:([^;]+);base64,(.+)$/.exec(String(uri||''));
+    if(!m) return;
+    out.push({'@odata.type':'#microsoft.graph.fileAttachment',name:nombre,contentType:m[1],
+      contentBytes:m[2],contentId:cid,isInline:true});
+  };
+  meter((S.cat&&S.cat.logoOperador)||'',CID_SIP,'sipnology.png');
+  meter(logoDe(t.clienteId),CID_CLI,'cliente.png');
+  return out;
+}
 async function enviarCorreo(){
   const m=S._mail; if(!m) return;
   const to=$('#mmTo').value.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
@@ -3188,8 +3219,8 @@ async function enviarCorreo(){
   try{
     const h=await H();
     const extra=sanitizeHtml($('#mmBody').innerHTML);
-    const body=(extra?'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto 14px;font-size:13px;color:#16213e">'+extra+'</div>':'')+correoHTML(m.t,m.fase,m.nota);
-    const att=[];
+    const body=(extra?'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto 14px;font-size:13px;color:#16213e">'+extra+'</div>':'')+correoHTML(m.t,m.fase,m.nota,true);
+    const att=adjuntosLogo(m.t);
     if($('#mmAdj').checked){
       for(const nom of (m.archivos||[])){
         try{
@@ -5393,10 +5424,11 @@ async function fichaTicket(id){
 }
 
 /* ---- Envío por correo de los archivos generados ---- */
-async function enviarArchivos(para,asunto,cuerpoHtml,archivos){
+async function enviarArchivos(para,asunto,cuerpoHtml,archivos,enLinea){
   const dest=String(para||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean);
   if(!dest.length) throw new Error('Indica al menos un destinatario.');
-  const h=await H(); const att=[];
+  const h=await H(); const att=(enLinea||[]).slice();
+  const nAdj=att.length;
   for(const a of archivos){
     if(a.blob.size>MAIL_ADJ_MB*1048576){
       toast('«'+a.nombre+'» pesa '+pesoLegible(a.blob.size)+' y excede el límite de '+MAIL_ADJ_MB+' MB del correo; se omite.','warn',10000);
@@ -5406,7 +5438,7 @@ async function enviarArchivos(para,asunto,cuerpoHtml,archivos){
     att.push({'@odata.type':'#microsoft.graph.fileAttachment',name:a.nombre,
       contentType:a.blob.type||'application/octet-stream',contentBytes:b64});
   }
-  if(!att.length) throw new Error('Ningún archivo cabe en el correo. Descárgalos y compártelos por otro medio.');
+  if(att.length<=nAdj) throw new Error('Ningún archivo cabe en el correo. Descárgalos y compártelos por otro medio.');
   const r=await fetch('https://graph.microsoft.com/v1.0/me/sendMail',{method:'POST',
     headers:Object.assign({'Content-Type':'application/json'},h),
     body:JSON.stringify({message:{subject:asunto,body:{contentType:'HTML',content:cuerpoHtml},
@@ -5414,12 +5446,21 @@ async function enviarArchivos(para,asunto,cuerpoHtml,archivos){
   if(!r.ok) throw new Error('Graph sendMail '+r.status+' — '+(await r.text()).slice(0,180));
   return dest;
 }
-function correoReporte(d,bloques){
+function correoReporte(d,bloques,paraEnvio){
+  const sip=(S.cat&&S.cat.logoOperador)||'', cliLogo=logoDe(S.cliente);
+  const srcSip=sip?(paraEnvio?'cid:'+CID_SIP:sip):'', srcCli=cliLogo?(paraEnvio?'cid:'+CID_CLI:cliLogo):'';
   const fila=(l,v)=>'<tr><td style="padding:5px 10px;border-bottom:1px solid #e6edf3;color:#5b7385;font-size:12px">'+esc(l)+
     '</td><td style="padding:5px 10px;border-bottom:1px solid #e6edf3;font-size:13px;color:#12263a"><b>'+esc(v)+'</b></td></tr>';
   return '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;border:1px solid #dfe7ee;border-radius:10px;overflow:hidden">'+
-    '<div style="background:#0f172a;padding:16px 20px"><span style="color:#e9662d;font-size:19px;font-weight:800;letter-spacing:1px">SIPNOLOGY</span>'+
-    '<span style="color:#93a0bd;font-size:12px;margin-left:10px">Sistema de Tickets · NOC</span></div>'+
+    '<table style="width:100%;border-collapse:collapse;background:#0f172a"><tr>'+
+      '<td style="padding:14px 20px;vertical-align:middle">'+
+        (srcSip
+          ? '<img src="'+srcSip+'" alt="Sipnology" height="34" style="height:34px;width:auto;vertical-align:middle;margin-right:12px">'
+          : '<span style="color:#e9662d;font-size:19px;font-weight:800;letter-spacing:1px;vertical-align:middle">SIPNOLOGY</span>')+
+        '<span style="color:#93a0bd;font-size:12px;vertical-align:middle">Sistema de Tickets · NOC</span></td>'+
+      (srcCli?'<td style="padding:14px 20px;text-align:right;vertical-align:middle">'+
+        '<img src="'+srcCli+'" alt="cliente" height="26" style="height:26px;width:auto;vertical-align:middle"></td>':'')+
+    '</tr></table>'+
     '<div style="background:#3b82f6;color:#fff;padding:10px 20px;font-weight:700;font-size:13px">'+esc(d.titulo)+'</div>'+
     '<table style="width:100%;border-collapse:collapse;background:#fff">'+
       fila('Cliente',nombreCliente())+
@@ -5465,7 +5506,7 @@ async function generarReporte(){
   const peso=archivos.reduce((a,f)=>a+f.blob.size,0);
   if(d.destino==='correo'){
     const dest=await enviarArchivos(d.para,'['+d.titulo+'] '+nombreCliente()+' · '+fechaHumana(todayISO()),
-      correoReporte(d,bloques),archivos);
+      correoReporte(d,bloques,true),archivos,adjuntosLogo({clienteId:S.cliente}));
     toast('Reporte enviado a '+dest.join(', ')+' · '+archivos.length+' archivo(s) · '+pesoLegible(peso),null,9000);
     logEvent('REPORTE_ENVIADO',d.titulo+' · '+totalReg+' registros · '+dest.join(','));
   }else{
@@ -5731,7 +5772,8 @@ function enlazarEventos(){
         const para=prompt('Enviar la ficha de '+f.ticket.id+' a:',(cli.correosNotif||[]).join('; '));
         if(!para){ $('#repFichaEstado').innerHTML=''; return; }
         const dest=await enviarArchivos(para,'[FICHA] Ticket '+f.ticket.id+' · '+f.ticket.cliente,
-          correoHTML(f.ticket,f.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',f.ticket.descripcion),[f]);
+          correoHTML(f.ticket,f.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',f.ticket.descripcion,true),
+          [f],adjuntosLogo(f.ticket));
         $('#repFichaEstado').innerHTML='<div class="note">Enviada a '+esc(dest.join(', '))+' · '+f.paginas+' página(s) · '+pesoLegible(f.blob.size)+'</div>';
         logEvent('FICHA_ENVIADA',f.ticket.id+' · '+dest.join(','));
       }else{
@@ -5795,7 +5837,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
   pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
-  correoHTML:correoHTML,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
+  correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
   buscarPri:buscarPri,buscarCliente:buscarCliente,buscarLoc:buscarLoc,normStatus:normStatus,
   COLS_HIST:COLS_HIST,COLS_DISP:COLS_DISP,eqNorm:eqNorm,eqLabel:eqLabel,eqClave:eqClave,moverFila:moverFila,equiposDe:equiposDe,
