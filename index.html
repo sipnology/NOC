@@ -209,9 +209,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .chartbox canvas{max-height:280px}
 .chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
-.chartbox .asa{cursor:grab;font-size:15px;line-height:1;padding:2px 4px;border-radius:6px;
- filter:grayscale(1);opacity:.55;user-select:none;flex:0 0 auto}
-.chartbox .asa:hover{opacity:1;filter:none;background:rgba(233,102,45,.14)}
+.chartbox .asa{cursor:grab;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;
+ color:var(--muted);user-select:none;flex:0 0 auto}
+.chartbox .asa svg{display:block;pointer-events:none}
+.chartbox .asa:hover{color:var(--brand);background:rgba(233,102,45,.14)}
 .chartbox .asa:active{cursor:grabbing}
 .chartbox.arrastrando{opacity:.45;border-color:var(--brand)}
 .chartbox.destino{border-color:var(--brand);box-shadow:0 0 0 2px rgba(233,102,45,.35)}
@@ -938,7 +939,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r45';
+const APP_VER = '2026-08-13 · r46';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2888,7 +2889,6 @@ function mttr(d){
 function renderKPIs(d){
   const ab=d.filter(t=>t.status==='ABIERTO').length, es=d.filter(t=>t.status==='EN ESPERA').length,
         ce=d.filter(t=>t.status==='CERRADO').length, ven=d.filter(t=>slaInfo(t).vencido).length;
-  const p1=d.filter(t=>t.prioridad==='P1').length;
   const m=mttr(d);
   const cump=d.length? Math.round((d.length-ven)/d.length*100)+'%' : '—';
   const K=[
@@ -2896,7 +2896,6 @@ function renderKPIs(d){
     ['Abiertos',ab,'color:#3b82f6','Tickets en atención activa: ya se abrieron y todavía no se ponen en espera ni se cierran.'],
     ['En espera',es,'color:var(--warn)','Tickets detenidos por una dependencia externa. Si la espera está registrada, su reloj de SLA no corre.'],
     ['Cerrados',ce,'','Tickets resueltos y cerrados en el periodo filtrado.'],
-    ['P1 (Alta)',p1,'color:var(--p1)','Tickets de prioridad alta, con el SLA más corto: 4 horas.'],
     ['Fuera de SLA',ven,'color:var(--p1)','Tickets cuyo tiempo neto ya superó el límite de su prioridad (4, 8 o 24 h). Las esperas imputables al cliente o a un tercero no cuentan.'],
     ['Cumplimiento SLA',cump,'color:var(--p3)','Porcentaje de tickets dentro de su SLA sobre el total filtrado. Es la métrica de compromiso frente al cliente.'],
     ['MTTR bruto',m.bruto,'','Mean Time To Repair. Promedio de cierre menos apertura en los '+m.n+' ticket(s) cerrados con tiempo capturado, sin descontar nada. Es lo que vivió el usuario final, incluyendo el tiempo que estuvimos esperando a un tercero.'],
@@ -2964,10 +2963,16 @@ function habilitarArrastreGraficas(mod){
   });
 }
 /* Encabezado común de cada tarjeta de gráfica. */
+/* Rejilla de seis puntos: el símbolo habitual de «esto se arrastra». Va en SVG
+   y no como emoji para que herede el color del tema y no cambie entre sistemas. */
+const ICONO_ASA='<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true">'+
+  '<circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/>'+
+  '<circle cx="3" cy="8" r="1.5"/><circle cx="9" cy="8" r="1.5"/>'+
+  '<circle cx="3" cy="13" r="1.5"/><circle cx="9" cy="13" r="1.5"/></svg>';
 function cabGrafica(mod,i,total,titulo,sel){
   return '<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
     '<div class="cab">'+
-      '<span class="asa" draggable="true" data-asa="'+i+'" title="Arrastra desde aquí para mover la gráfica">✋</span>'+
+      '<span class="asa" draggable="true" data-asa="'+i+'" title="Arrastra desde aquí para mover la gráfica">'+ICONO_ASA+'</span>'+
       '<h3 title="'+esc(titulo)+'">'+esc(titulo)+'</h3>'+sel+'</div><canvas></canvas>';
 }
 function renderDashDs(ds){
