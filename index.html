@@ -190,7 +190,18 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .sla-ok{color:var(--p3)}.sla-warn{color:var(--warn);font-weight:700}.sla-bad{color:var(--p1);font-weight:800}
 /* ---------- Cards / KPI ---------- */
 .kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px}
-.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;position:relative}
+/* Ayuda contextual: una métrica que nadie sabe leer es una métrica que no sirve. */
+.kpi .i{position:absolute;top:8px;right:9px;width:16px;height:16px;border-radius:50%;
+ border:1px solid var(--muted);color:var(--muted);font-size:10.5px;font-weight:700;font-style:normal;
+ display:grid;place-items:center;cursor:help;line-height:1}
+.kpi .i:hover{color:#fff;border-color:var(--brand);background:var(--brand)}
+.kpi .i:hover:after{content:attr(data-tip);position:absolute;bottom:24px;right:-8px;width:268px;
+ background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;
+ color:var(--txt);font-size:11.5px;font-weight:400;letter-spacing:0;text-transform:none;
+ line-height:1.5;text-align:left;white-space:normal;box-shadow:var(--sh);z-index:80}
+.kpi .i:hover:before{content:"";position:absolute;bottom:18px;right:2px;border:6px solid transparent;
+ border-top-color:var(--line);z-index:81}
 .kpi .n{font-size:26px;font-weight:800;line-height:1}
 .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
 .charts{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))}
@@ -198,9 +209,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .chartbox h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .chartbox canvas{max-height:280px}
 .chartbox .x{position:absolute;top:8px;right:10px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
-.chartbox .mv{background:transparent;border:0;color:var(--muted);cursor:grab;font-size:15px;padding:0 2px;line-height:1}
-.chartbox .mv:hover{color:var(--brand)}
-.chartbox .mv:active{cursor:grabbing}
+.chartbox .asa{cursor:grab;font-size:15px;line-height:1;padding:2px 4px;border-radius:6px;
+ filter:grayscale(1);opacity:.55;user-select:none;flex:0 0 auto}
+.chartbox .asa:hover{opacity:1;filter:none;background:rgba(233,102,45,.14)}
+.chartbox .asa:active{cursor:grabbing}
 .chartbox.arrastrando{opacity:.45;border-color:var(--brand)}
 .chartbox.destino{border-color:var(--brand);box-shadow:0 0 0 2px rgba(233,102,45,.35)}
 .chartbox .cab{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-right:22px}
@@ -926,7 +938,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r43';
+const APP_VER = '2026-08-13 · r45';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2858,17 +2870,42 @@ function agrupar(data,fn){
   data.forEach(t=>{ let k=fn(t); (Array.isArray(k)?k:[k]).forEach(x=>{ x=String(x||'(n/d)'); m[x]=(m[x]||0)+1; }); });
   return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,20).map(k=>({k:k,n:m[k]}));
 }
+/* MTTR: promedio de lo que tarda un ticket en resolverse.
+   Se muestran dos porque miden cosas distintas y ninguna sobra:
+   el bruto es lo que vivió el usuario; el neto, lo que dependió de nosotros. */
+function mttr(d){
+  const cerr=d.filter(t=>t.status==='CERRADO'&&hmsToMs(t.tFalla)!=null);
+  if(!cerr.length) return {bruto:'—',neto:'—',n:0,pausa:0};
+  let sb=0, sn=0, conPausa=0;
+  cerr.forEach(t=>{
+    const b=hmsToMs(t.tFalla);
+    const p=Math.min(b,msDescontable(t,corteDe(t)));
+    if(p>0) conPausa++;
+    sb+=b; sn+=Math.max(0,b-p);
+  });
+  return {bruto:durHMS(sb/cerr.length), neto:durHMS(sn/cerr.length), n:cerr.length, pausa:conPausa};
+}
 function renderKPIs(d){
   const ab=d.filter(t=>t.status==='ABIERTO').length, es=d.filter(t=>t.status==='EN ESPERA').length,
         ce=d.filter(t=>t.status==='CERRADO').length, ven=d.filter(t=>slaInfo(t).vencido).length;
   const p1=d.filter(t=>t.prioridad==='P1').length;
-  const cerr=d.filter(t=>t.status==='CERRADO'&&hmsToMs(t.tFalla)!=null);
-  const prom=cerr.length? durHMS(cerr.reduce((a,t)=>a+hmsToMs(t.tFalla),0)/cerr.length) : '—';
+  const m=mttr(d);
   const cump=d.length? Math.round((d.length-ven)/d.length*100)+'%' : '—';
-  const K=[['Total',d.length,''],['Abiertos',ab,'color:#3b82f6'],['En espera',es,'color:var(--warn)'],
-    ['Cerrados',ce,''],['P1 (Alta)',p1,'color:var(--p1)'],['Fuera de SLA',ven,'color:var(--p1)'],
-    ['Cumplimiento SLA',cump,'color:var(--p3)'],['MTTR promedio',prom,'']];
-  $('#kpis').innerHTML=K.map(k=>'<div class="kpi"><div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
+  const K=[
+    ['Total',d.length,'','Tickets que cumplen los filtros del tablero, sin importar su estatus.'],
+    ['Abiertos',ab,'color:#3b82f6','Tickets en atención activa: ya se abrieron y todavía no se ponen en espera ni se cierran.'],
+    ['En espera',es,'color:var(--warn)','Tickets detenidos por una dependencia externa. Si la espera está registrada, su reloj de SLA no corre.'],
+    ['Cerrados',ce,'','Tickets resueltos y cerrados en el periodo filtrado.'],
+    ['P1 (Alta)',p1,'color:var(--p1)','Tickets de prioridad alta, con el SLA más corto: 4 horas.'],
+    ['Fuera de SLA',ven,'color:var(--p1)','Tickets cuyo tiempo neto ya superó el límite de su prioridad (4, 8 o 24 h). Las esperas imputables al cliente o a un tercero no cuentan.'],
+    ['Cumplimiento SLA',cump,'color:var(--p3)','Porcentaje de tickets dentro de su SLA sobre el total filtrado. Es la métrica de compromiso frente al cliente.'],
+    ['MTTR bruto',m.bruto,'','Mean Time To Repair. Promedio de cierre menos apertura en los '+m.n+' ticket(s) cerrados con tiempo capturado, sin descontar nada. Es lo que vivió el usuario final, incluyendo el tiempo que estuvimos esperando a un tercero.'],
+    ['MTTR neto',m.neto,'color:var(--p3)','El mismo promedio pero descontando las esperas imputables al cliente o a terceros'+
+      (m.pausa? ' ('+m.pausa+' ticket(s) tuvieron alguna)':'')+'. Mide el tiempo que sí dependió de la operación de Sipnology.']
+  ];
+  $('#kpis').innerHTML=K.map(k=>'<div class="kpi">'+
+    (k[3]?'<i class="i" data-tip="'+esc(k[3])+'">i</i>':'')+
+    '<div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
 }
 const _dashDefs={crq:['estado','sede','mes'],sit:['estado','sede','elemento','config']};
 /* El orden de las gráficas es una preferencia del usuario: se guarda en el navegador
@@ -2906,13 +2943,18 @@ function moverGrafica(mod,de,a){
 function habilitarArrastreGraficas(mod){
   const cont=$('#charts'); if(!cont) return;
   let origen=null;
-  cont.querySelectorAll('.chartbox').forEach(box=>{
-    box.draggable=true;
-    box.addEventListener('dragstart',e=>{ origen=+box.dataset.i;
-      box.classList.add('arrastrando'); try{e.dataTransfer.setData('text/plain',String(origen));}catch(_){}
+  /* Solo el asa inicia el arrastre: si la tarjeta entera fuera arrastrable,
+     seleccionar el título o abrir el selector de tipo se volvería incómodo. */
+  cont.querySelectorAll('.asa').forEach(asa=>{
+    asa.addEventListener('dragstart',e=>{ origen=+asa.dataset.asa;
+      const box=asa.closest('.chartbox'); if(box) box.classList.add('arrastrando');
+      try{ e.dataTransfer.setData('text/plain',String(origen)); }catch(_){}
       e.dataTransfer.effectAllowed='move'; });
-    box.addEventListener('dragend',()=>{ origen=null;
+    asa.addEventListener('dragend',()=>{ origen=null;
       cont.querySelectorAll('.chartbox').forEach(b=>b.classList.remove('arrastrando','destino')); });
+  });
+  cont.querySelectorAll('.chartbox').forEach(box=>{
+    box.draggable=false;
     box.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move';
       if(+box.dataset.i!==origen) box.classList.add('destino'); });
     box.addEventListener('dragleave',()=>box.classList.remove('destino'));
@@ -2920,16 +2962,13 @@ function habilitarArrastreGraficas(mod){
       let de=origen; if(de==null){ const t=e.dataTransfer.getData('text/plain'); de=t===''?null:+t; }
       if(de!=null) moverGrafica(mod,de,+box.dataset.i); });
   });
-  cont.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{
-    const i=+b.dataset.i; moverGrafica(mod,i,i+(b.dataset.mv==='izq'?-1:1)); });
 }
 /* Encabezado común de cada tarjeta de gráfica. */
 function cabGrafica(mod,i,total,titulo,sel){
   return '<button class="x" title="Quitar" data-rm="'+i+'">×</button>'+
     '<div class="cab">'+
-      '<button class="mv" data-mv="izq" data-i="'+i+'" title="Mover a la izquierda"'+(i===0?' disabled style="opacity:.3"':'')+'>‹</button>'+
-      '<button class="mv" data-mv="der" data-i="'+i+'" title="Mover a la derecha"'+(i===total-1?' disabled style="opacity:.3"':'')+'>›</button>'+
-      '<h3 title="'+esc(titulo)+' · arrastra la tarjeta para reordenarla">'+esc(titulo)+'</h3>'+sel+'</div><canvas></canvas>';
+      '<span class="asa" draggable="true" data-asa="'+i+'" title="Arrastra desde aquí para mover la gráfica">✋</span>'+
+      '<h3 title="'+esc(titulo)+'">'+esc(titulo)+'</h3>'+sel+'</div><canvas></canvas>';
 }
 function renderDashDs(ds){
   dsPintarFiltros(ds,'#dashFiltrosDs');
@@ -3117,8 +3156,10 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
               return (d.labels||[]).map((l,i)=>{
                 const v=+vals[i]||0;
                 const bg=Array.isArray(ds.backgroundColor)?ds.backgroundColor[i%ds.backgroundColor.length]:ds.backgroundColor;
+                /* Chart.js v4 pinta cada elemento con su propio fontColor; si el
+                   generador no lo incluye, el texto sale en negro y se pierde. */
                 return {text:l+' — '+v+(tot?' ('+Math.round(v/tot*100)+'%)':''),
-                  fillStyle:bg, strokeStyle:bg, lineWidth:0, hidden:false, index:i};
+                  fillStyle:bg, strokeStyle:bg, fontColor:'#e8edf7', lineWidth:0, hidden:false, index:i};
               });
             }}},
         tooltip:{backgroundColor:'rgba(15,23,42,.96)',borderColor:'rgba(255,255,255,.12)',borderWidth:1,
@@ -6101,7 +6142,7 @@ window.addEventListener('DOMContentLoaded',function(){
 /* Exponer para pruebas automatizadas (jsdom) */
 window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
-  slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,
+  slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   moverGrafica:moverGrafica,defsDe:defsDe,setDefs:setDefs,cargarOrdenGraficas:cargarOrdenGraficas,
   borrarTicketsLote:borrarTicketsLote,borrarDsLote:borrarDsLote,confirmarBorrado:confirmarBorrado,
   selSeg:()=>[..._segSel],selDs:k=>[...(_dsSel[k]||[])],limpiarSelSeg:limpiarSelSeg,
