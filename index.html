@@ -939,7 +939,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-13 · r46';
+const APP_VER = '2026-08-13 · r47';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -3055,49 +3055,34 @@ const PLUGIN_VALORES={
     if(!meta||meta.hidden||!meta.data||!meta.data.length) return;
     const tipo=chart.config.type;
     const circular=['pie','doughnut','polarArea'].indexOf(tipo)!==-1;
+    /* En las circulares la cifra ya va en la leyenda inferior, con nombre y porcentaje.
+       Repetirla dentro del sector solo ensucia la gráfica. */
+    if(circular) return;
     const datos=(chart.data.datasets[0].datos||chart.data.datasets[0].data||[]);
     const total=datos.reduce((a,b)=>a+(+b||0),0);
     /* Con demasiadas categorías las etiquetas se encimarían: mejor no dibujarlas. */
-    if(!circular&&meta.data.length>25) return;
-    const ctx=chart.ctx, colores=chart.data.datasets[0].backgroundColor;
+    if(meta.data.length>25) return;
+    const ctx=chart.ctx;
     ctx.save();
     ctx.font='700 11px "Segoe UI",system-ui,-apple-system,sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='middle';
     meta.data.forEach((el,i)=>{
       const v=+datos[i]||0; if(!v) return;
-      const txt=etiquetaValor(v,total,circular);
-      let x,y,claro=true;
-      if(circular){
-        const ang=Math.abs((el.endAngle||0)-(el.startAngle||0));
-        if(tipo!=='polarArea'&&ang<0.22) return;      // rebanada demasiado delgada
-        /* El centroide de una rebanada delgada cae casi en el borde y la etiqueta
-           termina medio fuera. Se coloca sobre la bisectriz, dentro del radio. */
-        const med=((el.startAngle||0)+(el.endAngle||0))/2;
-        const rInt=el.innerRadius||0, rExt=el.outerRadius||0;
-        const r=rInt+(rExt-rInt)*(rInt?0.5:0.62);
-        if(rExt&&isFinite(med)){ x=el.x+Math.cos(med)*r; y=el.y+Math.sin(med)*r; }
-        else { const p=el.tooltipPosition? el.tooltipPosition() : el.getCenterPoint(); x=p.x; y=p.y; }
-        const c=Array.isArray(colores)?colores[i%colores.length]:colores;
-        /* Fondo propio: así la cifra se lee igual si la rebanada es clara, oscura,
-           o si la etiqueta alcanza a salirse del sector. */
-        const w=ctx.measureText(txt).width+12, h=17;
-        ctx.fillStyle='rgba(12,20,36,.88)';
-        ctx.strokeStyle=String(c); ctx.lineWidth=1;
-        if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x-w/2,y-h/2,w,h,5); ctx.fill(); ctx.stroke(); }
-        else ctx.fillRect(x-w/2,y-h/2,w,h);
-        ctx.lineWidth=0; ctx.fillStyle='#ffffff'; ctx.fillText(txt,x,y);
-        return;
-      }else if(tipo==='bar'){
+      const txt=etiquetaValor(v,total,false);
+      let x,y;
+      if(tipo==='bar'){
         const p=el.getCenterPoint();
         if(chart.options.indexAxis==='y'){ x=el.x+16; y=p.y; }
         else { x=p.x; y=el.y-11; }
       }else{
         const p=el.getCenterPoint(); x=p.x; y=p.y-12;
       }
+      /* Halo oscuro detrás del número: las barras claras y el fondo del panel
+         conviven en la misma zona y sin él la cifra se pierde en el borde. */
       ctx.lineWidth=3.5;
-      ctx.strokeStyle=claro?'rgba(10,18,32,.85)':'rgba(255,255,255,.85)';
+      ctx.strokeStyle='rgba(10,18,32,.85)';
       ctx.strokeText(txt,x,y);
-      ctx.fillStyle=claro?'#ffffff':'#10203a';
+      ctx.fillStyle='#ffffff';
       ctx.fillText(txt,x,y);
     });
     ctx.restore();
