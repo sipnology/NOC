@@ -133,7 +133,15 @@ th.orden .fl{color:var(--brand);margin-left:4px;font-size:10px}
 tr.filtros th{padding:4px 6px;background:var(--panel2)}
 tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 /* ---------- Columnas ajustables ---------- */
-#tblSeg{table-layout:fixed}
+/* width:max-content y no 100%: con table-layout:fixed y ancho 100% el navegador
+   reparte el espacio disponible entre las columnas y aplasta las que sobran.
+   Así cada columna mide lo que se le pidió y el contenedor desplaza en horizontal. */
+#tblSeg{table-layout:fixed;width:max-content;min-width:100%}
+#tblSeg th.movible{cursor:grab}
+#tblSeg th.movible:active{cursor:grabbing}
+#tblSeg th.arrastrando{opacity:.45}
+#tblSeg th.destino{box-shadow:inset 3px 0 0 var(--brand)}
+#tblSeg th.destino-der{box-shadow:inset -3px 0 0 var(--brand)}
 #tblSeg th{position:relative;overflow:hidden;text-overflow:ellipsis}
 #tblSeg td{overflow:hidden;text-overflow:ellipsis}
 #tblSeg td.wrap{white-space:normal;word-break:break-word}
@@ -157,9 +165,11 @@ tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
  border-radius:4px;width:20px;height:20px;font-size:9px;cursor:pointer;padding:0}
 /* Reordenar arrastrando: con doce columnas, mover una del final al segundo lugar
    a golpe de flecha son diez clics. */
-.colpanel .it .grip{cursor:grab;color:var(--muted);display:grid;place-items:center;flex:0 0 auto}
+.colpanel .it.movible{cursor:grab}
+.colpanel .it.movible:active{cursor:grabbing}
+.colpanel .it .grip{color:var(--muted);display:grid;place-items:center;flex:0 0 auto}
 .colpanel .it .grip svg{display:block;pointer-events:none}
-.colpanel .it .grip:active{cursor:grabbing}
+.colpanel .it .txt{cursor:pointer;user-select:none}
 .colpanel .it:hover .grip{color:var(--brand)}
 .colpanel .it.arrastrando{opacity:.4}
 .colpanel .it.destino{box-shadow:inset 0 2px 0 var(--brand)}
@@ -976,7 +986,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r56';
+const APP_VER = '2026-08-14 · r58';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2364,7 +2374,8 @@ function renderSeg(){
       const orden=!!ORDENABLES[c.k], act=_segOrden.col===c.k;
       const flecha=orden? '<span class="ord'+(act?' on':'')+'" data-ord="'+c.k+'" title="Ordenar por '+esc(c.t)+'">'+
         flechaOrden(act,_segOrden.dir)+'</span>' : '';
-      return '<th'+(orden?' class="ordenable"':'')+' title="'+esc(c.t)+(orden?' · clic para ordenar':'')+'">'+
+      return '<th class="movible'+(orden?' ordenable':'')+'" draggable="true" data-col="'+c.k+'"'+
+        ' title="'+esc(c.t)+' · arrástrala para moverla'+(orden?' · clic para ordenar':'')+'">'+
         esc(c.t)+flecha+'<span class="rz" data-rz="'+c.k+'"></span></th>';
     }).join('')+'<th></th>';
   tb.tBodies[0].innerHTML = rows.length? rows.map(t=>'<tr'+(_segSel.has(t.id)?' class="sel"':'')+'>'+
@@ -2374,6 +2385,7 @@ function renderSeg(){
     '</tr>').join('')
     : '<tr><td colspan="'+(cols.length+1+(admin?1:0))+'" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
   habilitarResize(tb);
+  habilitarArrastreColumnas(tb);
   /* El clic ordena, pero no cuando se agarra el borde para redimensionar. */
   tb.querySelectorAll('th.ordenable').forEach(th=>th.onclick=e=>{
     if(e.target&&e.target.classList.contains('rz')) return;
@@ -2413,28 +2425,67 @@ function habilitarResize(tb){
     h.onmousedown=e=>{
       e.preventDefault(); e.stopPropagation();
       const k=h.dataset.rz, x0=e.clientX, a0=anchoCol(k);
-      h.classList.add('act');
+      h.classList.add('act'); tb._redim=true;
       const mover=ev=>{ const a=Math.max(50,a0+(ev.clientX-x0));
         cargarCols().anchos[k]=a;
         const i=cargarCols().orden.indexOf(k);
         const col=tb.querySelector('colgroup').childNodes.filter(n=>n.nodeType===1)[i];
         if(col) col.setAttribute('style','width:'+a+'px');
       };
-      const soltar=()=>{ h.classList.remove('act'); guardarCols();
+      const soltar=()=>{ h.classList.remove('act'); tb._redim=false; guardarCols(); renderSeg();
         document.removeEventListener('mousemove',mover); document.removeEventListener('mouseup',soltar); };
       document.addEventListener('mousemove',mover); document.addEventListener('mouseup',soltar);
     };
+  });
+}
+/* Reordenar arrastrando el encabezado. El borde derecho sigue siendo para el ancho:
+   mientras se redimensiona se desactiva el arrastre para que no compitan. */
+function habilitarArrastreColumnas(tb){
+  const th=[...tb.querySelectorAll('th[data-col]')];
+  let de=null;
+  th.forEach(t=>{
+    t.addEventListener('dragstart',e=>{
+      if(tb._redim){ e.preventDefault(); return; }
+      de=t.dataset.col; t.classList.add('arrastrando');
+      try{ e.dataTransfer.setData('text/plain',de); }catch(_){}
+      e.dataTransfer.effectAllowed='move';
+    });
+    t.addEventListener('dragend',()=>{ de=null;
+      th.forEach(x=>x.classList.remove('arrastrando','destino','destino-der')); });
+    t.addEventListener('dragover',e=>{
+      e.preventDefault(); e.dataTransfer.dropEffect='move';
+      const o=cargarCols().orden;
+      if(!de||t.dataset.col===de) return;
+      const der=o.indexOf(t.dataset.col)>o.indexOf(de);
+      t.classList.toggle('destino',!der); t.classList.toggle('destino-der',der);
+    });
+    t.addEventListener('dragleave',()=>t.classList.remove('destino','destino-der'));
+    t.addEventListener('drop',e=>{
+      e.preventDefault(); t.classList.remove('destino','destino-der');
+      let k=de; if(!k){ try{ k=e.dataTransfer.getData('text/plain'); }catch(_){} }
+      const destino=t.dataset.col;
+      if(!k||k===destino) return;
+      const o=cargarCols().orden;
+      const i=o.indexOf(k), j=o.indexOf(destino);
+      if(i<0||j<0) return;
+      o.splice(j,0,o.splice(i,1)[0]);
+      guardarCols(); renderSeg();
+    });
   });
 }
 function panelColumnas(){
   const previo=$('#colPanel'); if(previo){ previo.remove(); return; }
   const c=cargarCols();
   const d=document.createElement('div'); d.id='colPanel'; d.className='colpanel';
-  const fila=(col,vis,i,total)=>'<label class="it"'+(vis?' data-fila="'+i+'"':'')+'>'+
-    (vis?'<span class="grip" draggable="true" data-arr="'+i+'" title="Arrastra para cambiar el orden de la columna">'+ICONO_ASA+'</span>':'')+
+  /* La fila es un div y no un <label>: un label que envuelve una casilla convierte
+     el mousedown en activación del control y nunca llega a dispararse el dragstart. */
+  const fila=(col,vis,i,total)=>'<div class="it'+(vis?' movible':'')+'"'+
+    (vis?' draggable="true" data-fila="'+i+'" title="Arrástrala para cambiar su posición"':'')+'>'+
+    (vis?'<span class="grip">'+ICONO_ASA+'</span>':'')+
     '<input type="checkbox" data-c="'+col.k+'"'+(vis?' checked':'')+'>'+
-    esc(col.t)+(vis?'<span class="mv"><button data-up="'+i+'"'+(i===0?' disabled':'')+'>▲</button>'+
-    '<button data-down="'+i+'"'+(i===total-1?' disabled':'')+'>▼</button></span>':'')+'</label>';
+    '<span class="txt" data-txt="'+col.k+'">'+esc(col.t)+'</span>'+
+    (vis?'<span class="mv"><button data-up="'+i+'"'+(i===0?' disabled':'')+'>▲</button>'+
+    '<button data-down="'+i+'"'+(i===total-1?' disabled':'')+'>▼</button></span>':'')+'</div>';
   const visibles=c.orden.map(k=>COLSEG.find(x=>x.k===k)).filter(Boolean);
   const ocultas=COLSEG.filter(x=>c.orden.indexOf(x.k)===-1);
   d.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Visibles · arrastra ⠿ para reordenar · '+
@@ -2456,15 +2507,17 @@ function panelColumnas(){
   /* Arrastre dentro del panel: se marca el borde superior o inferior de la fila
      de destino según de dónde venga, para que se vea dónde va a caer. */
   let orig=null;
-  d.querySelectorAll('.grip').forEach(g=>{
-    g.addEventListener('dragstart',e=>{ orig=+g.dataset.arr;
-      const f=g.closest('.it'); if(f) f.classList.add('arrastrando');
-      try{ e.dataTransfer.setData('text/plain',String(orig)); }catch(_){}
-      e.dataTransfer.effectAllowed='move'; });
-    g.addEventListener('dragend',()=>{ orig=null;
-      d.querySelectorAll('.it').forEach(f=>f.classList.remove('arrastrando','destino','destino-abajo')); });
+  d.querySelectorAll('[data-txt]').forEach(t=>t.onclick=()=>{
+    const chk=d.querySelector('[data-c="'+t.dataset.txt+'"]');
+    if(chk){ chk.checked=!chk.checked; chk.onchange(); }
   });
   d.querySelectorAll('[data-fila]').forEach(f=>{
+    f.addEventListener('dragstart',e=>{ orig=+f.dataset.fila;
+      f.classList.add('arrastrando');
+      try{ e.dataTransfer.setData('text/plain',String(orig)); }catch(_){}
+      e.dataTransfer.effectAllowed='move'; });
+    f.addEventListener('dragend',()=>{ orig=null;
+      d.querySelectorAll('.it').forEach(x=>x.classList.remove('arrastrando','destino','destino-abajo')); });
     f.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move';
       const j=+f.dataset.fila;
       if(orig==null||j===orig) return;
