@@ -155,6 +155,15 @@ tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 .colpanel .it .mv{margin-left:auto;display:flex;gap:2px}
 .colpanel .it .mv button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
  border-radius:4px;width:20px;height:20px;font-size:9px;cursor:pointer;padding:0}
+/* Reordenar arrastrando: con doce columnas, mover una del final al segundo lugar
+   a golpe de flecha son diez clics. */
+.colpanel .it .grip{cursor:grab;color:var(--muted);display:grid;place-items:center;flex:0 0 auto}
+.colpanel .it .grip svg{display:block;pointer-events:none}
+.colpanel .it .grip:active{cursor:grabbing}
+.colpanel .it:hover .grip{color:var(--brand)}
+.colpanel .it.arrastrando{opacity:.4}
+.colpanel .it.destino{box-shadow:inset 0 2px 0 var(--brand)}
+.colpanel .it.destino-abajo{box-shadow:inset 0 -2px 0 var(--brand)}
 /* ---------- Barra flotante de edición masiva ---------- */
 /* Aviso de proceso en curso: cambiar de módulo a media escritura deja los datos a medias. */
 #tareaBar{position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:400;display:none;
@@ -967,7 +976,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r55';
+const APP_VER = '2026-08-14 · r56';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2421,12 +2430,15 @@ function panelColumnas(){
   const previo=$('#colPanel'); if(previo){ previo.remove(); return; }
   const c=cargarCols();
   const d=document.createElement('div'); d.id='colPanel'; d.className='colpanel';
-  const fila=(col,vis,i,total)=>'<label class="it"><input type="checkbox" data-c="'+col.k+'"'+(vis?' checked':'')+'>'+
+  const fila=(col,vis,i,total)=>'<label class="it"'+(vis?' data-fila="'+i+'"':'')+'>'+
+    (vis?'<span class="grip" draggable="true" data-arr="'+i+'" title="Arrastra para cambiar el orden de la columna">'+ICONO_ASA+'</span>':'')+
+    '<input type="checkbox" data-c="'+col.k+'"'+(vis?' checked':'')+'>'+
     esc(col.t)+(vis?'<span class="mv"><button data-up="'+i+'"'+(i===0?' disabled':'')+'>▲</button>'+
     '<button data-down="'+i+'"'+(i===total-1?' disabled':'')+'>▼</button></span>':'')+'</label>';
   const visibles=c.orden.map(k=>COLSEG.find(x=>x.k===k)).filter(Boolean);
   const ocultas=COLSEG.filter(x=>c.orden.indexOf(x.k)===-1);
-  d.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Visibles · arrastra el borde del encabezado para el ancho</div>'+
+  d.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Visibles · arrastra ⠿ para reordenar · '+
+      'el borde del encabezado ajusta el ancho</div>'+
     '<div class="lista">'+visibles.map((col,i)=>fila(col,true,i,visibles.length)).join('')+
     (ocultas.length?'<div style="font-size:12px;color:var(--muted);margin:8px 0 4px">Disponibles</div>'+
       ocultas.map(col=>fila(col,false)).join(''):'')+'</div>'+
@@ -2440,6 +2452,30 @@ function panelColumnas(){
     else{ if(c.orden.length<=1){ toast('Deja al menos una columna visible.','err'); chk.checked=true; return; }
       c.orden=c.orden.filter(x=>x!==k); }
     guardarCols(); renderSeg(); d.remove(); panelColumnas();
+  });
+  /* Arrastre dentro del panel: se marca el borde superior o inferior de la fila
+     de destino según de dónde venga, para que se vea dónde va a caer. */
+  let orig=null;
+  d.querySelectorAll('.grip').forEach(g=>{
+    g.addEventListener('dragstart',e=>{ orig=+g.dataset.arr;
+      const f=g.closest('.it'); if(f) f.classList.add('arrastrando');
+      try{ e.dataTransfer.setData('text/plain',String(orig)); }catch(_){}
+      e.dataTransfer.effectAllowed='move'; });
+    g.addEventListener('dragend',()=>{ orig=null;
+      d.querySelectorAll('.it').forEach(f=>f.classList.remove('arrastrando','destino','destino-abajo')); });
+  });
+  d.querySelectorAll('[data-fila]').forEach(f=>{
+    f.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move';
+      const j=+f.dataset.fila;
+      if(orig==null||j===orig) return;
+      f.classList.toggle('destino',j<orig); f.classList.toggle('destino-abajo',j>orig); });
+    f.addEventListener('dragleave',()=>f.classList.remove('destino','destino-abajo'));
+    f.addEventListener('drop',e=>{ e.preventDefault();
+      let de=orig; if(de==null){ const t=e.dataTransfer.getData('text/plain'); de=t===''?null:+t; }
+      const a=+f.dataset.fila;
+      if(de==null||de===a) return;
+      c.orden.splice(a,0,c.orden.splice(de,1)[0]);
+      guardarCols(); renderSeg(); d.remove(); panelColumnas(); });
   });
   d.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.up;
     c.orden.splice(i-1,0,c.orden.splice(i,1)[0]); guardarCols(); renderSeg(); d.remove(); panelColumnas(); });
