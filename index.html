@@ -176,6 +176,12 @@ tr.filtros input{padding:3px 6px;font-size:11.5px;height:26px}
 .colpanel .it.destino-abajo{box-shadow:inset 0 -2px 0 var(--brand)}
 /* ---------- Barra flotante de edición masiva ---------- */
 /* Aviso de proceso en curso: cambiar de módulo a media escritura deja los datos a medias. */
+/* Vista simulada: la barra es fija y llamativa a propósito. Nadie debería operar
+   media hora creyendo que está en su propio perfil. */
+#simBar{position:fixed;left:0;right:0;bottom:0;z-index:390;display:none;align-items:center;
+ justify-content:center;gap:14px;background:#7c3aed;color:#fff;padding:8px 16px;font-size:12.5px}
+#simBar.on{display:flex}
+#simBar .btn{background:#fff;color:#4c1d95;border:0;padding:4px 12px;font-size:12px;font-weight:700}
 #tareaBar{position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:400;display:none;
  align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--brand);border-radius:999px;
  padding:9px 18px;box-shadow:var(--sh);font-size:12.5px;color:var(--txt);max-width:92vw}
@@ -326,6 +332,18 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.
       La sesión se cierra al salir de la pestaña, así que se pide autenticación cada vez.</div>
     <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
+    <div id="gateRol" class="hide" style="margin-top:14px;text-align:left">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">
+        Entrar como</div>
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <button class="btn sec" data-rol="admin" style="padding:6px 12px;font-size:12px">Administrador</button>
+        <button class="btn sec" data-rol="operador" style="padding:6px 12px;font-size:12px">Operador</button>
+        <button class="btn sec" data-rol="cliente" style="padding:6px 12px;font-size:12px">Cliente</button>
+      </div>
+      <select id="gateCli" class="hide" style="margin-top:8px"></select>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">Simula la interfaz de ese perfil.
+        Los permisos de SharePoint siguen siendo los de tu cuenta.</div>
+    </div>
     <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
       Clientes externos: usen el correo con el que fueron invitados.
     </div>
@@ -909,6 +927,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </div>
 
+<div id="simBar"><span id="simTxt"></span><button class="btn" id="simSalir">Volver a administrador</button></div>
+
 <div id="tareaBar"><span class="spin"></span><span id="tareaTxt"></span></div>
 
 <!-- ============ MODAL DE CAMBIOS PENDIENTES ============ -->
@@ -986,7 +1006,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r58';
+const APP_VER = '2026-08-14 · r59';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1185,8 +1205,32 @@ function listaAdmins(){
   return l.map(normCorreo).filter(Boolean);
 }
 function isAdmin(){
+  if(_simRol&&_simRol.rol!=='admin') return false;   // vista simulada: se comporta como el rol elegido
   const admins=listaAdmins();
   return currentUserEmails().some(e=>admins.indexOf(e)!==-1);
+}
+/* ---- Vista simulada de otro rol ----
+   Solo para la cuenta dueña del sistema y solo en la interfaz: los permisos de
+   SharePoint siguen siendo los de la cuenta real, así que esto sirve para revisar
+   qué ve cada perfil, no para probar la seguridad del servidor. */
+const DUENO='fernando.fernandez@sipnology.com.mx';
+const SIM_CLAVE='sip_tkt_simular';
+let _simRol=null;
+function puedeSimular(){
+  return currentUserEmails().indexOf(DUENO)!==-1;
+}
+function simulacionActiva(){ return _simRol; }
+function iniciarSimulacion(rol,cliente){
+  if(!puedeSimular()) return false;
+  _simRol = (rol&&rol!=='admin') ? {rol:rol,cliente:cliente||''} : null;
+  try{ _simRol? sessionStorage.setItem(SIM_CLAVE,JSON.stringify(_simRol))
+              : sessionStorage.removeItem(SIM_CLAVE); }catch(e){}
+  return true;
+}
+function recuperarSimulacion(){
+  if(!puedeSimular()) { _simRol=null; return; }
+  try{ const v=JSON.parse(sessionStorage.getItem(SIM_CLAVE)||'null');
+    _simRol=(v&&v.rol&&v.rol!=='admin')? v : null; }catch(e){ _simRol=null; }
 }
 function esInterno(){
   return currentUserEmails().some(e=>/@sipnology\.com\.mx$/i.test(e));
@@ -1518,7 +1562,10 @@ function logEvent(evento,detalle){
   const d=new Date();
   const entry={fecha:todayISO(d), hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()),
     evento:evento, detalle:String(detalle||'').slice(0,500), usuario:S.me.mail||'(anónimo)',
-    rol:S.role||'', cliente:S.cliente||''};
+    /* Si la vista está simulada se deja constancia: de otro modo la auditoría
+       diría «operador» cuando quien actuó fue el administrador. */
+    rol:(S.role||'')+(_simRol?' (simulado por '+(S.me.mail||'')+')':''),
+    cliente:S.cliente||''};
   S.bit.unshift(entry); renderBit();
   const ruta=rutaBit(mesDe(d),entry.usuario);
   S._q = S._q.then(async()=>{
@@ -1581,6 +1628,11 @@ async function bitPull(meses){
 
 /* ---------------------- 9. GATE / ROLES ---------------------- */
 function resolverRol(){
+  if(_simRol){
+    S.role=_simRol.rol;
+    if(_simRol.rol==='cliente') S.clienteScope=_simRol.cliente||'__ninguno__';
+    return;
+  }
   if(isAdmin()) { S.role='admin'; return; }
   if(esInterno()){ S.role='operador'; return; }
   S.role='cliente';
@@ -1689,9 +1741,34 @@ function aplicarPermisosUI(){
   $$('#vApertura input,#vApertura select,#vApertura textarea,#vApertura button').forEach(el=>{ if(!interno) el.disabled=true; });
   $('#mSegForm') && $('#mSegForm').classList.toggle('hide',!interno);
   const r=$('#whoRole');
-  r.textContent = admin?'ADMIN':(interno?'OPERADOR':'CLIENTE');
-  r.className='badge '+(admin?'b-admin':(interno?'b-op':'b-cli'));
+  r.textContent = (admin?'ADMIN':(interno?'OPERADOR':'CLIENTE'))+(_simRol?' (SIMULADO)':'');
+  r.className='badge '+(_simRol?'b-admin':(admin?'b-admin':(interno?'b-op':'b-cli')));
   if(!interno) irA('vSeguimiento');
+}
+/* Pinta la barra inferior y la insignia según haya o no simulación. */
+function pintarSimulacion(){
+  const b=$('#simBar'), t=$('#simTxt');
+  const hay=!!_simRol;
+  if(b) b.classList.toggle('on',hay);
+  if(t&&hay) t.textContent='Estás viendo la aplicación como '+
+    (_simRol.rol==='cliente'? 'CLIENTE'+(_simRol.cliente?' · '+_simRol.cliente:'') : 'OPERADOR')+
+    '. Es una vista simulada: tus permisos reales siguen siendo de administrador.';
+}
+/* Paso intermedio tras autenticarse: solo lo ve la cuenta dueña del sistema. */
+function elegirRol(){
+  return new Promise(res=>{
+    const caja=$('#gateRol'); if(!caja||!puedeSimular()) return res(null);
+    const sel=$('#gateCli');
+    fillSel('#gateCli',(S.cat.clientes||[]).map(c=>({v:c.id,t:c.nombre})),'— cliente a simular —');
+    caja.classList.remove('hide');
+    $('#btnLogin').classList.add('hide');
+    caja.querySelectorAll('[data-rol]').forEach(b=>b.onclick=()=>{
+      const r=b.dataset.rol;
+      if(r==='cliente'&&!sel.value){ sel.classList.remove('hide'); toast('Elige el cliente a simular.','warn'); return; }
+      caja.classList.add('hide'); $('#btnLogin').classList.remove('hide');
+      res({rol:r,cliente:sel.value||''});
+    });
+  });
 }
 async function unlockApp(){
   const a=msalApp().getAllAccounts()[0]||{};
@@ -1701,14 +1778,23 @@ async function unlockApp(){
   sessionStorage.setItem(AUTH_CLAVE,String(Date.now()));
   $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
   await catalogoPull(true);
+  recuperarSimulacion();
+  if(puedeSimular()&&!_simRol){
+    /* El catálogo ya está leído: la lista de clientes a simular sale de ahí. */
+    $('#authGate').classList.remove('hide'); $('#topBar').classList.add('hide'); $('#app').classList.add('hide');
+    const eleccion=await elegirRol();
+    $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
+    if(eleccion) iniciarSimulacion(eleccion.rol,eleccion.cliente);
+  }
   resolverRol();
+  pintarSimulacion();
   try{ S.cliente=localStorage.getItem(PREF_CLI)||''; }catch(e){ S.cliente=''; }
   if(S.role==='cliente') S.cliente=S.clienteScope||'';
   pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
   await migrarSiHaceFalta();
   await cargarDatos(true);
   if(isAdmin()) bitPull();
-  logEvent('LOGIN','rol '+S.role);
+  logEvent('LOGIN','rol '+S.role+(_simRol?' · vista simulada':''));
   clearInterval(S._timer);
   S._timer=setInterval(()=>{ catalogoPull(true); if(!invSucio()) cargarDatos(true); }, POLL_MS);
   setTimeout(()=>{ toast('Sesión expirada por seguridad (3 h).','warn',9000); location.reload(); }, AUTH_TTL);
@@ -6155,6 +6241,8 @@ async function irA(v){
 function enlazarEventos(){
   $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
   $('#selCliente').onchange=function(){ cambiarCliente(this.value); };
+  const bs=$('#simSalir');
+  if(bs) bs.onclick=()=>{ iniciarSimulacion('admin'); location.reload(); };
   $('#btnLogout').onclick=async()=>{
     if(bloqueadoPorTarea()) return;
     if(invSucio()&&!confirm('Tienes cambios de inventario sin guardar. Si cierras la sesión se pierden.\n\n¿Salir de todos modos?')) return;
@@ -6422,6 +6510,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
+  puedeSimular:puedeSimular,iniciarSimulacion:iniciarSimulacion,simulacionActiva:simulacionActiva,
+  recuperarSimulacion:recuperarSimulacion,DUENO:DUENO,SIM_CLAVE:SIM_CLAVE,
   rutaBit:rutaBit,mesDe:mesDe,bitFiltrada:bitFiltrada,P_BIT:P_BIT,P_BIT_LEGACY:P_BIT_LEGACY,
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
