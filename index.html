@@ -64,6 +64,17 @@ nav.tabs button.on:hover{background:var(--brand);color:#fff}
 .who b{color:var(--txt);display:block;font-size:12.5px}
 .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
 .b-admin{background:#7c3aed;color:#fff}.b-op{background:var(--brand2);color:#fff}.b-cli{background:#334e68;color:#cfe3f5}
+/* La insignia se vuelve un botón solo para quien puede cambiar de perfil. */
+.badge.cambiable{cursor:pointer}
+.badge.cambiable:hover{filter:brightness(1.18)}
+.badge.cambiable:after{content:"▾";margin-left:5px;font-size:9px;opacity:.85}
+#rolMenu{position:absolute;right:0;top:calc(100% + 6px);z-index:260;background:var(--panel);
+ border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:var(--sh);
+ width:230px;text-align:left;font-size:12.5px}
+#rolMenu .op{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer}
+#rolMenu .op:hover{background:var(--panel2)}
+#rolMenu .op.act{color:var(--brand);font-weight:700}
+#rolMenu .nota{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
 main{padding:18px;max-width:1500px;margin:0 auto}
 .view{display:none}.view.on{display:block}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
@@ -361,7 +372,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <div class="selcli"><label for="selCliente">Cliente</label><select id="selCliente"></select></div>
       <img id="logoCliente" class="hide" alt="">
     </div>
-    <div class="who right"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
+    <div class="who right" style="position:relative"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
     <button class="btn sec" id="btnLogout">Salir</button>
   </div>
   <nav class="tabs" id="tabs">
@@ -1006,7 +1017,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r59';
+const APP_VER = '2026-08-14 · r60';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1742,8 +1753,52 @@ function aplicarPermisosUI(){
   $('#mSegForm') && $('#mSegForm').classList.toggle('hide',!interno);
   const r=$('#whoRole');
   r.textContent = (admin?'ADMIN':(interno?'OPERADOR':'CLIENTE'))+(_simRol?' (SIMULADO)':'');
-  r.className='badge '+(_simRol?'b-admin':(admin?'b-admin':(interno?'b-op':'b-cli')));
+  r.className='badge '+(_simRol?'b-admin':(admin?'b-admin':(interno?'b-op':'b-cli')))+(puedeSimular()?' cambiable':'');
+  r.title = puedeSimular()? 'Cambia de perfil sin cerrar sesión' : '';
+  r.onclick = puedeSimular()? (e=>{ e.stopPropagation(); menuRol(); }) : null;
   if(!interno) irA('vSeguimiento');
+}
+/* Cambia de perfil sin cerrar sesión: se rehace lo mismo que al entrar, pero
+   sin volver a autenticar ni recargar la página. */
+async function cambiarRol(rol,cliente){
+  if(bloqueadoPorTarea()) return;
+  if(invSucio()&&!await modalPendientes('otro perfil')) return;
+  const antes=S.role+(_simRol?' (simulado)':'');
+  iniciarSimulacion(rol,cliente);
+  resolverRol();
+  pintarSimulacion();
+  if(S.role==='cliente') S.cliente=S.clienteScope||'';
+  else { try{ S.cliente=localStorage.getItem(PREF_CLI)||S.cliente||''; }catch(e){} }
+  pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
+  limpiarSelSeg();
+  await cargarDatos(true);
+  S.bit=[]; if(isAdmin()) bitPull(); else renderBit();
+  logEvent('ROL_SIMULADO',antes+' → '+S.role+(_simRol?' (simulado)':' (real)'));
+  toast('Ahora ves la aplicación como '+S.role.toUpperCase()+
+        (_simRol?' · vista simulada':' · tu perfil real')+'.',null,7000);
+}
+/* Menú desplegable colgado de la insignia del encabezado. */
+function menuRol(){
+  const previo=$('#rolMenu'); if(previo){ previo.remove(); return; }
+  if(!puedeSimular()) return;
+  const cl=(S.cat.clientes||[]);
+  const act=r=>(_simRol? _simRol.rol : 'admin')===r ? ' act' : '';
+  const d=document.createElement('div'); d.id='rolMenu';
+  d.innerHTML='<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Ver la aplicación como</div>'+
+    '<div class="op'+act('admin')+'" data-r="admin">Administrador <span style="color:var(--muted);font-size:11px">(tu perfil real)</span></div>'+
+    '<div class="op'+act('operador')+'" data-r="operador">Operador</div>'+
+    '<div class="op'+act('cliente')+'" data-r="cliente">Cliente</div>'+
+    '<select id="rolCli" style="margin-top:4px">'+
+      cl.map(c=>'<option value="'+esc(c.id)+'"'+((_simRol&&_simRol.cliente===c.id)?' selected':'')+'>'+esc(c.nombre)+'</option>').join('')+
+    '</select>'+
+    '<div class="nota">Cambia solo la interfaz. Tus permisos en SharePoint siguen siendo los de tu cuenta.</div>';
+  $('#whoRole').parentNode.appendChild(d);
+  d.onclick=e=>e.stopPropagation();
+  d.querySelectorAll('[data-r]').forEach(o=>o.onclick=async()=>{
+    const r=o.dataset.r, cli=(d.querySelector('#rolCli')||{}).value||'';
+    d.remove();
+    await cambiarRol(r,r==='cliente'?cli:'');
+  });
 }
 /* Pinta la barra inferior y la insignia según haya o no simulación. */
 function pintarSimulacion(){
@@ -6242,7 +6297,7 @@ function enlazarEventos(){
   $('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)irA(b.dataset.v);});
   $('#selCliente').onchange=function(){ cambiarCliente(this.value); };
   const bs=$('#simSalir');
-  if(bs) bs.onclick=()=>{ iniciarSimulacion('admin'); location.reload(); };
+  if(bs) bs.onclick=()=>cambiarRol('admin','');
   $('#btnLogout').onclick=async()=>{
     if(bloqueadoPorTarea()) return;
     if(invSucio()&&!confirm('Tienes cambios de inventario sin guardar. Si cierras la sesión se pierden.\n\n¿Salir de todos modos?')) return;
@@ -6284,7 +6339,8 @@ function enlazarEventos(){
     S.filtro={};S.segPage=1;renderSeg(); };
   $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
   $('#btnCols').onclick=e=>{ e.stopPropagation(); panelColumnas(); };
-  document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove(); });
+  document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove();
+    const m=$('#rolMenu'); if(m) m.remove(); });
   $('#mClose').onclick=$('#mClose2').onclick=()=>{$('#mSeg').classList.remove('on');S.ticket=null;};
   $('#btnGuardarSeg').onclick=guardarSeguimiento;
   $('#btnMail').onclick=()=>{ if(S.ticket) abrirCorreo(S.ticket,S.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',sanitizeHtml($('#sNota').innerHTML)||S.ticket.descripcion); };
@@ -6510,7 +6566,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
-  puedeSimular:puedeSimular,iniciarSimulacion:iniciarSimulacion,simulacionActiva:simulacionActiva,
+  puedeSimular:puedeSimular,iniciarSimulacion:iniciarSimulacion,simulacionActiva:simulacionActiva,cambiarRol:cambiarRol,
   recuperarSimulacion:recuperarSimulacion,DUENO:DUENO,SIM_CLAVE:SIM_CLAVE,
   rutaBit:rutaBit,mesDe:mesDe,bitFiltrada:bitFiltrada,P_BIT:P_BIT,P_BIT_LEGACY:P_BIT_LEGACY,
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
