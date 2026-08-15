@@ -343,18 +343,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.
       La sesión se cierra al salir de la pestaña, así que se pide autenticación cada vez.</div>
     <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
-    <div id="gateRol" class="hide" style="margin-top:14px;text-align:left">
-      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">
-        Entrar como</div>
-      <div class="row" style="gap:6px;flex-wrap:wrap">
-        <button class="btn sec" data-rol="admin" style="padding:6px 12px;font-size:12px">Administrador</button>
-        <button class="btn sec" data-rol="operador" style="padding:6px 12px;font-size:12px">Operador</button>
-        <button class="btn sec" data-rol="cliente" style="padding:6px 12px;font-size:12px">Cliente</button>
-      </div>
-      <select id="gateCli" class="hide" style="margin-top:8px"></select>
-      <div style="font-size:11px;color:var(--muted);margin-top:8px">Simula la interfaz de ese perfil.
-        Los permisos de SharePoint siguen siendo los de tu cuenta.</div>
-    </div>
     <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
       Clientes externos: usen el correo con el que fueron invitados.
     </div>
@@ -1017,7 +1005,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r60';
+const APP_VER = '2026-08-14 · r61';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1809,22 +1797,6 @@ function pintarSimulacion(){
     (_simRol.rol==='cliente'? 'CLIENTE'+(_simRol.cliente?' · '+_simRol.cliente:'') : 'OPERADOR')+
     '. Es una vista simulada: tus permisos reales siguen siendo de administrador.';
 }
-/* Paso intermedio tras autenticarse: solo lo ve la cuenta dueña del sistema. */
-function elegirRol(){
-  return new Promise(res=>{
-    const caja=$('#gateRol'); if(!caja||!puedeSimular()) return res(null);
-    const sel=$('#gateCli');
-    fillSel('#gateCli',(S.cat.clientes||[]).map(c=>({v:c.id,t:c.nombre})),'— cliente a simular —');
-    caja.classList.remove('hide');
-    $('#btnLogin').classList.add('hide');
-    caja.querySelectorAll('[data-rol]').forEach(b=>b.onclick=()=>{
-      const r=b.dataset.rol;
-      if(r==='cliente'&&!sel.value){ sel.classList.remove('hide'); toast('Elige el cliente a simular.','warn'); return; }
-      caja.classList.add('hide'); $('#btnLogin').classList.remove('hide');
-      res({rol:r,cliente:sel.value||''});
-    });
-  });
-}
 async function unlockApp(){
   const a=msalApp().getAllAccounts()[0]||{};
   S.me={name:a.name||a.username||'', mail:(a.username||'').toLowerCase()};
@@ -1833,14 +1805,9 @@ async function unlockApp(){
   sessionStorage.setItem(AUTH_CLAVE,String(Date.now()));
   $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
   await catalogoPull(true);
+  /* Siempre se entra con el perfil real; el cambio de vista se hace después
+     desde la insignia del encabezado. */
   recuperarSimulacion();
-  if(puedeSimular()&&!_simRol){
-    /* El catálogo ya está leído: la lista de clientes a simular sale de ahí. */
-    $('#authGate').classList.remove('hide'); $('#topBar').classList.add('hide'); $('#app').classList.add('hide');
-    const eleccion=await elegirRol();
-    $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
-    if(eleccion) iniciarSimulacion(eleccion.rol,eleccion.cliente);
-  }
   resolverRol();
   pintarSimulacion();
   try{ S.cliente=localStorage.getItem(PREF_CLI)||''; }catch(e){ S.cliente=''; }
