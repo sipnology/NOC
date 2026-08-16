@@ -1009,7 +1009,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r65';
+const APP_VER = '2026-08-16 · r66';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -3946,6 +3946,8 @@ const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','
    Un respaldo debe poder volver a entrar tal cual salió: se guarda un solo JSON con el
    catálogo del cliente, su inventario, sus CRQs, SITs, plantillas de reporte y el
    expediente completo de cada ticket, con su historial y sus pausas. */
+/* Clientes respaldados en esta sesión: la baja definitiva se habilita solo después. */
+let _respaldados=new Set();
 const RESP_VER=2;
 /* Un archivo suelto por encima de este tamaño se referencia pero no se incrusta. */
 const RESP_MAX_ARCHIVO=25*1024*1024;
@@ -4004,6 +4006,7 @@ async function descargarRespaldo(cli,btn){
     const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
     bajar(blob,nombre);
     const conDatos=r.evidencias.filter(x=>x.datos).length;
+    _respaldados.add(cli);
     logEvent('RESPALDO_DESCARGADO',cli+' · '+r.tickets.length+' ticket(s) · '+r.inventario.length+
              ' equipo(s) · '+conDatos+'/'+r.evidencias.length+' evidencia(s) incluida(s) · '+pesoLegible(blob.size));
     toast('Respaldo de '+cli+': '+r.tickets.length+' ticket(s), '+r.inventario.length+' equipo(s), '+
@@ -4066,6 +4069,49 @@ async function restaurarRespaldo(file,btn){
   }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
   finally{ busy(btn,false); }
 }
+/* Baja definitiva: borra la carpeta del cliente con todo lo que contiene.
+   Se exige respaldo descargado en esta misma sesión, no por burocracia: es la única
+   copia que quedará fuera de SharePoint si alguien vacía también la papelera. */
+async function eliminarClienteDefinitivo(cli,btn){
+  if(!isAdmin()){ toast('Solo el administrador puede eliminar un cliente.','err'); return; }
+  if(!_respaldados.has(cli)){
+    toast('Descarga primero el respaldo de '+cli+'. La baja definitiva se habilita después.','err',10000);
+    return;
+  }
+  const h=await H();
+  let n={tk:0,inv:0,crq:0,sit:0};
+  try{
+    const leer=async r=>{ try{ return await gGetJson(h,r); }catch(e){ return null; } };
+    n.tk=((await leer(pIdx(cli)))||[]).length;
+    n.inv=((await leer(pInv(cli)))||[]).length;
+    n.crq=((await leer(pCrq(cli)))||[]).length;
+    n.sit=((await leer(pSit(cli)))||[]).length;
+  }catch(e){}
+  if(!confirm('BAJA DEFINITIVA de «'+cli+'».\n\nSe eliminará la carpeta Clientes/'+cli+'/ completa:\n'+
+    '  · '+n.tk+' ticket(s) con sus expedientes y evidencias\n'+
+    '  · '+n.inv+' equipo(s) de inventario\n'+
+    '  · '+n.crq+' CRQ(s) y '+n.sit+' SIT(s)\n'+
+    '  · su catálogo, sus sedes y sus plantillas de reporte\n\n'+
+    'La carpeta va a la papelera de SharePoint, donde se puede recuperar durante el periodo '+
+    'de retención del sitio. Después de eso, el respaldo que descargaste es la única copia.\n\n¿Continuar?')) return;
+  const frase='ELIMINAR '+cli;
+  const escrito=prompt('Escribe exactamente: '+frase);
+  if(escrito===null) return;
+  if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se eliminó nada.','warn',7000); return; }
+  busy(btn,true);
+  const tarea=tareaIniciar('eliminando la carpeta de '+cli);
+  try{
+    await gDelete(h,'Clientes/'+sanitizeName(cli));
+    delete S.catCli[cli];
+    if(S.cliente===cli){ S.cliente=''; }
+    componerCat(); pintarSelectorCliente(); poblarCatalogosUI();
+    logEvent('CLIENTE_ELIMINADO',cli+' · carpeta completa · '+n.tk+' ticket(s), '+n.inv+' equipo(s), '+
+             n.crq+' CRQ(s), '+n.sit+' SIT(s)');
+    toast('Cliente '+cli+' eliminado. La carpeta quedó en la papelera de SharePoint.',null,11000);
+    await cargarDatos(true); renderCat();
+  }catch(e){ toast('No se pudo eliminar: '+e.message,'err',12000); }
+  finally{ tareaFin(tarea); busy(btn,false); }
+}
 function renderRespaldo(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
@@ -4076,7 +4122,9 @@ function renderRespaldo(box){
       '<div style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
       '<td class="mono">'+esc(((S.catCli[id]||{}).localidades||[]).length)+'</td>'+
       '<td style="white-space:nowrap">'+
-        '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px">⬇ Descargar respaldo</button>'+
+        '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px">⬇ Descargar respaldo</button> '+
+        '<button class="btn dan" data-rm="'+esc(id)+'" style="padding:4px 11px;font-size:12px"'+
+          (_respaldados.has(id)?'':' disabled title="Descarga primero el respaldo"')+'>🗑 Baja definitiva</button>'+
       '</td></tr>';
   };
   box.innerHTML='<div class="note">Un respaldo incluye el catálogo del cliente, su inventario, sus CRQs, '+
@@ -4084,6 +4132,10 @@ function renderRespaldo(box){
     'Se descarga como un solo archivo <code>.json</code> que este mismo módulo puede volver a cargar.</div>'+
     '<div class="note">Incluye también <b>los archivos adjuntos</b> de cada ticket, incrustados en el respaldo, '+
     'así que puede pesar. Un archivo suelto de más de 25 MB se referencia sin incrustar y se avisa al terminar.</div>'+
+    '<div class="note" style="border-left-color:var(--p1)"><b>Archivar</b> (desde Clientes) oculta al cliente y '+
+    'conserva todo. <b>Baja definitiva</b> borra la carpeta <code>Clientes/&lt;ID&gt;/</code> con sus tickets, '+
+    'evidencias e inventario; va a la papelera de SharePoint y se habilita solo después de descargar el respaldo '+
+    'en esta sesión.</div>'+
     '<div class="tw"><table><thead><tr><th>Cliente</th><th>Sedes</th><th></th></tr></thead><tbody>'+
     (ids.length? ids.map(fila).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
     '</tbody></table></div>'+
@@ -4092,7 +4144,9 @@ function renderRespaldo(box){
         '<input type="file" id="bkFile" accept=".json" class="hide"></label>'+
       '<span style="color:var(--muted);font-size:12px">Pide confirmación escrita y sobrescribe los datos del cliente que indique el archivo.</span>'+
     '</div>';
-  box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=function(){ descargarRespaldo(b.dataset.bk,this); });
+  box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
+    await descargarRespaldo(b.dataset.bk,this); renderCat(); });
+  box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=function(){ eliminarClienteDefinitivo(b.dataset.rm,this); });
   const f=box.querySelector('#bkFile');
   if(f) f.onchange=function(){ const a=f.files[0]; f.value=''; if(a) restaurarRespaldo(a,this); };
 }
@@ -6842,7 +6896,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   IMG_ANCHO:IMG_ANCHO,IMG_CALIDAD:IMG_CALIDAD,DESC_MAX_MB:DESC_MAX_MB,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
-  respaldoDe:respaldoDe,RESP_VER:RESP_VER,
+  respaldoDe:respaldoDe,RESP_VER:RESP_VER,respaldados:()=>[..._respaldados],
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
