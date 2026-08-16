@@ -331,6 +331,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
  display:inline-block;animation:sp .8s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:760px){main{padding:12px}.modal .mb{max-height:70vh}}
+.cardCat{transition:border-color .12s,background .12s}
+.cardCat:hover{border-color:var(--brand);background:var(--panel2)}
+#catCliente{font-size:13px !important}
 </style>
 </head>
 <body>
@@ -723,7 +726,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <section class="view" id="vCatalogos">
   <div class="panel">
     <h2>Catálogos maestros</h2>
-    <div style="font-size:12px;color:var(--muted);margin:-6px 0 8px" id="catCliente"></div>
+    <div style="color:var(--muted);margin:-6px 0 10px" id="catCliente"></div>
     <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Lo de Sipnology
       —administradores y logo— se guarda en <code>Sistema/_tickets_catalogo.json</code>; lo de cada cliente,
       en <code>Clientes/&lt;ID&gt;/catalogo.json</code>, aislado del resto. Antes de cada escritura se
@@ -731,40 +734,15 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <b>Administración → Restaurar catálogo</b>.</div>
     <!-- Agrupado por aquello sobre lo que se trabaja, no por el tipo de dato: quien
          busca algo de una sede no debería tener que recorrer diecisiete apartados. -->
-    <div class="row"><select id="catSel" style="width:360px">
-      <optgroup label="Sede / Edificio">
-        <option value="localidades">Sedes · ID de 2 dígitos y nombre</option>
-        <option value="pisos">Pisos por sede</option>
-        <option value="aliasSedes">Alias de sedes (CRQs y SITs)</option>
-      </optgroup>
-      <optgroup label="Tickets">
-        <option value="categorias">Categorías y subcategorías</option>
-        <option value="tipos">Tipos de incidente por subcategoría</option>
-        <option value="prioridades">Prioridades y SLA</option>
-        <option value="imputables">Imputables</option>
-        <option value="catsConTiempos">Categorías con tiempo de falla</option>
-        <option value="historico">⬆ Importar histórico de tickets</option>
-      </optgroup>
-      <optgroup label="Inventario">
-        <option value="equipos">Equipos y dispositivos</option>
-        <option value="tiposDispositivo">Tipos de dispositivo</option>
-      </optgroup>
-      <optgroup label="CRQs">
-        <option value="estadosCRQ">Estados de CRQ</option>
-        <option value="impCrq">⬆ Importar CRQs</option>
-      </optgroup>
-      <optgroup label="SITs">
-        <option value="impSit">⬆ Importar SITs</option>
-      </optgroup>
-      <optgroup label="Administración">
-        <option value="clientes">Clientes</option>
-        <option value="clientesExternos">Usuarios cliente (acceso externo)</option>
-        <option value="admins">Administradores</option>
-        <option value="respaldo">💾 Respaldo y baja de clientes</option>
-        <option value="restaurarCat">↺ Restaurar catálogo de un cliente</option>
-        <option value="estructura">🗂 Estructura de carpetas por cliente</option>
-        <option value="mantenimiento">⚠ Vaciar datos de pruebas</option>
-      </optgroup>
+    <!-- El desplegable elige el área; los apartados de cada una se abren desde su
+         propia pantalla, como una carpeta. Antes eran diecisiete opciones seguidas. -->
+    <div class="row"><select id="catSel" style="width:280px">
+      <option value="sede">Sede / Edificio</option>
+      <option value="tickets">Tickets</option>
+      <option value="inventario">Inventario</option>
+      <option value="crq">CRQs</option>
+      <option value="sit">SITs</option>
+      <option value="admin">Administración</option>
     </select>
       <button class="btn" id="btnCatSave" class="right">Guardar cambios</button>
       <button class="btn sec" id="btnCatReload">↻ Recargar</button>
@@ -1028,7 +1006,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r78';
+const APP_VER = '2026-08-16 · r79';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4425,18 +4403,46 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
    editar, porque no habría dónde guardarlas. */
 const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
   'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
-  'estadosCRQ','mantenimiento','historico','impCrq','impSit','restaurarCat'];
+  'estadosCRQ','mantenimiento','historico','impCrq','impSit'];
 /* A qué menú pertenece cada apartado. Sirve para el título de la pantalla y para las
    pruebas: ningún apartado puede quedar huérfano de grupo. */
-const CAT_GRUPOS=[
-  ['Sede / Edificio',['localidades','pisos','aliasSedes']],
-  ['Tickets',['categorias','tipos','prioridades','imputables','catsConTiempos','historico']],
-  ['Inventario',['equipos','tiposDispositivo']],
-  ['CRQs',['estadosCRQ','impCrq']],
-  ['SITs',['impSit']],
-  ['Administración',['clientes','clientesExternos','admins','respaldo','restaurarCat','estructura','mantenimiento']]
+/* Cada área con sus apartados. El título es corto a propósito: lo que hay que saber
+   para llenarlo bien va en la descripción y dentro de la propia pantalla, no en el
+   nombre del menú. */
+const CAT_AREAS=[
+  {id:'sede', nombre:'Sede / Edificio', icono:'🏢', secciones:[
+    ['localidades','ID sede','Identificador y nombre de cada sede'],
+    ['pisos','Pisos por sede','Niveles de cada edificio'],
+    ['aliasSedes','Alias de sedes','Cómo las nombran los CRQs y los SITs']]},
+  {id:'tickets', nombre:'Tickets', icono:'🎫', secciones:[
+    ['categorias','Categorías y subcategorías','Clasificación de lo que se reporta'],
+    ['tipos','Tipos de incidente','El detalle dentro de cada subcategoría'],
+    ['prioridades','Prioridades y SLA','Horas de compromiso de cada prioridad'],
+    ['imputables','Imputables','A quién se atribuye la falla'],
+    ['catsConTiempos','Categorías con tiempo de falla','Las que piden hora de inicio y fin'],
+    ['historico','Importar histórico','Carga masiva de tickets ya cerrados']]},
+  {id:'inventario', nombre:'Inventario', icono:'💻', secciones:[
+    ['equipos','Equipos y dispositivos','Alta, edición y baja del inventario'],
+    ['tiposDispositivo','Tipos de dispositivo','Switch, router, punto de acceso…']]},
+  {id:'crq', nombre:'CRQs', icono:'🔁', secciones:[
+    ['estadosCRQ','Estados de CRQ','Situaciones por las que pasa un cambio'],
+    ['impCrq','Importar CRQs','Carga masiva desde un archivo de Excel']]},
+  {id:'sit', nombre:'SITs', icono:'📄', secciones:[
+    ['impSit','Importar SITs','Carga masiva desde un archivo de Excel']]},
+  {id:'admin', nombre:'Administración', icono:'⚙️', secciones:[
+    ['clientes','Clientes','Alta, módulos visibles y logo'],
+    ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
+    ['admins','Administradores','Quién puede modificar los catálogos'],
+    ['respaldo','Respaldo y Restauración','Generar respaldos, restaurarlos y dar de baja'],
+    ['mantenimiento','Vaciar datos de pruebas','Borrar tickets, CRQs, SITs y expedientes']]}
 ];
+const CAT_GRUPOS=CAT_AREAS.map(a=>[a.nombre,a.secciones.map(s=>s[0])]);
 function grupoDe(k){ const g=CAT_GRUPOS.find(x=>x[1].indexOf(k)!==-1); return g? g[0] : ''; }
+function areaDe(k){ return CAT_AREAS.find(a=>a.secciones.some(s=>s[0]===k))||null; }
+function seccionDe(k){
+  for(const a of CAT_AREAS){ const s=a.secciones.find(x=>x[0]===k); if(s) return s; }
+  return null;
+}
 /* ---- Respaldo y restauración por cliente ----
    Un respaldo debe poder volver a entrar tal cual salió: se guarda un solo JSON con el
    catálogo del cliente, su inventario, sus CRQs, SITs, plantillas de reporte y el
@@ -4794,7 +4800,16 @@ function renderRespaldo(box){
         '⬆ …o restaurar desde un archivo local'+
         '<input type="file" id="bkFile" accept=".json" class="hide"'+(esDueno()?'':' disabled')+'></label>'+
       '<span style="color:var(--muted);font-size:12px">Pide confirmación escrita y sobrescribe los datos del cliente que indique el respaldo.</span>'+
-    '</div>';
+    '</div>'+
+    /* Restaurar el catálogo y comparar rutas viven aquí: son la misma tarea —recuperar
+       algo que se perdió o quedó tapado— y tenerlas en tres sitios distintos solo hacía
+       que nadie supiera dónde buscar. */
+    '<h2 style="margin-top:22px">Restaurar el catálogo de un cliente</h2>'+
+    '<div id="cajaRestCat"></div>'+
+    '<h2 style="margin-top:22px">Qué hay en cada ruta</h2>'+
+    '<div id="cajaRutas"></div>';
+  const cajaR=box.querySelector('#cajaRestCat'); if(cajaR) renderRestaurarCat(cajaR);
+  const cajaRu=box.querySelector('#cajaRutas'); if(cajaRu) renderComparadorRutas(cajaRu);
   box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
     await descargarRespaldo(b.dataset.bk,this); renderCat(); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=function(){ eliminarClienteDefinitivo(b.dataset.rm,this); });
@@ -4815,14 +4830,36 @@ function renderRespaldo(box){
     c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ restaurarDesdeBackup(b.dataset.bkr,this); });
   });
 }
+/* Vista de carpeta: los apartados del área elegida, con lo que hace cada uno. */
+function renderArea(area,box){
+  box.innerHTML='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">'+
+    area.secciones.map(([k,titulo,desc])=>
+      '<div class="panel cardCat" data-sec="'+esc(k)+'" style="margin:0;cursor:pointer">'+
+        '<div style="font-size:15px;font-weight:700;margin-bottom:4px">'+esc(titulo)+'</div>'+
+        '<div style="font-size:12px;color:var(--muted);line-height:1.5">'+esc(desc)+'</div>'+
+      '</div>').join('')+
+  '</div>';
+  box.querySelectorAll('[data-sec]').forEach(d=>d.onclick=()=>{ S._catSec=d.dataset.sec; renderCat(); });
+}
 function renderCat(){
-  const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
+  const box=$('#catBody'), ro=!isAdmin();
+  const area=CAT_AREAS.find(a=>a.id===$('#catSel').value)||CAT_AREAS[0];
+  /* Si el apartado abierto no pertenece al área elegida, se vuelve a la carpeta. */
+  if(S._catSec && !area.secciones.some(x=>x[0]===S._catSec)) S._catSec='';
+  const k=S._catSec||'';
+  const sec=seccionDe(k);
   const marca=$('#catCliente');
-  const gr=grupoDe(k);
-  if(marca) marca.innerHTML = (gr? '<b>'+esc(gr)+'</b> ' : '') + (CAT_DE_CLIENTE.indexOf(k)!==-1
-    ? (S.cliente? '· catálogo de <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
-                : '· <b style="color:var(--warn)">sin cliente seleccionado</b>')
-    : '· catálogo de Sipnology, común a todos los clientes');
+  /* Migas de pan: siempre se sabe dónde se está y cómo volver. */
+  if(marca) marca.innerHTML='<a href="#" id="migaArea" style="color:var(--brand);text-decoration:none">'+
+    esc(area.nombre)+'</a>'+(sec? ' <span style="color:var(--muted)">›</span> <b>'+esc(sec[1])+'</b>' : '')+
+    ' ' + ((k? CAT_DE_CLIENTE.indexOf(k)!==-1 : true)
+      ? (S.cliente? '<span style="color:var(--muted)">· catálogo de</span> <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
+                  : '<span style="color:var(--warn)">· sin cliente seleccionado</span>')
+      : '<span style="color:var(--muted)">· catálogo de Sipnology, común a todos los clientes</span>');
+  const volver=$('#migaArea');
+  if(volver) volver.onclick=e=>{ e.preventDefault(); S._catSec=''; renderCat(); };
+  renderPendCat();
+  if(!k){ $('#btnCatSave').disabled=true; return renderArea(area,box); }
   if(CAT_DE_CLIENTE.indexOf(k)!==-1 && !S.cliente){
     box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
       'Esta sección es propia de cada cliente y se guarda en <code>Clientes/&lt;ID&gt;/catalogo.json</code>. '+
@@ -4830,7 +4867,6 @@ function renderCat(){
     return;
   }
   $('#btnCatSave').disabled = k==='equipos' ? !puedeEditarInventario() : ro;
-  renderPendCat();
   if(k==='historico') return renderHistorico(box,ro);
   /* Clientes tiene editor propio (módulos y logo): va antes que las tablas genéricas. */
   if(k==='clientes') return renderClientes(box,ro);
@@ -4838,8 +4874,6 @@ function renderCat(){
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='respaldo') return renderRespaldo(box);
-  if(k==='restaurarCat') return renderRestaurarCat(box);
-  if(k==='estructura') return renderEstructura(box);
   if(k==='impCrq') return renderImportDS(box,DATASETS.crq);
   if(k==='impSit') return renderImportDS(box,DATASETS.sit);
   if(k==='mantenimiento') return renderMantenimiento(box);
@@ -5127,46 +5161,6 @@ function renderPendCat(){
     p.map(x=>'· <b>'+esc(x.cliente==='(lista de clientes)'?x.cliente:nombre(x.cliente))+'</b>: '+
       esc(x.secciones.join(', '))).join('<br>')+'</div>';
 }
-/* ---- Migración a la estructura por materia ----
-   Se hace a mano y a propósito, nunca sola: mover archivos de sitio es de las pocas
-   operaciones que no se pueden deshacer con un botón. El orden importa —respaldar,
-   copiar, verificar releyendo, y solo entonces borrar el original— porque cualquier
-   fallo a mitad tiene que dejar los datos accesibles por la ruta vieja. */
-async function migrarEstructuraCliente(cli,avisar,borrarCasos){
-  const h=await H();
-  const hechos=[], saltados=[], errores=[];
-  const pares=[[pIdx(cli),'índice de tickets'],[pInv(cli),'inventario'],
-               [pCrq(cli),'CRQs'],[pSit(cli),'SITs'],
-               [pCatCli(cli),'catálogo'],[pCatCliPrev(cli),'catálogo anterior'],
-               [pRep(cli),'plantillas de reporte']];
-  for(const [nueva,etiqueta] of pares){
-    const vieja=rutaVieja(nueva);
-    if(!vieja) continue;
-    if(avisar) avisar('moviendo '+etiqueta);
-    try{
-      const ya=await gGetJson(h,nueva);
-      if(ya!==null && ya!==undefined){ saltados.push(etiqueta+' (ya estaba en su sitio)'); continue; }
-      const dato=await gGetJson(h,vieja);
-      if(dato===null || dato===undefined){ saltados.push(etiqueta+' (no existe)'); continue; }
-      await gPutJson(h,nueva,dato);
-      /* Verificación antes de borrar: si la copia no se puede releer, el original se queda. */
-      const ver=await gGetJson(h,nueva);
-      if(ver===null || ver===undefined) throw new Error('la copia no se pudo releer');
-      if(JSON.stringify(ver)!==JSON.stringify(dato)) throw new Error('la copia no coincide con el original');
-      await gDelete(h,vieja);
-      hechos.push(etiqueta);
-    }catch(e){ errores.push(etiqueta+': '+e.message); }
-  }
-  /* Los expedientes: se eliminan solo si se pidió explícitamente. */
-  if(borrarCasos){
-    if(avisar) avisar('borrando expedientes anteriores');
-    try{ await gDelete(h,pCli(cli)+'Casos'); hechos.push('expedientes anteriores borrados'); }
-    catch(e){ saltados.push('expedientes (no había carpeta Casos o ya se borró)'); }
-    try{ await gPutJson(h,pIdx(cli),[]); hechos.push('índice de tickets vaciado'); }
-    catch(e){ errores.push('no se pudo vaciar el índice: '+e.message); }
-  }
-  return {hechos:hechos,saltados:saltados,errores:errores};
-}
 /* ---- Comparar la ruta nueva con la anterior ----
    Cuando un archivo existe en las dos, la aplicación lee el nuevo. Si el nuevo lo
    escribió una migración equivocada, el bueno queda escondido detrás sin que nadie lo
@@ -5229,72 +5223,32 @@ async function resolverRuta(cli,k,cual){
 }
 /* Nombre llano de un archivo, para los avisos. */
 function esc2Plano(k){ const d=archivosCli().find(x=>x[0]===k); return d? d[1] : k; }
-function renderEstructura(box){
-  if(!esDueno()){ box.innerHTML='<div class="note">Mover archivos de sitio está reservado a <code>'+
-    esc(DUENO)+'</code>.</div>'; return; }
+/* ---- Comparador de rutas ----
+   La migración a la estructura por materia ya se hizo y su pantalla desapareció, pero
+   esto se queda: si un archivo vuelve a aparecer en las dos rutas, la aplicación lee la
+   nueva y la buena queda escondida detrás sin que nadie lo note. Ya pasó una vez. */
+function renderComparadorRutas(box){
+  if(!esDueno()){ box.innerHTML='<div class="note">Reservado a <code>'+esc(DUENO)+'</code>.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
-  box.innerHTML='<div class="note">Todo lo de un cliente pasa a vivir bajo su carpeta, separado por '+
-    'materia, para poder dar permisos por carpeta en vez de por archivo suelto:'+
-    '<div class="mono" style="margin-top:8px;line-height:1.7">'+
-    CARPETAS_CLI.map(c=>'Clientes/&lt;ID&gt;/'+esc(c)+'/').join('<br>')+'</div></div>'+
-    '<div class="note">El orden es <b>copiar → verificar releyendo → borrar el original</b>. '+
-    'Mientras no se migre, la aplicación sigue leyendo de las rutas viejas, así que nada deja de '+
-    'funcionar ni antes ni durante. Si algo falla a mitad, el archivo original se queda donde está.</div>'+
-    '<div class="note" style="border-left-color:var(--warn)"><b>Expedientes.</b> Marcar la casilla borra '+
-    '<code>Clientes/&lt;ID&gt;/Casos/</code> con todas sus evidencias y vacía el índice de tickets. '+
-    'Es lo que pediste para volver a cargar los tickets desde cero, pero no tiene vuelta atrás salvo '+
-    'por la papelera de SharePoint.</div>'+
-    /* Un panel por cliente en vez de una fila de tabla: los botones de una celda con
-       nowrap se salían del área visible, y además mover archivos y borrar expedientes
-       son dos decisiones distintas que no deben compartir el mismo gesto. */
-    (ids.length? ids.map(id=>'<div class="panel" style="margin:0 0 12px">'+
-      '<h2>'+esc(((S.catCli[id]||{}).cliente||{}).nombre||id)+
-        ' <span class="mono" style="font-weight:400;font-size:12px;color:var(--muted)">Clientes/'+esc(id)+'/</span></h2>'+
-      '<div id="est_'+esc(id)+'" class="mono" style="color:var(--muted);font-size:12px;margin-bottom:10px">'+
-        'sin revisar</div>'+
-      '<div class="row" style="gap:10px;flex-wrap:wrap">'+
-        '<button class="btn" data-mig="'+esc(id)+'">🗂 Mover archivos a la estructura nueva</button>'+
-        '<button class="btn dan" data-casos="'+esc(id)+'">🗑 Borrar expedientes y vaciar el índice</button>'+
-      '</div>'+
-      '<div class="nota" style="margin-top:8px">Mover archivos no toca los tickets. Borrar expedientes '+
-        'elimina <code>Clientes/'+esc(id)+'/Casos/</code> con sus evidencias y deja el índice en cero: '+
-        'es lo que hay que hacer antes de volver a cargar los tickets desde cero.</div>'+
-    '</div>').join('')
-      : '<div class="note">Sin clientes.</div>')+
-    '<h2 style="margin-top:20px">Qué hay en cada ruta</h2>'+
-    '<div class="note">Cuando un archivo existe en la ruta nueva y en la anterior, la aplicación lee '+
-    '<b>la nueva</b>. Si la nueva la escribió una migración equivocada, la buena queda escondida detrás. '+
-    'Aquí se ven las dos y se decide cuál manda. Lo que se pisa se guarda al lado como '+
-    '<code>…_reemplazado.json</code>.</div>'+
+  box.innerHTML='<div class="note">Cuando un archivo existe en la ruta actual y en la anterior, la '+
+    'aplicación lee <b>la actual</b>. Si esa la escribió una migración equivocada, la buena queda '+
+    'escondida detrás. Aquí se ven las dos y se decide cuál manda; lo que se pisa se guarda al lado '+
+    'como <code>…_reemplazado.json</code>.</div>'+
     '<div class="row" style="gap:8px;margin-bottom:10px">'+
-      '<select id="cmpCli" style="width:260px">'+ids.map(id=>'<option'+(id===S.cliente?' selected':'')+'>'+esc(id)+'</option>').join('')+'</select>'+
+      '<select id="cmpCli" style="width:260px">'+
+        ids.map(id=>'<option'+(id===S.cliente?' selected':'')+'>'+esc(id)+'</option>').join('')+'</select>'+
       '<button class="btn sec" id="cmpVer">Comparar rutas</button></div>'+
-    '<div id="cmpRep"></div>'+
-    '<div id="migRep"></div>';
-  /* El estado real se calcula solo: si no queda nada en las rutas anteriores, ya está. */
-  ids.forEach(async id=>{
-    try{
-      const f=await compararRutas(id);
-      const pend=f.filter(x=>x.hayVieja);
-      const e=box.querySelector('#est_'+id); if(!e) return;
-      if(!pend.length){ e.textContent='ya está en la estructura nueva'; e.style.color='var(--ok)';
-        const bm=box.querySelector('[data-mig="'+id+'"]');
-        if(bm){ bm.disabled=true; bm.title='No queda nada en las rutas anteriores'; } }
-      else { e.textContent='pendiente de mover: '+pend.map(x=>x.etiqueta).join(', ');
-             e.style.color='var(--warn)'; }
-    }catch(err){}
-  });
-  const verBtn=box.querySelector('#cmpVer');
-  const pintarCmp=async function(btn){
+    '<div id="cmpRep"></div>';
+  const pintar=async function(btn){
     const cli=box.querySelector('#cmpCli').value;
     const dest=box.querySelector('#cmpRep');
     dest.innerHTML='<div class="note"><span class="spin"></span> Leyendo las dos rutas…</div>';
     if(btn) busy(btn,true);
     try{
       const filas=await compararRutas(cli);
-      if(!filas.length){ dest.innerHTML='<div class="note">No queda nada en las rutas anteriores: '+
-        esc(cli)+' ya está completamente migrado.</div>'; return; }
-      dest.innerHTML='<div class="tw"><table><thead><tr><th>Archivo</th><th>Ruta nueva</th>'+
+      if(!filas.length){ dest.innerHTML='<div class="note" style="border-left-color:var(--ok)">'+
+        esc(cli)+' está limpio: no queda nada en las rutas anteriores.</div>'; return; }
+      dest.innerHTML='<div class="tw"><table><thead><tr><th>Archivo</th><th>Ruta actual</th>'+
         '<th>Ruta anterior</th><th></th></tr></thead><tbody>'+
         filas.map(f=>'<tr><td><b>'+esc(f.etiqueta)+'</b>'+
           (f.iguales? ' <span class="pill" style="background:var(--panel2);color:var(--ok)">idénticas</span>':'')+'</td>'+
@@ -5306,97 +5260,41 @@ function renderEstructura(box){
             (f.hayVieja&&!f.iguales? '<button class="btn" data-usar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
               'style="padding:4px 11px;font-size:12px">Que mande la anterior</button> ':'')+
             (f.hayVieja? '<button class="btn sec" data-tirar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
-              'style="padding:4px 11px;font-size:12px">Conservar la nueva</button>':'')+
+              'style="padding:4px 11px;font-size:12px">Conservar la actual</button>':'')+
           '</td></tr>').join('')+'</tbody></table></div>';
       dest.querySelectorAll('[data-usar]').forEach(b=>b.onclick=async function(){
         if(!confirm('El '+esc2Plano(b.dataset.usar)+' de la ruta anterior pasará a mandar.\n\n'+
-          'Lo que hay ahora en la ruta nueva se guarda como …_reemplazado.json.')) return;
+          'Lo que hay ahora en la ruta actual se guarda como …_reemplazado.json.')) return;
         busy(this,true);
         try{ await resolverRuta(b.dataset.cli,b.dataset.usar,'vieja');
              await cargarDatos(true); await catalogoPull(true);
-             toast('Listo. Ahora manda la versión anterior.',null,9000); await pintarCmp(null); }
+             toast('Listo. Ahora manda la versión anterior.',null,9000); await pintar(null); }
         catch(e){ toast('No se pudo: '+e.message,'err',10000); }
         finally{ busy(this,false); } });
       dest.querySelectorAll('[data-tirar]').forEach(b=>b.onclick=async function(){
         if(!confirm('Se borrará el archivo de la ruta anterior. Va a la papelera de SharePoint.')) return;
         busy(this,true);
         try{ await resolverRuta(b.dataset.cli,b.dataset.tirar,'nueva');
-             toast('Archivo anterior borrado.'); await pintarCmp(null); }
+             toast('Archivo anterior borrado.'); await pintar(null); }
         catch(e){ toast('No se pudo: '+e.message,'err',10000); }
         finally{ busy(this,false); } });
     }catch(e){ dest.innerHTML='<div class="note" style="border-left-color:var(--err)">No se pudo comparar: '+
       esc(e.message)+'</div>'; }
     finally{ if(btn) busy(btn,false); }
   };
-  if(verBtn) verBtn.onclick=function(){ pintarCmp(this); };
-  box.querySelectorAll('[data-casos]').forEach(b=>b.onclick=async function(){
-    const cli=b.dataset.casos;
-    const frase='BORRAR EXPEDIENTES '+cli;
-    const escrito=prompt('Se van a borrar TODOS los expedientes de '+cli+' con sus evidencias, y su '+
-      'índice de tickets quedará en cero.\n\nAntes se guarda un respaldo completo en su carpeta '+
-      D_BK+'/. Salvo por la papelera de SharePoint, esto no tiene vuelta atrás.\n\n'+
-      'Para confirmar, escribe exactamente: '+frase);
-    if(escrito===null) return;
-    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',8000); return; }
-    busy(this,true);
-    try{
-      await conTarea('borrando expedientes de '+cli,async avisar=>{
-        avisar('respaldando antes de borrar');
-        const r=await respaldoDe(cli,avisar);
-        const hh=await H();
-        const ruta=rutaBackup(cli,(r.generado||{}).cuando);
-        await gPutJson(hh,ruta,r);
-        const verif=await gGetJson(hh,ruta);
-        if(!verif||verif.cliente!==cli) throw new Error('el respaldo previo no se pudo verificar; no se borró nada');
-        const res=await migrarEstructuraCliente(cli,avisar,true);
-        logEvent('EXPEDIENTES_BORRADOS',cli+' · respaldo en '+ruta+' · '+
-          (res.errores.join(' | ')||'sin errores'));
-        box.querySelector('#migRep').innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
-          '<b>'+esc(cli)+'</b> · expedientes borrados. Respaldo en <code>'+esc(ruta)+'</code>.'+
-          (res.errores.length? '<br><b>Errores:</b> '+esc(res.errores.join(' | ')) : '')+'</div>';
-      });
-      await cargarDatos(true);
-      toast('Expedientes de '+cli+' borrados. Ya puedes cargar los tickets desde cero.',null,11000);
-    }catch(e){ toast('No se pudo borrar: '+e.message,'err',12000); }
-    finally{ busy(this,false); }
-  });
-  box.querySelectorAll('[data-mig]').forEach(b=>b.onclick=async function(){
-    const cli=b.dataset.mig;
-    const casos=false;
-    const frase='MIGRAR '+cli;
-    const escrito=prompt('Se va a reorganizar la carpeta de '+cli+'.\n\n'+
-      'Los expedientes NO se tocan.\n\n'+
-      'Antes se guarda un respaldo completo en su carpeta '+D_BK+'/.\n\n'+
-      'Para confirmar, escribe exactamente: '+frase);
-    if(escrito===null) return;
-    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se movió nada.','warn',8000); return; }
-    busy(this,true);
-    const rep=box.querySelector('#migRep');
-    try{
-      await conTarea('migrando '+cli,async avisar=>{
-        avisar('respaldando antes de mover');
-        const r=await respaldoDe(cli,avisar);
-        const ruta=rutaBackup(cli,(r.generado||{}).cuando);
-        const hh=await H();
-        await gPutJson(hh,ruta,r);
-        const verif=await gGetJson(hh,ruta);
-        if(!verif||verif.cliente!==cli) throw new Error('el respaldo previo no se pudo verificar; no se movió nada');
-        const res=await migrarEstructuraCliente(cli,avisar,casos);
-        logEvent('ESTRUCTURA_MIGRADA',cli+' · movidos: '+(res.hechos.join(', ')||'nada')+
-          ' · omitidos: '+(res.saltados.join(', ')||'nada')+
-          ' · errores: '+(res.errores.join(' | ')||'ninguno'));
-        rep.innerHTML='<div class="note" style="border-left-color:'+(res.errores.length?'var(--err)':'var(--ok)')+'">'+
-          '<b>'+esc(cli)+'</b> · respaldo en <code>'+esc(ruta)+'</code><br>'+
-          'Movidos: '+esc(res.hechos.join(', ')||'nada')+'<br>'+
-          'Omitidos: '+esc(res.saltados.join(', ')||'nada')+
-          (res.errores.length? '<br><b>Errores:</b> '+esc(res.errores.join(' | ')) : '')+'</div>';
-      });
-      await catalogoPull(true); await cargarDatos(true);
-      const est=box.querySelector('#est_'+cli); if(est){ est.textContent='migrado'; est.style.color='var(--ok)'; }
-      toast('Migración de '+cli+' terminada.',null,9000);
-    }catch(e){ toast('No se pudo migrar: '+e.message,'err',12000); }
-    finally{ busy(this,false); }
-  });
+  const b=box.querySelector('#cmpVer'); if(b) b.onclick=function(){ pintar(this); };
+}
+/* Borra los expedientes de un cliente y deja su índice en cero, respaldando antes.
+   Vive en Mantenimiento, que es donde se vacían datos, y no mezclado con una migración. */
+async function borrarExpedientesCliente(cli,avisar){
+  const h=await H();
+  const out={hechos:[],errores:[]};
+  if(avisar) avisar('borrando expedientes anteriores');
+  try{ await gDelete(h,pCli(cli)+'Casos'); out.hechos.push('carpeta Casos anterior'); }catch(e){}
+  try{ await gDelete(h,pCasos(cli)); out.hechos.push('expedientes'); }catch(e){}
+  try{ await gPutJson(h,pIdx(cli),[]); out.hechos.push('índice vaciado'); }
+  catch(e){ out.errores.push('no se pudo vaciar el índice: '+e.message); }
+  return out;
 }
 function renderMantenimiento(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
@@ -5416,8 +5314,44 @@ function renderMantenimiento(box){
       '<div><b>'+esc(m.t)+'</b> · <span style="color:var(--muted)">'+m.n+' registro(s) de '+esc(cli)+'</span>'+
       '<div style="font-size:12px;color:var(--muted);margin-top:4px">'+esc(m.aviso)+'</div></div>'+
       '<button class="btn dan right" data-purgar="'+m.k+'"'+(m.n?'':' disabled')+'>Vaciar '+esc(m.t)+'</button>'+
-      '</div></div>').join('');
+      '</div></div>').join('')+
+    '<div class="panel" style="margin:0 0 12px"><div class="row">'+
+      '<div><b>Expedientes sueltos</b>'+
+      '<div style="font-size:12px;color:var(--muted);margin-top:4px">Borra las carpetas de expediente '+
+      'que quedaron sin ticket en el índice, incluida la carpeta <code>Casos/</code> de la estructura '+
+      'anterior, y deja el índice en cero. Sirve para volver a cargar los tickets desde cero.</div></div>'+
+      '<button class="btn dan right" id="purgaExp"'+(esDueno()?'':' disabled')+'>Borrar expedientes</button>'+
+    '</div></div>';
   box.querySelectorAll('[data-purgar]').forEach(b=>b.onclick=()=>purgar(b.dataset.purgar,cli,b));
+  const pe=box.querySelector('#purgaExp');
+  if(pe) pe.onclick=async function(){
+    const id=S.cliente;
+    const frase='BORRAR EXPEDIENTES '+id;
+    const escrito=prompt('Se borrarán TODOS los expedientes de '+cli+' con sus evidencias y el índice '+
+      'quedará en cero.\n\nAntes se guarda un respaldo completo en su carpeta '+D_BK+'/. '+
+      'Salvo por la papelera de SharePoint, esto no tiene vuelta atrás.\n\n'+
+      'Escribe exactamente: '+frase);
+    if(escrito===null) return;
+    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',8000); return; }
+    busy(this,true);
+    try{
+      await conTarea('borrando expedientes de '+id,async avisar=>{
+        avisar('respaldando antes de borrar');
+        const r=await respaldoDe(id,avisar);
+        const hh=await H();
+        const ruta=rutaBackup(id,(r.generado||{}).cuando);
+        await gPutJson(hh,ruta,r);
+        const verif=await gGetJson(hh,ruta);
+        if(!verif||verif.cliente!==id) throw new Error('el respaldo previo no se pudo verificar; no se borró nada');
+        const res=await borrarExpedientesCliente(id,avisar);
+        logEvent('EXPEDIENTES_BORRADOS',id+' · respaldo en '+ruta+' · '+
+          (res.errores.join(' | ')||'sin errores'));
+      });
+      S.idx=[]; await cargarDatos(true); renderCat();
+      toast('Expedientes borrados. Ya puedes cargar los tickets desde cero.',null,11000);
+    }catch(e){ toast('No se pudo borrar: '+e.message,'err',12000); }
+    finally{ busy(this,false); }
+  };
 }
 async function purgar(mod,cli,btn){
   const frase='BORRAR '+mod.toUpperCase();
@@ -7846,7 +7780,8 @@ function enlazarEventos(){
   };
 
   // Catálogos
-  $('#catSel').onchange=renderCat;
+  /* Cambiar de área siempre devuelve a su vista de carpeta. */
+  $('#catSel').onchange=()=>{ S._catSec=''; renderCat(); };
   /* Recargar ya no destruye nada: las ediciones viven en su propia capa y se vuelven a
      poner encima de lo que llegue de SharePoint. Para tirarlas está el botón de al lado. */
   $('#btnCatReload').onclick=async()=>{ await catalogoPull(); await invPull(); renderCat(); };
@@ -7861,7 +7796,7 @@ function enlazarEventos(){
   };
   $('#btnCatSave').onclick=async function(){ busy(this,true);
     try{
-      const esInv=$('#catSel').value==='equipos';
+      const esInv=S._catSec==='equipos';
       const okGuardado = esInv? await guardarInventario('edición manual desde Catálogos') : await catalogoPush();
       if(okGuardado){ toast(esInv?'Inventario guardado.':'Catálogo guardado.');
         poblarCatalogosUI(); pintarSelectorCliente(); aplicarModulosUI(); renderInv(); } }
@@ -8045,7 +7980,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
   pUsr:pUsr,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
   archivosCli:archivosCli,cuentaDe:cuentaDe,compararRutas:compararRutas,resolverRuta:resolverRuta,
-  PLANTILLA_DS:PLANTILLA_DS,migrarEstructuraCliente:migrarEstructuraCliente,
+  PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
+  CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
   guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
   catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
