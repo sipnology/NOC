@@ -1005,7 +1005,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-14 · r61';
+const APP_VER = '2026-08-15 · r62';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -6205,7 +6205,10 @@ function renderBitDiag(){
 }
 function renderBit(){
   /* Un operador nunca debe ver la actividad de los demás, ni siquiera si la vista se abre por accidente. */
-  if(!isAdmin()){ const tb=$('#tblBit'); if(tb) tb.innerHTML=''; const d=$('#bitDiag'); if(d) d.innerHTML=''; return; }
+  /* Se vacía solo el cuerpo: borrar el innerHTML de la tabla se llevaba también el
+     <tbody>, y al volver a administrador tb.tBodies[0] quedaba indefinido. */
+  if(!isAdmin()){ const tb=$('#tblBit'); if(tb&&tb.tBodies[0]) tb.tBodies[0].innerHTML='';
+    const d=$('#bitDiag'); if(d) d.innerHTML=''; return; }
   renderBitDiag();
   const size=+($('#bitSize')?$('#bitSize').value:25);
   const selU=$('#bitUsuario'), selE=$('#bitEvento');
@@ -6221,8 +6224,10 @@ function renderBit(){
   if(S.bitPage>pages) S.bitPage=pages;
   const rows=all.slice((S.bitPage-1)*size,(S.bitPage-1)*size+size);
   const tb=$('#tblBit'); if(!tb) return;
+  /* Defensa por si alguien dejó la tabla sin cuerpo. */
+  const cuerpo=tb.tBodies[0]||tb.appendChild(document.createElement('tbody'));
   const yo=(S.me.mail||'').toLowerCase();
-  tb.tBodies[0].innerHTML=rows.map(b=>{
+  cuerpo.innerHTML=rows.map(b=>{
     const propio=String(b.usuario||'').toLowerCase()===yo;
     return '<tr><td class="mono">'+esc(b.fecha)+'</td><td class="mono">'+esc(b.hora)+
     '</td><td'+(propio?' style="color:var(--brand2)"':'')+'>'+esc(b.usuario)+
