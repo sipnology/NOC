@@ -56,6 +56,17 @@ nav.tabs button:hover{color:var(--txt);background:rgba(233,102,45,.10)}
 nav.tabs button.on{background:var(--brand);border-color:var(--brand);border-bottom:2px solid var(--brand);
  color:#fff;font-weight:700;box-shadow:0 -2px 14px rgba(233,102,45,.40)}
 nav.tabs button.on:hover{background:var(--brand);color:#fff}
+/* Sub-pestañas de catálogos: mismo lenguaje que las de módulo, pero en el azul de
+   acción y algo más pequeñas. Con dos tiras apiladas, si fueran idénticas se perdería
+   cuál manda sobre cuál. */
+nav.subtabs{display:flex;gap:3px;border-bottom:2px solid var(--brand2);flex-wrap:wrap;margin:14px 0 0}
+nav.subtabs button{background:transparent;border:1px solid transparent;border-bottom:none;
+ color:var(--muted);padding:7px 15px;border-radius:8px 8px 0 0;cursor:pointer;font-size:12.5px;
+ font-weight:500;margin-bottom:-2px}
+nav.subtabs button:hover{color:var(--txt);background:rgba(59,130,246,.12)}
+nav.subtabs button.on{background:var(--brand2);border-color:var(--brand2);
+ border-bottom:2px solid var(--brand2);color:#fff;font-weight:700}
+nav.subtabs button.on:hover{background:var(--brand2);color:#fff}
 /* Sub-pestañas del tablero, mismo lenguaje visual */
 #dashTabs{padding:0;border-bottom:2px solid var(--brand)}
 #dashTabs button.on{background:var(--brand);border-color:var(--brand);border-bottom-color:var(--brand);
@@ -331,8 +342,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
  display:inline-block;animation:sp .8s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:760px){main{padding:12px}.modal .mb{max-height:70vh}}
-.cardCat{transition:border-color .12s,background .12s}
-.cardCat:hover{border-color:var(--brand);background:var(--panel2)}
 #catCliente{font-size:13px !important}
 </style>
 </head>
@@ -748,6 +757,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <button class="btn sec" id="btnCatReload">↻ Recargar</button>
       <button class="btn sec" id="btnCatDescartar">Descartar cambios</button>
     </div>
+    <nav class="subtabs" id="catTabs"></nav>
     <div id="catPend"></div>
     <div id="catBody" style="margin-top:14px"></div>
   </div>
@@ -1006,7 +1016,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r79';
+const APP_VER = '2026-08-16 · r80';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4830,36 +4840,34 @@ function renderRespaldo(box){
     c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ restaurarDesdeBackup(b.dataset.bkr,this); });
   });
 }
-/* Vista de carpeta: los apartados del área elegida, con lo que hace cada uno. */
-function renderArea(area,box){
-  box.innerHTML='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">'+
-    area.secciones.map(([k,titulo,desc])=>
-      '<div class="panel cardCat" data-sec="'+esc(k)+'" style="margin:0;cursor:pointer">'+
-        '<div style="font-size:15px;font-weight:700;margin-bottom:4px">'+esc(titulo)+'</div>'+
-        '<div style="font-size:12px;color:var(--muted);line-height:1.5">'+esc(desc)+'</div>'+
-      '</div>').join('')+
-  '</div>';
-  box.querySelectorAll('[data-sec]').forEach(d=>d.onclick=()=>{ S._catSec=d.dataset.sec; renderCat(); });
+/* Tira de apartados del área elegida. Se navega de uno a otro con un clic, sin pasar
+   por ninguna pantalla intermedia ni botones de avance y retroceso. */
+function renderSubtabs(area){
+  const nav=$('#catTabs'); if(!nav) return;
+  nav.innerHTML=area.secciones.map(([k,titulo,desc])=>
+    '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
+    ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
+  nav.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.sec===S._catSec) return;
+    S._catSec=b.dataset.sec; renderCat();
+  });
 }
 function renderCat(){
   const box=$('#catBody'), ro=!isAdmin();
   const area=CAT_AREAS.find(a=>a.id===$('#catSel').value)||CAT_AREAS[0];
-  /* Si el apartado abierto no pertenece al área elegida, se vuelve a la carpeta. */
-  if(S._catSec && !area.secciones.some(x=>x[0]===S._catSec)) S._catSec='';
-  const k=S._catSec||'';
+  /* Al entrar a un área se abre su primer apartado: nunca una pantalla vacía. */
+  if(!S._catSec || !area.secciones.some(x=>x[0]===S._catSec)) S._catSec=area.secciones[0][0];
+  const k=S._catSec;
   const sec=seccionDe(k);
+  renderSubtabs(area);
   const marca=$('#catCliente');
-  /* Migas de pan: siempre se sabe dónde se está y cómo volver. */
-  if(marca) marca.innerHTML='<a href="#" id="migaArea" style="color:var(--brand);text-decoration:none">'+
-    esc(area.nombre)+'</a>'+(sec? ' <span style="color:var(--muted)">›</span> <b>'+esc(sec[1])+'</b>' : '')+
-    ' ' + ((k? CAT_DE_CLIENTE.indexOf(k)!==-1 : true)
+  if(marca) marca.innerHTML='<b style="color:var(--brand2)">'+esc(area.nombre)+'</b> '+
+    '<span style="color:var(--muted)">·</span> '+esc(sec?sec[2]:'')+' '+
+    (CAT_DE_CLIENTE.indexOf(k)!==-1
       ? (S.cliente? '<span style="color:var(--muted)">· catálogo de</span> <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
                   : '<span style="color:var(--warn)">· sin cliente seleccionado</span>')
       : '<span style="color:var(--muted)">· catálogo de Sipnology, común a todos los clientes</span>');
-  const volver=$('#migaArea');
-  if(volver) volver.onclick=e=>{ e.preventDefault(); S._catSec=''; renderCat(); };
   renderPendCat();
-  if(!k){ $('#btnCatSave').disabled=true; return renderArea(area,box); }
   if(CAT_DE_CLIENTE.indexOf(k)!==-1 && !S.cliente){
     box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
       'Esta sección es propia de cada cliente y se guarda en <code>Clientes/&lt;ID&gt;/catalogo.json</code>. '+
@@ -7781,6 +7789,7 @@ function enlazarEventos(){
 
   // Catálogos
   /* Cambiar de área siempre devuelve a su vista de carpeta. */
+  /* Cambiar de área abre el primer apartado de la nueva, no una pantalla intermedia. */
   $('#catSel').onchange=()=>{ S._catSec=''; renderCat(); };
   /* Recargar ya no destruye nada: las ediciones viven en su propia capa y se vuelven a
      poner encima de lo que llegue de SharePoint. Para tirarlas está el botón de al lado. */
