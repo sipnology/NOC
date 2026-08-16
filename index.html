@@ -762,6 +762,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <option value="admins">Administradores</option>
         <option value="respaldo">💾 Respaldo y baja de clientes</option>
         <option value="restaurarCat">↺ Restaurar catálogo de un cliente</option>
+        <option value="estructura">🗂 Estructura de carpetas por cliente</option>
         <option value="mantenimiento">⚠ Vaciar datos de pruebas</option>
       </optgroup>
     </select>
@@ -1027,7 +1028,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r75';
+const APP_VER = '2026-08-16 · r76';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1053,7 +1054,10 @@ const S = {
      escriben las secciones tocadas, así que editar un cliente no puede dañar a otro. */
   cat:null, catGlobal:null, catCli:{}, catEdit:{}, catEditRoster:null,
   inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
-  cliente:'',              // cliente activo; '' = todos (solo para usuarios internos)
+  /* cliente activo; '' = todos (solo para usuarios internos).
+     Se declara aquí por claridad, pero más abajo se convierte en propiedad vigilada:
+     cambiarlo SIEMPRE tiene que recomponer el catálogo. */
+  cliente:'',
   _cliExistentes:null,     // IDs de cliente ya publicados: su ID queda bloqueado
   dashMod:'tickets',       // apartado activo del tablero: tickets | crq | sit
   reportes:[],             // plantillas de reporte compartidas del cliente activo
@@ -1305,14 +1309,30 @@ const rutaBit=(mes,mail)=>P_BIT+'/'+mes+'/'+sanitizeName(String(mail||'anonimo')
    permiso sobre LA SUYA: el aislamiento deja de ser un filtro de interfaz y pasa a ser
    una regla que aplica SharePoint. */
 function pCli(c){ return 'Clientes/'+sanitizeName(c||'_sin_cliente')+'/'; }
-const pIdx  =c=>pCli(c)+'tickets_indice.json';
+/* ---- Estructura de carpetas de un cliente ----
+   Todo lo de un cliente vive bajo su carpeta y separado por materia, para que los
+   permisos de SharePoint se puedan dar por carpeta y no por archivo suelto:
+       Clientes/<ID>/Tickets/     índice y expedientes (AAAA-MM/<folio>/)
+       Clientes/<ID>/Inventario/  inventario.json
+       Clientes/<ID>/Catalogos/   catalogo.json, catalogo_anterior.json, reportes.json
+       Clientes/<ID>/Usuarios/    usuarios.json (invitados externos con acceso)
+       Clientes/<ID>/CRQs/        crq.json
+       Clientes/<ID>/SITs/        sit.json
+       Clientes/<ID>/Backup/      respaldos completos del cliente
+   Las rutas antiguas (archivos sueltos en la raíz del cliente) se siguen LEYENDO,
+   para que nada deje de funcionar antes de migrar; escribir se escribe siempre en la
+   estructura nueva. */
+const D_TICKETS='Tickets', D_INV='Inventario', D_CAT='Catalogos', D_USR='Usuarios',
+      D_CRQ='CRQs', D_SIT='SITs', D_BK='Backup';
+const CARPETAS_CLI=[D_TICKETS,D_INV,D_CAT,D_USR,D_CRQ,D_SIT,D_BK];
+const pIdx  =c=>pCli(c)+D_TICKETS+'/indice.json';
 /* Catálogo propio de cada cliente. Las sedes, sus pisos y los usuarios invitados
    describen la infraestructura de una organización: no pueden vivir en un archivo
    común que cualquiera con acceso a Sistema/ pueda leer. */
-const pCatCli=c=>pCli(c)+'catalogo.json';
+const pCatCli=c=>pCli(c)+D_CAT+'/catalogo.json';
 /* Copia de la versión inmediatamente anterior. Se escribe SIEMPRE antes de pisar el
    catálogo, así que un borrado accidental nunca deja al cliente sin nada a que volver. */
-const pCatCliPrev=c=>pCli(c)+'catalogo_anterior.json';
+const pCatCliPrev=c=>pCli(c)+D_CAT+'/catalogo_anterior.json';
 /* Cuenta lo que describe la infraestructura de una sede: es lo que se ha perdido dos
    veces y lo que sirve para decidir si un archivo vale más que otro. */
 function censoSedes(cat){
@@ -1325,10 +1345,37 @@ function censoSedes(cat){
 const SEC_CLIENTE=['localidades','categorias','tipos','prioridades','tiposDispositivo',
   'imputables','aliasSedes','clientesExternos','catsConTiempos','estadosCRQ','estatus'];
 const SEC_GLOBAL=['admins','logoOperador'];
-const pInv  =c=>pCli(c)+'inventario.json';
-const pCrq  =c=>pCli(c)+'crq.json';
-const pSit  =c=>pCli(c)+'sit.json';
-const pCasos=c=>pCli(c)+'Casos';
+const pInv  =c=>pCli(c)+D_INV+'/inventario.json';
+const pCrq  =c=>pCli(c)+D_CRQ+'/crq.json';
+const pSit  =c=>pCli(c)+D_SIT+'/sit.json';
+const pUsr  =c=>pCli(c)+D_USR+'/usuarios.json';
+const pCasos=c=>pCli(c)+D_TICKETS;
+/* Dónde vivía cada cosa antes. Solo se usa para leer y para migrar. */
+const RUTAS_VIEJAS={
+  [D_TICKETS+'/indice.json']:'tickets_indice.json',
+  [D_INV+'/inventario.json']:'inventario.json',
+  [D_CRQ+'/crq.json']:'crq.json',
+  [D_SIT+'/sit.json']:'sit.json',
+  [D_CAT+'/catalogo.json']:'catalogo.json',
+  [D_CAT+'/catalogo_anterior.json']:'catalogo_anterior.json',
+  [D_CAT+'/reportes.json']:'reportes.json'
+};
+function rutaVieja(nueva){
+  const i=nueva.indexOf('/',nueva.indexOf('/')+1);          // salta "Clientes/<ID>/"
+  const base=nueva.slice(0,i+1), resto=nueva.slice(i+1);
+  const v=RUTAS_VIEJAS[resto];
+  return v? base+v : '';
+}
+/* Lee de la ruta nueva y, si todavía no existe, de la vieja. Así la aplicación funciona
+   igual antes y después de migrar, y migrar deja de ser una operación de todo o nada. */
+async function gGetJsonCompat(h,ruta){
+  let v=null;
+  try{ v=await gGetJson(h,ruta); }catch(e){ v=null; }
+  if(v!==null && v!==undefined) return v;
+  const vieja=rutaVieja(ruta);
+  if(!vieja) return v;
+  try{ return await gGetJson(h,vieja); }catch(e){ return null; }
+}
 /* Rutas de la versión anterior: se leen una vez para poder migrar sin perder nada. */
 const P_LEGACY_IDX='Sistema/_tickets_indice.json', P_LEGACY_INV='Inventario/_inventario.json';
 
@@ -1524,7 +1571,7 @@ async function catalogoPull(silent){
     for(const id of ids){
       const viejo=antes[id], cViejo=censoSedes(viejo);
       try{
-        const c=await gGetJson(h,pCatCli(id));
+        const c=await gGetJsonCompat(h,pCatCli(id));
         if(c){
           const cNuevo=censoSedes(c);
           if(viejo && cViejo.sedes>0 && cNuevo.sedes===0){
@@ -1664,7 +1711,7 @@ async function catalogoPush(){
     /* Relectura fresca: se fusiona sobre lo que HAY, no sobre lo que se leyó hace rato. */
     let disco=null;
     if(!nuevoCli){
-      try{ disco=await gGetJson(h,pCatCli(id)); }
+      try{ disco=await gGetJsonCompat(h,pCatCli(id)); }
       catch(e){ omitidos.push(id+' (no se pudo releer: '+e.message+')'); continue; }
       if(!disco && censoSedes(S.catCli[id]).sedes>0){
         omitidos.push(id+' (la relectura vino vacía y no se sobrescribe a ciegas)'); continue; }
@@ -1880,7 +1927,7 @@ async function leerPorCliente(h,ruta,norm){
   const out=[];
   for(const c of clientesEnAlcance()){
     let a=null;
-    try{ a=await gGetJson(h,ruta(c)); }catch(e){}
+    try{ a=await gGetJsonCompat(h,ruta(c)); }catch(e){}
     (Array.isArray(a)?a:[]).forEach(x=>{ const o=norm?norm(x):x; o.clienteId=o.clienteId||c; out.push(o); });
   }
   return out;
@@ -1950,7 +1997,7 @@ function idxUpsert(t){
   if(i>=0) S.idx[i]=e; else S.idx.unshift(e);
   S._q = S._q.then(async()=>{
     const h=await H(); const ruta=pIdx(e.clienteId);
-    let a=await gGetJson(h,ruta); a=Array.isArray(a)?a:[];
+    let a=await gGetJsonCompat(h,ruta); a=Array.isArray(a)?a:[];
     const j=a.findIndex(x=>x.id===e.id); if(j>=0) a[j]=e; else a.unshift(e);
     await gPutJson(h,ruta,a);
   }).catch(err=>toast('Índice no sincronizado: '+err.message,'err',8000));
@@ -2112,6 +2159,37 @@ async function bitPull(meses){
   }
 }
 
+/* ---- El cliente activo no puede cambiar sin recomponer el catálogo ----
+   Este fue el fallo que vació el catálogo en pantalla: al entrar, catalogoPull componía
+   con S.cliente todavía en '' —y sin cliente activo el catálogo se compone sin sedes,
+   sin pisos y sin alias—, y justo después se asignaba el cliente guardado sin volver a
+   componer. El catálogo quedaba vacío el resto de la sesión aunque el archivo estuviera
+   entero, y cualquier guardado posterior escribía ese vacío encima.
+   Convertirlo en propiedad con vigilante hace imposible repetir el olvido: hay siete
+   sitios que asignan S.cliente y ninguno tiene que acordarse de nada. */
+(function vigilarClienteActivo(){
+  let _cli=S.cliente||'';
+  delete S.cliente;
+  Object.defineProperty(S,'cliente',{
+    enumerable:true, configurable:false,
+    get(){ return _cli; },
+    set(v){
+      const nuevo=String(v==null?'':v);
+      if(nuevo===_cli) return;
+      /* Lo que se estuviera editando del cliente anterior se pone a salvo antes de salir. */
+      try{ if(S.cat) capturarEdiciones(); }
+      catch(e){ console.warn('no se pudieron conservar las ediciones al cambiar de cliente:',e.message); }
+      _cli=nuevo;
+      /* Sin catálogos leídos todavía no hay con qué componer: se deja como está y ya
+         compondrá la lectura cuando llegue. Recomponer contra nada solo vaciaría. */
+      if(S.catCli && Object.keys(S.catCli).length){
+        try{ componerCat(); }
+        catch(e){ console.warn('no se pudo recomponer el catálogo:',e.message); }
+      }
+    }
+  });
+})();
+
 /* ---------------------- 9. GATE / ROLES ---------------------- */
 function resolverRol(){
   if(_simRol){
@@ -2177,7 +2255,8 @@ async function cambiarCliente(id){
   try{ localStorage.setItem(PREF_CLI,S.cliente); }catch(e){}
   /* Cada cliente trae su propia clasificación y sus sedes: hay que recomponer y,
      si el usuario está viendo Catálogos, volver a dibujar la sección abierta. */
-  componerCat(); poblarCatalogosUI(); renderCat();
+  /* componerCat() ya lo hizo el vigilante de S.cliente; aquí solo se repinta. */
+  poblarCatalogosUI(); renderCat();
   pintarMarca(); aplicarModulosUI(); aplicarClienteApertura();
   await cargarDatos(true);
   logEvent('CLIENTE_ACTIVO',S.cliente||'(todos)');
@@ -2309,6 +2388,9 @@ async function unlockApp(){
   pintarSimulacion();
   try{ S.cliente=localStorage.getItem(PREF_CLI)||''; }catch(e){ S.cliente=''; }
   if(S.role==='cliente') S.cliente=S.clienteScope||'';
+  /* Cinturón además del tirante: el vigilante de S.cliente ya recompone, pero si el
+     cliente guardado resulta ser el mismo que ya estaba, no hay cambio que vigilar. */
+  componerCat();
   pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
   await migrarSiHaceFalta();
   await cargarDatos(true);
@@ -4336,7 +4418,7 @@ const CAT_GRUPOS=[
   ['Inventario',['equipos','tiposDispositivo']],
   ['CRQs',['estadosCRQ','impCrq']],
   ['SITs',['impSit']],
-  ['Administración',['clientes','clientesExternos','admins','respaldo','restaurarCat','mantenimiento']]
+  ['Administración',['clientes','clientesExternos','admins','respaldo','restaurarCat','estructura','mantenimiento']]
 ];
 function grupoDe(k){ const g=CAT_GRUPOS.find(x=>x[1].indexOf(k)!==-1); return g? g[0] : ''; }
 /* ---- Respaldo y restauración por cliente ----
@@ -4347,13 +4429,16 @@ const RESP_VER=2;
 /* Los respaldos automáticos viven en SharePoint, no en la descarga del navegador:
    un archivo en la carpeta Descargas de alguien no es una copia de seguridad. */
 const P_BACKUP='Backup';
-const rutaBackup=(cli,cuando)=>P_BACKUP+'/Respaldo_'+sanitizeName(cli)+'_'+
+/* Cada cliente guarda sus respaldos dentro de su propia carpeta: si mañana se le retira
+   el acceso a alguien, se le retira también el de sus respaldos. La carpeta global se
+   sigue leyendo para no perder de vista los que ya estaban ahí. */
+const rutaBackup=(cli,cuando)=>pCli(cli)+D_BK+'/Respaldo_'+sanitizeName(cli)+'_'+
   String(cuando||new Date().toISOString()).replace(/[:.]/g,'-')+'.json';
 /* Un archivo suelto por encima de este tamaño se referencia pero no se incrusta. */
 const RESP_MAX_ARCHIVO=25*1024*1024;
 async function respaldoDe(cli,avisar){
   const h=await H();
-  const leer=async r=>{ try{ return await gGetJson(h,r); }catch(e){ return null; } };
+  const leer=async r=>{ try{ return await gGetJsonCompat(h,r); }catch(e){ return null; } };
   const cat=S.catCli[cli]||null;
   const inv=(await leer(pInv(cli)))||[];
   const idx=(await leer(pIdx(cli)))||[];
@@ -4406,10 +4491,27 @@ async function descargarRespaldo(cli,btn){
     const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
     bajar(blob,nombre);
     const conDatos=r.evidencias.filter(x=>x.datos).length;
+    /* Un respaldo que solo vive en la carpeta de descargas de una persona no es un
+       respaldo del sistema: se escribe también en SharePoint y por eso aparece luego
+       en la lista. Si esto falla, la descarga ya ocurrió y no se pierde nada. */
+    let enSP='';
+    try{
+      const h=await H();
+      const ruta=rutaBackup(cli,(r.generado||{}).cuando);
+      await gPutJson(h,ruta,r);
+      const ver=await gGetJson(h,ruta);
+      if(!ver||ver.cliente!==cli) throw new Error('no se pudo verificar releyendo');
+      enSP=ruta;
+    }catch(e){
+      toast('El respaldo se descargó a tu equipo, pero no se pudo guardar en SharePoint: '+
+            e.message,'warn',13000);
+    }
     logEvent('RESPALDO_DESCARGADO',cli+' · '+r.tickets.length+' ticket(s) · '+r.inventario.length+
-             ' equipo(s) · '+conDatos+'/'+r.evidencias.length+' evidencia(s) incluida(s) · '+pesoLegible(blob.size));
+             ' equipo(s) · '+conDatos+'/'+r.evidencias.length+' evidencia(s) incluida(s) · '+pesoLegible(blob.size)+
+             (enSP? ' · guardado en '+enSP : ' · NO se guardó en SharePoint'));
     toast('Respaldo de '+cli+': '+r.tickets.length+' ticket(s), '+r.inventario.length+' equipo(s), '+
-          conDatos+' evidencia(s) · '+pesoLegible(blob.size)+'.',null,11000);
+          conDatos+' evidencia(s) · '+pesoLegible(blob.size)+
+          (enSP? '. Guardado también en '+enSP : ''),null,11000);
     if((r.omitidos||[]).length) toast('No se incrustaron por tamaño: '+r.omitidos.join(', ')+
       '. Quedan referenciadas y siguen en SharePoint.','warn',12000);
   }catch(e){ toast('No se pudo respaldar: '+e.message,'err',10000); }
@@ -4417,19 +4519,26 @@ async function descargarRespaldo(cli,btn){
 }
 /* Lista los respaldos guardados en SharePoint, del más reciente al más antiguo. */
 async function listarBackups(){
-  try{
-    const h=await H();
-    const f=(await gList(h,P_BACKUP)).filter(x=>/\.json$/i.test(x.name||''));
-    return f.map(x=>({nombre:x.name, tam:x.size||0, cuando:x.lastModifiedDateTime||''}))
-            .sort((a,b)=>String(b.cuando).localeCompare(String(a.cuando)));
-  }catch(e){ return []; }
+  const h=await H();
+  const out=[];
+  const carpetas=Object.keys(S.catCli||{}).map(id=>pCli(id)+D_BK).concat([P_BACKUP]);
+  for(const carp of carpetas){
+    try{
+      (await gList(h,carp)).filter(x=>/\.json$/i.test(x.name||''))
+        .forEach(x=>out.push({nombre:x.name, ruta:carp+'/'+x.name,
+                              tam:x.size||0, cuando:x.lastModifiedDateTime||''}));
+    }catch(e){}
+  }
+  return out.sort((a,b)=>String(b.cuando).localeCompare(String(a.cuando)));
 }
-async function restaurarDesdeBackup(nombre,btn){
+async function restaurarDesdeBackup(ruta,btn){
   try{
     const h=await H();
-    const r=await gGetJson(h,P_BACKUP+'/'+nombre);
-    if(!r) throw new Error('no se pudo leer '+nombre);
-    await restaurarRespaldo(r,btn,nombre);
+    /* Se recibe la ruta completa: los respaldos viven en la carpeta de cada cliente y
+       ya no todos en una sola, así que el nombre por sí solo no basta. */
+    const r=await gGetJson(h,ruta);
+    if(!r) throw new Error('no se pudo leer '+ruta);
+    await restaurarRespaldo(r,btn,ruta);
   }catch(e){ toast('No se pudo abrir el respaldo: '+e.message,'err',10000); }
 }
 async function restaurarRespaldo(origen,btn,etiqueta){
@@ -4499,7 +4608,7 @@ async function eliminarClienteDefinitivo(cli,btn){
   const h=await H();
   let n={tk:0,inv:0,crq:0,sit:0};
   try{
-    const leer=async r=>{ try{ return await gGetJson(h,r); }catch(e){ return null; } };
+    const leer=async r=>{ try{ return await gGetJsonCompat(h,r); }catch(e){ return null; } };
     n.tk=((await leer(pIdx(cli)))||[]).length;
     n.inv=((await leer(pInv(cli)))||[]).length;
     n.crq=((await leer(pCrq(cli)))||[]).length;
@@ -4554,7 +4663,7 @@ async function fuentesCatalogo(cli){
     if(!c.sedes && !c.alias) return;
     out.push({origen:origen,ruta:ruta,cat:cat,cuando:cuando||'',censo:c});
   };
-  try{ const a=await gGetJson(h,pCatCliPrev(cli));
+  try{ const a=await gGetJsonCompat(h,pCatCliPrev(cli));
        mete('Versión anterior del propio cliente',pCatCliPrev(cli),a,
             a&&(a._reemplazadoEl||((a.actualizado||{}).cuando))); }catch(e){}
   try{ const g=await gGetJson(h,'Sistema/_tickets_catalogo_respaldo.json');
@@ -4638,7 +4747,8 @@ function renderRespaldo(box){
       '<div style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
       '<td class="mono">'+esc(((S.catCli[id]||{}).localidades||[]).length)+'</td>'+
       '<td style="white-space:nowrap">'+
-        '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px">⬇ Descargar respaldo</button> '+
+        '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px" '+
+          'title="Lo descarga a tu equipo y además lo guarda en SharePoint">💾 Respaldar</button> '+
         '<button class="btn dan" data-rm="'+esc(id)+'" style="padding:4px 11px;font-size:12px"'+
           (!esDueno()? ' disabled title="Reservado al dueño del sistema"'
                      : ' title="Respalda en '+P_BACKUP+'/ y luego borra la carpeta del cliente"')+
@@ -4659,8 +4769,9 @@ function renderRespaldo(box){
     (ids.length? ids.map(fila).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
     '</tbody></table></div>'+
     '<h2 style="margin-top:18px">Respaldos guardados en SharePoint</h2>'+
-    '<div class="note">Al dar de baja un cliente, su respaldo completo se escribe en <code>'+P_BACKUP+'/</code> '+
-    'antes de borrar nada. Desde aquí se puede volver a montar.</div>'+
+    '<div class="note">Cada respaldo se guarda en <code>Clientes/&lt;ID&gt;/'+D_BK+'/</code>, dentro de la '+
+    'carpeta del propio cliente. El botón <b>Respaldar</b> lo descarga a tu equipo y además lo deja ahí, '+
+    'y al dar de baja un cliente se escribe uno completo antes de borrar nada.</div>'+
     '<div id="bkLista"><div class="note"><span class="spin"></span> Leyendo '+P_BACKUP+'/…</div></div>'+
     '<div class="row" style="margin-top:12px;gap:8px;align-items:center">'+
       '<label class="btn sec" style="cursor:'+(esDueno()?'pointer':'not-allowed')+';opacity:'+(esDueno()?'1':'.45')+'">'+
@@ -4677,10 +4788,11 @@ function renderRespaldo(box){
     const c=box.querySelector('#bkLista'); if(!c) return;
     c.innerHTML = bs.length
       ? '<div class="tw" style="max-height:260px"><table><thead><tr><th>Archivo</th><th>Guardado</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
-        bs.map(b=>'<tr><td class="mono">'+esc(b.nombre)+'</td>'+
+        bs.map(b=>'<tr><td class="mono">'+esc(b.nombre)+
+            '<div style="color:var(--muted);font-size:11px">'+esc(b.ruta||'')+'</div></td>'+
           '<td class="mono">'+esc(fechaHumana(String(b.cuando).slice(0,10)))+'</td>'+
           '<td class="mono">'+esc(pesoLegible(b.tam))+'</td>'+
-          '<td><button class="btn sec" data-bkr="'+esc(b.nombre)+'" style="padding:4px 11px;font-size:12px"'+
+          '<td><button class="btn sec" data-bkr="'+esc(b.ruta||b.nombre)+'" style="padding:4px 11px;font-size:12px"'+
             (esDueno()?'':' disabled')+'>↺ Restaurar</button></td></tr>').join('')+
         '</tbody></table></div>'
       : '<div class="note">Todavía no hay respaldos en <code>'+P_BACKUP+'/</code>.</div>';
@@ -4711,6 +4823,7 @@ function renderCat(){
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='respaldo') return renderRespaldo(box);
   if(k==='restaurarCat') return renderRestaurarCat(box);
+  if(k==='estructura') return renderEstructura(box);
   if(k==='impCrq') return renderImportDS(box,DATASETS.crq);
   if(k==='impSit') return renderImportDS(box,DATASETS.sit);
   if(k==='mantenimiento') return renderMantenimiento(box);
@@ -4892,7 +5005,7 @@ async function propagarSede(idAntes,idNuevo,nombreNuevo){
     }catch(err){}
   }
   for(const c of clientesEnAlcance()){
-    let a=await gGetJson(h,pIdx(c)); a=Array.isArray(a)?a:[];
+    let a=await gGetJsonCompat(h,pIdx(c)); a=Array.isArray(a)?a:[];
     let toco=false;
     a.forEach(x=>{ if(x.localidadId===idAntes){ x.localidadId=idNuevo; x.localidad=nombreNuevo; toco=true; } });
     if(toco) await gPutJson(h,pIdx(c),a);
@@ -4910,6 +5023,45 @@ function renderLista(k,titulo,box,ro){
 /* Importación de CRQs y SITs desde el propio catálogo. Es la misma máquina que la del
    módulo (dsImportar): aquí solo se le pone puerta, para que quien administra el
    cliente no tenga que salirse a otro módulo a cargar un archivo. */
+/* Plantilla de importación: los encabezados que el lector reconoce, más dos filas de
+   ejemplo. Se genera desde los mismos sinónimos que usa la importación, así que no
+   puede quedarse desfasada respecto a lo que el programa entiende de verdad. */
+const PLANTILLA_DS={
+  crq:{ cols:[['id','CRQ',24],['titulo','Título del cambio',38],['actividad','Actividad',46],
+              ['sedeTexto','Sede',30],['fechaIni','Fecha inicio',15],['horaIni','Hora inicio',13],
+              ['fechaFin','Fecha fin',15],['horaFin','Hora fin',13],['estado','Estado',18]],
+        ejemplo:[{id:'CRQ000001234567',titulo:'Actualización de firmware en switches de acceso',
+                  actividad:'Ventana de mantenimiento para actualizar IOS en 4 switches',
+                  sedeTexto:'Torre Reforma',fechaIni:'2026-09-04',horaIni:'22:00',
+                  fechaFin:'2026-09-05',horaFin:'02:00',estado:'Programado'},
+                 {id:'CRQ000001234568',titulo:'Reemplazo de UPS en site principal',
+                  actividad:'Sustitución de UPS por fin de vida útil',
+                  sedeTexto:'Parques Polanco',fechaIni:'2026-09-11',horaIni:'23:00',
+                  fechaFin:'2026-09-12',horaFin:'03:00',estado:'En revisión'}]},
+  sit:{ cols:[['id','ID del servicio',20],['nombre','Nombre',30],['vence','Fecha de vencimiento',20],
+              ['estado','Estado',16],['descripcion','Descripción',34],['description','Description',46],
+              ['puesto','Puesto',26],['correo','Correo electrónico',32],
+              ['login','ID de inicio de sesión',22],['especialidad','Especialidad',24],['gremio','Gremio',20]],
+        ejemplo:[{id:'SIT0001234',nombre:'Alta de usuario en herramienta de monitoreo',
+                  vence:'2026-09-10',estado:'Abierto',descripcion:'Solicitud de acceso',
+                  description:'Sede: Torre Reforma | Piso: 12',puesto:'Ingeniero de soporte',
+                  correo:'usuario@ejemplo.com',login:'A123456',especialidad:'Redes',gremio:'Infraestructura'},
+                 {id:'SIT0001235',nombre:'Baja de usuario',vence:'2026-09-12',estado:'Cerrado',
+                  descripcion:'Retiro de accesos',description:'Sede: Parques Polanco | Piso: 3',
+                  puesto:'Analista',correo:'otro@ejemplo.com',login:'B654321',
+                  especialidad:'Soporte',gremio:'Operación'}]}
+};
+async function descargarPlantillaDS(ds,btn){
+  const pl=PLANTILLA_DS[ds.k];
+  if(!pl){ toast('No hay plantilla definida para '+ds.plural+'.','err'); return; }
+  busy(btn,true);
+  try{
+    await escribirXlsx('Plantilla_'+ds.plural,[{nombre:ds.plural,cols:pl.cols,filas:pl.ejemplo}]);
+    logEvent('PLANTILLA_DESCARGADA',ds.plural);
+    toast('Plantilla de '+ds.plural+' descargada. Las dos filas son un ejemplo: bórralas antes de cargarla.',null,11000);
+  }catch(e){ toast('No se pudo generar la plantilla: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
 function renderImportDS(box,ds){
   const ro=!isAdmin();
   const cols=ds.cols.filter(c=>c.k!=='acc').slice(0,10).map(c=>c.t);
@@ -4927,12 +5079,15 @@ function renderImportDS(box,ds){
         '<input type="file" id="dsImpFile" accept=".xlsx" multiple class="hide"'+((ro||!S.cliente)?' disabled':'')+'></label>'+
       '<select id="dsImpModo" style="width:230px"'+((ro||!S.cliente)?' disabled':'')+'>'+
         '<option value="merge">Acumular por ID</option><option value="replace">Reemplazar todo</option></select>'+
+      '<button class="btn sec" id="dsImpPlantilla">⬇ Descargar plantilla</button>'+
       '<span style="color:var(--muted);font-size:12px">'+dsLista(ds).length+' '+esc(ds.plural)+' cargados hoy</span>'+
     '</div>'+
     '<div style="margin-top:14px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;'+
       'letter-spacing:.4px">Columnas que se reconocen</label>'+
       '<div style="margin-top:6px">'+cols.map(t=>'<span class="pill" style="background:var(--panel2);color:var(--txt);margin:0 5px 5px 0;display:inline-block">'+esc(t)+'</span>').join('')+'</div></div>'+
     '<div id="dsImpRep"></div>';
+  const pla=box.querySelector('#dsImpPlantilla');
+  if(pla) pla.onclick=function(){ descargarPlantillaDS(ds,this); };
   const f=box.querySelector('#dsImpFile');
   if(f) f.onchange=async()=>{
     const files=Array.prototype.slice.call(f.files||[]); f.value='';
@@ -4955,6 +5110,110 @@ function renderPendCat(){
     'y se escriben únicamente estas secciones:<br>'+
     p.map(x=>'· <b>'+esc(x.cliente==='(lista de clientes)'?x.cliente:nombre(x.cliente))+'</b>: '+
       esc(x.secciones.join(', '))).join('<br>')+'</div>';
+}
+/* ---- Migración a la estructura por materia ----
+   Se hace a mano y a propósito, nunca sola: mover archivos de sitio es de las pocas
+   operaciones que no se pueden deshacer con un botón. El orden importa —respaldar,
+   copiar, verificar releyendo, y solo entonces borrar el original— porque cualquier
+   fallo a mitad tiene que dejar los datos accesibles por la ruta vieja. */
+async function migrarEstructuraCliente(cli,avisar,borrarCasos){
+  const h=await H();
+  const hechos=[], saltados=[], errores=[];
+  const pares=[[pIdx(cli),'índice de tickets'],[pInv(cli),'inventario'],
+               [pCrq(cli),'CRQs'],[pSit(cli),'SITs'],
+               [pCatCli(cli),'catálogo'],[pCatCliPrev(cli),'catálogo anterior'],
+               [pRep(cli),'plantillas de reporte']];
+  for(const [nueva,etiqueta] of pares){
+    const vieja=rutaVieja(nueva);
+    if(!vieja) continue;
+    if(avisar) avisar('moviendo '+etiqueta);
+    try{
+      const ya=await gGetJson(h,nueva);
+      if(ya!==null && ya!==undefined){ saltados.push(etiqueta+' (ya estaba en su sitio)'); continue; }
+      const dato=await gGetJson(h,vieja);
+      if(dato===null || dato===undefined){ saltados.push(etiqueta+' (no existe)'); continue; }
+      await gPutJson(h,nueva,dato);
+      /* Verificación antes de borrar: si la copia no se puede releer, el original se queda. */
+      const ver=await gGetJson(h,nueva);
+      if(ver===null || ver===undefined) throw new Error('la copia no se pudo releer');
+      if(JSON.stringify(ver)!==JSON.stringify(dato)) throw new Error('la copia no coincide con el original');
+      await gDelete(h,vieja);
+      hechos.push(etiqueta);
+    }catch(e){ errores.push(etiqueta+': '+e.message); }
+  }
+  /* Los expedientes: se eliminan solo si se pidió explícitamente. */
+  if(borrarCasos){
+    if(avisar) avisar('borrando expedientes anteriores');
+    try{ await gDelete(h,pCli(cli)+'Casos'); hechos.push('expedientes anteriores borrados'); }
+    catch(e){ saltados.push('expedientes (no había carpeta Casos o ya se borró)'); }
+    try{ await gPutJson(h,pIdx(cli),[]); hechos.push('índice de tickets vaciado'); }
+    catch(e){ errores.push('no se pudo vaciar el índice: '+e.message); }
+  }
+  return {hechos:hechos,saltados:saltados,errores:errores};
+}
+function renderEstructura(box){
+  if(!esDueno()){ box.innerHTML='<div class="note">Mover archivos de sitio está reservado a <code>'+
+    esc(DUENO)+'</code>.</div>'; return; }
+  const ids=Object.keys(S.catCli).sort();
+  box.innerHTML='<div class="note">Todo lo de un cliente pasa a vivir bajo su carpeta, separado por '+
+    'materia, para poder dar permisos por carpeta en vez de por archivo suelto:'+
+    '<div class="mono" style="margin-top:8px;line-height:1.7">'+
+    CARPETAS_CLI.map(c=>'Clientes/&lt;ID&gt;/'+esc(c)+'/').join('<br>')+'</div></div>'+
+    '<div class="note">El orden es <b>copiar → verificar releyendo → borrar el original</b>. '+
+    'Mientras no se migre, la aplicación sigue leyendo de las rutas viejas, así que nada deja de '+
+    'funcionar ni antes ni durante. Si algo falla a mitad, el archivo original se queda donde está.</div>'+
+    '<div class="note" style="border-left-color:var(--warn)"><b>Expedientes.</b> Marcar la casilla borra '+
+    '<code>Clientes/&lt;ID&gt;/Casos/</code> con todas sus evidencias y vacía el índice de tickets. '+
+    'Es lo que pediste para volver a cargar los tickets desde cero, pero no tiene vuelta atrás salvo '+
+    'por la papelera de SharePoint.</div>'+
+    '<div class="tw"><table><thead><tr><th>Cliente</th><th>Estado</th><th></th></tr></thead><tbody>'+
+    (ids.length? ids.map(id=>'<tr><td><b>'+esc(((S.catCli[id]||{}).cliente||{}).nombre||id)+'</b>'+
+      '<div class="mono" style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
+      '<td id="est_'+esc(id)+'" class="mono" style="color:var(--muted)">sin revisar</td>'+
+      '<td style="white-space:nowrap">'+
+        '<label style="font-size:12px;color:var(--muted);margin-right:10px">'+
+          '<input type="checkbox" data-casos="'+esc(id)+'"> borrar expedientes</label>'+
+        '<button class="btn" data-mig="'+esc(id)+'" style="padding:4px 11px;font-size:12px">Migrar</button>'+
+      '</td></tr>').join('')
+      : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
+    '</tbody></table></div><div id="migRep"></div>';
+  box.querySelectorAll('[data-mig]').forEach(b=>b.onclick=async function(){
+    const cli=b.dataset.mig;
+    const casos=!!box.querySelector('[data-casos="'+cli+'"]:checked');
+    const frase='MIGRAR '+cli;
+    const escrito=prompt('Se va a reorganizar la carpeta de '+cli+
+      (casos? '\nY se BORRARÁN sus expedientes y su índice de tickets.' : '')+
+      '\n\nAntes se guarda un respaldo completo en su carpeta '+D_BK+'/.\n\n'+
+      'Para confirmar, escribe exactamente: '+frase);
+    if(escrito===null) return;
+    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se movió nada.','warn',8000); return; }
+    busy(this,true);
+    const rep=box.querySelector('#migRep');
+    try{
+      await conTarea('migrando '+cli,async avisar=>{
+        avisar('respaldando antes de mover');
+        const r=await respaldoDe(cli,avisar);
+        const ruta=rutaBackup(cli,(r.generado||{}).cuando);
+        const hh=await H();
+        await gPutJson(hh,ruta,r);
+        const verif=await gGetJson(hh,ruta);
+        if(!verif||verif.cliente!==cli) throw new Error('el respaldo previo no se pudo verificar; no se movió nada');
+        const res=await migrarEstructuraCliente(cli,avisar,casos);
+        logEvent('ESTRUCTURA_MIGRADA',cli+' · movidos: '+(res.hechos.join(', ')||'nada')+
+          ' · omitidos: '+(res.saltados.join(', ')||'nada')+
+          ' · errores: '+(res.errores.join(' | ')||'ninguno'));
+        rep.innerHTML='<div class="note" style="border-left-color:'+(res.errores.length?'var(--err)':'var(--ok)')+'">'+
+          '<b>'+esc(cli)+'</b> · respaldo en <code>'+esc(ruta)+'</code><br>'+
+          'Movidos: '+esc(res.hechos.join(', ')||'nada')+'<br>'+
+          'Omitidos: '+esc(res.saltados.join(', ')||'nada')+
+          (res.errores.length? '<br><b>Errores:</b> '+esc(res.errores.join(' | ')) : '')+'</div>';
+      });
+      await catalogoPull(true); await cargarDatos(true);
+      const est=box.querySelector('#est_'+cli); if(est){ est.textContent='migrado'; est.style.color='var(--ok)'; }
+      toast('Migración de '+cli+' terminada.',null,9000);
+    }catch(e){ toast('No se pudo migrar: '+e.message,'err',12000); }
+    finally{ busy(this,false); }
+  });
 }
 function renderMantenimiento(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
@@ -5185,8 +5444,11 @@ function renderPisos(box,ro){
    no solo elegirlo: antes solo se editaba el contenido, no la clave. */
 function renderMapa(box,ro,key,lblK,lblV){
   const m=S.cat[key]||(S.cat[key]={}); const ks=Object.keys(m);
-  const sel=(S._mapaSel&&m[S._mapaSel])? S._mapaSel : (ks[0]||'');
-  S._mapaSel=sel;
+  /* Cada mapa recuerda lo suyo: categorías y tipos son listas distintas y compartir
+     la selección hacía que al cambiar de apartado se perdiera dónde estabas. */
+  S._mapa=S._mapa||{}; const est=S._mapa[key]=S._mapa[key]||{sel:'',scroll:0};
+  const sel=(est.sel&&m[est.sel])? est.sel : (ks[0]||'');
+  est.sel=sel;
   box.innerHTML='<div class="grid" style="grid-template-columns:minmax(280px,1fr) 2fr;gap:16px">'+
     '<div><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">'+esc(lblK)+'</label>'+
       '<div class="tw" style="max-height:320px;margin-top:6px"><table><tbody>'+
@@ -5209,12 +5471,20 @@ function renderMapa(box,ro,key,lblK,lblV){
   const txt=box.querySelector('#mTxt');
   if(txt){ txt.value=(m[sel]||[]).join('\n');
     txt.onchange=()=>{ m[sel]=txt.value.split('\n').map(x=>x.trim()).filter(Boolean); renderCat(); }; }
+  /* Repintar la tabla la devuelve al principio, y elegir un elemento que estaba abajo
+     obligaba a volver a bajar cada vez. Se recuerda el desplazamiento y se restituye. */
+  const cajaLista=box.querySelector('.tw');
+  if(cajaLista){
+    if(est.scroll) cajaLista.scrollTop=est.scroll;
+    cajaLista.addEventListener('scroll',()=>{ est.scroll=cajaLista.scrollTop; });
+  }
   box.querySelectorAll('[data-pick]').forEach(a=>a.onclick=e=>{ e.preventDefault();
-    S._mapaSel=a.dataset.pick; renderCat(); });
+    if(cajaLista) est.scroll=cajaLista.scrollTop;
+    est.sel=a.dataset.pick; renderCat(); });
   const add=box.querySelector('#mAdd');
   if(add) add.onclick=()=>{ const v=box.querySelector('#mNew').value.trim(); if(!v) return;
     if(m[v]){ toast('«'+v+'» ya existe.','warn'); return; }
-    m[v]=[]; S._mapaSel=v; renderCat(); };
+    m[v]=[]; est.sel=v; renderCat(); };
   box.querySelectorAll('[data-ren]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.ren;
     const v=prompt('Nuevo nombre para «'+k+'»:',k);
@@ -5229,7 +5499,7 @@ function renderMapa(box,ro,key,lblK,lblV){
       const n1=(S.idx||[]).filter(t=>t.categoria===k).length;
       if(n1) toast('Hay '+n1+' ticket(s) con la categoría anterior: conservan el nombre viejo.','warn',10000);
     }
-    S._mapaSel=n; renderCat();
+    est.sel=n; renderCat();
   });
   box.querySelectorAll('[data-quit]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.quit;
@@ -5237,7 +5507,7 @@ function renderMapa(box,ro,key,lblK,lblV){
     if(!confirm('¿Eliminar «'+k+'» y sus '+((m[k]||[]).length)+' elemento(s)?'+
       (usados? '\n\nOjo: '+usados+' ticket(s) ya usan ese valor y lo conservarán como texto.':''))) return;
     delete m[k];
-    if(S._mapaSel===k) S._mapaSel=Object.keys(m)[0]||'';
+    if(est.sel===k) est.sel=Object.keys(m)[0]||'';
     renderCat();
   });
 }
@@ -5742,7 +6012,7 @@ async function ejecutarImportacion(lista,progreso){
   const porCli={};
   lista.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(idxEntry(t)); });
   for(const c of Object.keys(porCli)){
-    let a=await gGetJson(h,pIdx(c)); a=Array.isArray(a)?a:[];
+    let a=await gGetJsonCompat(h,pIdx(c)); a=Array.isArray(a)?a:[];
     porCli[c].forEach(e=>{ const i=a.findIndex(x=>x.id===e.id); if(i>=0) a[i]=e; else a.unshift(e); });
     await gPutJson(h,pIdx(c),a);
   }
@@ -6838,7 +7108,7 @@ async function dsImportar(ds,files,modo){
 }
 
 /* ---------------------- 19quinquies. MÓDULO DE REPORTES ---------------------- */
-const pRep=c=>pCli(c)+'reportes.json';
+const pRep=c=>pCli(c)+D_CAT+'/reportes.json';
 const MODS_REP=[
   {k:'tickets',   t:'Tickets',    cols:()=>COLS,                       datos:d=>repTickets(d)},
   {k:'inventario',t:'Inventario', cols:()=>COLS_DISP.map(c=>[c[0],c[1]]), datos:d=>repInventario(d)},
@@ -6928,7 +7198,7 @@ function renderRepModulos(sel){
 }
 async function repPull(silent){
   try{
-    const h=await H(); const a=await gGetJson(h,pRep(S.cliente||(clientesEnAlcance()[0]||'')));
+    const h=await H(); const a=await gGetJsonCompat(h,pRep(S.cliente||(clientesEnAlcance()[0]||'')));
     S.reportes=Array.isArray(a)?a:[];
   }catch(e){ S.reportes=[]; }
   pintarPlantillas();
@@ -7590,6 +7860,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   cambios:()=>_invCambios.slice(),
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
   soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
+  pUsr:pUsr,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
+  PLANTILLA_DS:PLANTILLA_DS,migrarEstructuraCliente:migrarEstructuraCliente,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
   guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
   catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
