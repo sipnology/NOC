@@ -723,7 +723,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <section class="view" id="vCatalogos">
   <div class="panel">
     <h2>Catálogos maestros</h2>
-    <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Los cambios se guardan en <code>Sistema/_tickets_catalogo.json</code> y se propagan automáticamente a todos los usuarios.</div>
+    <div style="font-size:12px;color:var(--muted);margin:-6px 0 8px" id="catCliente"></div>
+    <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Lo de Sipnology
+      —administradores y logo— se guarda en <code>Sistema/_tickets_catalogo.json</code>; lo de cada cliente,
+      en <code>Clientes/&lt;ID&gt;/catalogo.json</code>, aislado del resto.</div>
     <div class="row"><select id="catSel" style="width:260px">
       <option value="clientes">Clientes</option>
       <option value="localidades">Localidades / Sedes (ID de 2 dígitos)</option>
@@ -1005,7 +1008,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-15 · r62';
+const APP_VER = '2026-08-15 · r63';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1022,7 +1025,7 @@ const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin
 
 /* ---------------------- 2. ESTADO GLOBAL ---------------------- */
 const S = {
-  cat:null, inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
+  cat:null, catGlobal:null, catCli:{}, inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
   cliente:'',              // cliente activo; '' = todos (solo para usuarios internos)
   _cliExistentes:null,     // IDs de cliente ya publicados: su ID queda bloqueado
   dashMod:'tickets',       // apartado activo del tablero: tickets | crq | sit
@@ -1274,6 +1277,14 @@ const rutaBit=(mes,mail)=>P_BIT+'/'+mes+'/'+sanitizeName(String(mail||'anonimo')
    una regla que aplica SharePoint. */
 function pCli(c){ return 'Clientes/'+sanitizeName(c||'_sin_cliente')+'/'; }
 const pIdx  =c=>pCli(c)+'tickets_indice.json';
+/* Catálogo propio de cada cliente. Las sedes, sus pisos y los usuarios invitados
+   describen la infraestructura de una organización: no pueden vivir en un archivo
+   común que cualquiera con acceso a Sistema/ pueda leer. */
+const pCatCli=c=>pCli(c)+'catalogo.json';
+/* Qué secciones son del cliente y cuáles son de Sipnology. */
+const SEC_CLIENTE=['localidades','categorias','tipos','prioridades','tiposDispositivo',
+  'imputables','aliasSedes','clientesExternos','catsConTiempos','estadosCRQ','estatus'];
+const SEC_GLOBAL=['admins','logoOperador'];
 const pInv  =c=>pCli(c)+'inventario.json';
 const pCrq  =c=>pCli(c)+'crq.json';
 const pSit  =c=>pCli(c)+'sit.json';
@@ -1369,18 +1380,54 @@ function deepMerge(base,ext){
   }
   return ext;
 }
+/* ---- Catálogo repartido ----
+   Sistema/ guarda solo lo de Sipnology (administradores y logo). Cada cliente tiene el
+   suyo en Clientes/<ID>/catalogo.json con su ficha, sus sedes, sus usuarios invitados
+   y su propia clasificación de incidentes y SLA, que puede diferir entre clientes.
+   La lista de clientes visibles sale de listar la carpeta: SharePoint solo devuelve
+   aquello a lo que el usuario tiene acceso, así que los permisos son la única frontera. */
+function catCliVacio(id,nombre){
+  const def=JSON.parse(JSON.stringify(CAT_DEFAULT));
+  const o={cliente:{id:id,nombre:nombre||id,dominios:[],correosNotif:[],
+                    modulos:['tickets','inventario'],logo:''}};
+  SEC_CLIENTE.forEach(k=>{ o[k]=def[k]!==undefined? JSON.parse(JSON.stringify(def[k]))
+                                                  : (k==='aliasSedes'?{}:[]); });
+  o.localidades=[];              // las sedes son del cliente: nace sin ninguna
+  o.clientesExternos=[];
+  return o;
+}
+/* Arma el S.cat que consume el resto de la aplicación: lo global más el catálogo
+   del cliente activo. Con «Todos los clientes» solo quedan las secciones globales. */
+function componerCat(){
+  const def=JSON.parse(JSON.stringify(CAT_DEFAULT));
+  const g=S.catGlobal||{};
+  const c=S.catCli[S.cliente];
+  const out=JSON.parse(JSON.stringify(def));
+  SEC_GLOBAL.forEach(k=>{ if(g[k]!==undefined) out[k]=g[k]; });
+  if(!out.logoOperador) out.logoOperador=def.logoOperador;
+  if(c){ SEC_CLIENTE.forEach(k=>{ if(c[k]!==undefined) out[k]=c[k]; }); }
+  else { out.localidades=[]; out.clientesExternos=[]; out.aliasSedes={}; }
+  out.clientes=Object.keys(S.catCli).map(id=>Object.assign({id:id},S.catCli[id].cliente||{}));
+  out.version=g.version||0;
+  S.cat=out;
+  S._cliExistentes=new Set(out.clientes.map(x=>x.id).filter(Boolean));
+}
 async function catalogoPull(silent){
   try{
-    const h=await H(); const remoto=await gGetJson(h,P_CAT);
-    const def=JSON.parse(JSON.stringify(CAT_DEFAULT));
-    S.cat = remoto? deepMerge(def,remoto) : def;
-    if(remoto) S.cat.clientes=mergeClientes(def.clientes,remoto.clientes||def.clientes);
-    if(!S.cat.logoOperador) S.cat.logoOperador=def.logoOperador;
-    if(!S.cat.aliasSedes) S.cat.aliasSedes={};
-    S._cliExistentes=new Set((S.cat.clientes||[]).map(c=>c.id).filter(Boolean));
-    S.catOrigen = remoto? 'SharePoint' : 'valores de arranque';
+    const h=await H();
+    const g=await gGetJson(h,P_CAT);
+    S.catGlobal = g || {admins:CAT_DEFAULT.admins.slice(), logoOperador:CAT_DEFAULT.logoOperador, version:0};
+    /* Listar la carpeta devuelve solo los clientes que este usuario puede ver. */
+    let ids=[];
+    try{ ids=(await gList(h,'Clientes')).filter(f=>f.folder).map(f=>f.name); }catch(e){}
+    S.catCli={};
+    for(const id of ids){
+      try{ const c=await gGetJson(h,pCatCli(id)); if(c) S.catCli[id]=c; }catch(e){}
+    }
+    componerCat();
+    S.catOrigen = g? 'SharePoint' : 'valores de arranque';
     S.catError='';
-    if(!remoto && isAdmin()){ await gPutJson(h,P_CAT,S.cat); }   // siembra inicial
+    if(isAdmin()) await migrarCatalogoSiHaceFalta(h,g);
     poblarCatalogosUI();
     revisarRol();
     if(!silent) toast('Catálogo actualizado.');
@@ -1405,14 +1452,74 @@ function revisarRol(){
   logEvent('ROL_ACTUALIZADO',antes+' → '+S.role);
   toast('Tu perfil cambió de '+antes+' a '+S.role+'.',null,9000);
 }
+/* Guarda cada sección donde le toca: lo global en Sistema/, lo del cliente en su carpeta.
+   Si no hay cliente activo solo se escribe lo global, para no inventar un destino. */
 async function catalogoPush(){
   if(!isAdmin()){ toast('Solo el administrador puede modificar catálogos.','err'); return false; }
   const h=await H();
-  S.cat.version=(S.cat.version||0)+1;
-  S.cat.actualizado={por:S.me.mail,cuando:new Date().toISOString()};
-  await gPutJson(h,P_CAT,S.cat);
-  logEvent('CATALOGO_ACTUALIZADO','version '+S.cat.version);
+  const sello={por:S.me.mail,cuando:new Date().toISOString()};
+  S.catGlobal=S.catGlobal||{};
+  SEC_GLOBAL.forEach(k=>{ if(S.cat[k]!==undefined) S.catGlobal[k]=S.cat[k]; });
+  S.catGlobal.version=(S.catGlobal.version||0)+1;
+  S.catGlobal.actualizado=sello;
+  await gPutJson(h,P_CAT,S.catGlobal);
+  const escritos=['Sistema'];
+  /* La ficha de cada cliente vive en su propio archivo: se sincroniza desde el listado. */
+  for(const c of (S.cat.clientes||[])){
+    if(!c.id) continue;
+    const dest=S.catCli[c.id]||catCliVacio(c.id,c.nombre);
+    dest.cliente=Object.assign({},dest.cliente,{id:c.id,nombre:c.nombre,dominios:c.dominios||[],
+      correosNotif:c.correosNotif||[],modulos:c.modulos||['tickets','inventario'],logo:c.logo||''});
+    if(c.id===S.cliente) SEC_CLIENTE.forEach(k=>{ if(S.cat[k]!==undefined) dest[k]=S.cat[k]; });
+    dest.actualizado=sello;
+    S.catCli[c.id]=dest;
+    await gPutJson(h,pCatCli(c.id),dest);
+    escritos.push(c.id);
+  }
+  /* Un cliente que se quitó de la lista deja de tener ficha, pero su carpeta no se borra. */
+  componerCat();
+  logEvent('CATALOGO_ACTUALIZADO','version '+S.catGlobal.version+' · '+escritos.join(', '));
   return true;
+}
+/* Reparte el catálogo antiguo la primera vez, sin destruir el original. */
+async function migrarCatalogoSiHaceFalta(h,g){
+  if(!g || !Array.isArray(g.clientes) || !g.clientes.length) return;   // ya está repartido
+  const tarea=tareaIniciar('separando los catálogos por cliente');
+  try{
+    const resumen=[];
+    for(const c of g.clientes){
+      if(!c.id) continue;
+      const dest=S.catCli[c.id]||catCliVacio(c.id,c.nombre);
+      dest.cliente=Object.assign({},dest.cliente,{id:c.id,nombre:c.nombre||c.id,
+        dominios:c.dominios||[],correosNotif:c.correosNotif||[],
+        modulos:c.modulos||['tickets','inventario'],logo:c.logo||''});
+      SEC_CLIENTE.forEach(k=>{ if(g[k]!==undefined) dest[k]=JSON.parse(JSON.stringify(g[k])); });
+      /* Las sedes y los alias se reparten: cada cliente se queda solo con los suyos. */
+      dest.localidades=(g.localidades||[]).filter(l=>!l.clienteId||l.clienteId===c.id);
+      dest.clientesExternos=(g.clientesExternos||[]).filter(u=>u.clienteId===c.id);
+      dest.aliasSedes={};
+      Object.keys(g.aliasSedes||{}).forEach(k=>{
+        const id=g.aliasSedes[k];
+        if(dest.localidades.some(l=>l.id===id)) dest.aliasSedes[k]=id;
+      });
+      dest.migradoDesde=P_CAT; dest.actualizado={por:S.me.mail,cuando:new Date().toISOString()};
+      await gPutJson(h,pCatCli(c.id),dest);
+      S.catCli[c.id]=dest;
+      resumen.push(c.id+': '+dest.localidades.length+' sede(s), '+dest.clientesExternos.length+' invitado(s)');
+    }
+    /* Respaldo del archivo anterior antes de podarlo. */
+    await gPutJson(h,'Sistema/_tickets_catalogo_respaldo.json',g);
+    const nuevo={version:(g.version||0)+1,admins:g.admins||[],logoOperador:g.logoOperador||'',
+                 actualizado:{por:S.me.mail,cuando:new Date().toISOString()},
+                 nota:'Los catálogos de cada cliente viven en Clientes/<ID>/catalogo.json'};
+    await gPutJson(h,P_CAT,nuevo);
+    S.catGlobal=nuevo;
+    componerCat();
+    logEvent('CATALOGO_SEPARADO_POR_CLIENTE',resumen.join(' · '));
+    toast('Los catálogos se separaron por cliente: '+resumen.join(' · ')+
+          '. El archivo anterior quedó como respaldo.',null,14000);
+  }catch(e){ toast('No se pudo separar el catálogo: '+e.message,'err',12000); }
+  finally{ tareaFin(tarea); }
 }
 
 /* ---------------------- 6bis. CLIENTE ACTIVO Y MÓDULOS ---------------------- */
@@ -1636,10 +1743,16 @@ function resolverRol(){
   if(esInterno()){ S.role='operador'; return; }
   S.role='cliente';
   const mails=currentUserEmails();
-  const ext=(S.cat.clientesExternos||[]).find(u=>mails.indexOf(String(u.correo||'').toLowerCase())!==-1);
-  if(ext){ S.clienteScope=ext.clienteId; return; }
-  const c=(S.cat.clientes||[]).find(c=>(c.dominios||[]).some(d=>mails.some(m=>m.endsWith('@'+String(d).toLowerCase()))));
-  S.clienteScope = c? c.id : '__ninguno__';
+  /* Se busca en el catálogo de cada cliente visible: un invitado solo puede leer el suyo,
+     así que en la práctica solo hay un candidato. */
+  let alcance='';
+  Object.keys(S.catCli||{}).forEach(id=>{
+    const cc=S.catCli[id]||{};
+    if((cc.clientesExternos||[]).some(u=>mails.indexOf(String(u.correo||'').toLowerCase())!==-1)) alcance=id;
+    const dom=(cc.cliente&&cc.cliente.dominios)||[];
+    if(!alcance && dom.some(d=>mails.some(m=>m.endsWith('@'+String(d).toLowerCase())))) alcance=id;
+  });
+  S.clienteScope = alcance || '__ninguno__';
 }
 /* Dibuja el selector de cliente y guarda la elección del usuario. */
 const PREF_CLI='sip_tkt_cliente';
@@ -1682,6 +1795,8 @@ async function cambiarCliente(id){
     $('#selCliente').value=S.cliente; return; }
   S.cliente=id||'';
   try{ localStorage.setItem(PREF_CLI,S.cliente); }catch(e){}
+  /* Cada cliente trae su propia clasificación y sus sedes: hay que recomponer. */
+  componerCat(); poblarCatalogosUI();
   pintarMarca(); aplicarModulosUI(); aplicarClienteApertura();
   await cargarDatos(true);
   logEvent('CLIENTE_ACTIVO',S.cliente||'(todos)');
@@ -3816,8 +3931,24 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
   catsConTiempos:'Categorías que sí llevan tiempo de falla y afectación (una por línea)',
   estadosCRQ:'Estados de un CRQ documentado en la plataforma (uno por línea)'};
 
+/* Secciones que pertenecen a un cliente concreto: sin cliente activo no se pueden
+   editar, porque no habría dónde guardarlas. */
+const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
+  'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
+  'estadosCRQ','mantenimiento','historico'];
 function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
+  const marca=$('#catCliente');
+  if(marca) marca.innerHTML = CAT_DE_CLIENTE.indexOf(k)!==-1
+    ? (S.cliente? '· catálogo de <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
+                : '· <b style="color:var(--warn)">sin cliente seleccionado</b>')
+    : '· catálogo de Sipnology, común a todos los clientes';
+  if(CAT_DE_CLIENTE.indexOf(k)!==-1 && !S.cliente){
+    box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+      'Esta sección es propia de cada cliente y se guarda en <code>Clientes/&lt;ID&gt;/catalogo.json</code>. '+
+      'Selecciona un cliente concreto en el encabezado para verla o editarla.</div>';
+    return;
+  }
   $('#btnCatSave').disabled = k==='equipos' ? !puedeEditarInventario() : ro;
   if(k==='historico') return renderHistorico(box,ro);
   /* Clientes tiene editor propio (módulos y logo): va antes que las tablas genéricas. */
@@ -6532,6 +6663,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   categoriaConTiempos:categoriaConTiempos,comprimirImagen:comprimirImagen,pesoRTE:pesoRTE,
   IMG_ANCHO:IMG_ANCHO,IMG_CALIDAD:IMG_CALIDAD,DESC_MAX_MB:DESC_MAX_MB,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
+  pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
+  catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
   colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,
