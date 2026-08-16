@@ -1028,7 +1028,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r76';
+const APP_VER = '2026-08-16 · r77';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1860,7 +1860,8 @@ async function marcarRepartido(h,g,motivo){
 function soloGlobal(g){
   const out={};
   SEC_GLOBAL.forEach(k=>{ if(g&&g[k]!==undefined) out[k]=clon(g[k]); });
-  ['version','actualizado','repartido','nota'].forEach(k=>{ if(g&&g[k]!==undefined) out[k]=clon(g[k]); });
+  ['version','actualizado','repartido','migradoPorCliente','nota']
+    .forEach(k=>{ if(g&&g[k]!==undefined) out[k]=clon(g[k]); });
   return out;
 }
 /* Qué secciones de cliente se colaron en el archivo de Sistema. */
@@ -2279,8 +2280,18 @@ async function migrarSiHaceFalta(){
   if(!isAdmin()) return;
   try{
     const h=await H();
-    const yaHay=await gGet(h,pIdx((clientesVisibles()[0]||{}).id||'BBVA'));
-    if(yaHay) return;
+    /* Ojo con la pregunta que se hace aquí. Antes era «¿está vacía la ruta nueva?», y en
+       cuanto la ruta nueva cambió de sitio la respuesta pasó a ser «sí» aunque hubiera
+       años de datos en la anterior: la migración heredada se ofreció otra vez y copió
+       encima datos viejos. La pregunta correcta es «¿hay datos del cliente en ALGUNA de
+       las rutas que sabemos leer?», y basta con que un solo cliente los tenga. */
+    if((S.catGlobal||{}).migradoPorCliente) return;
+    for(const c of clientesVisibles()){
+      const idx=await gGetJsonCompat(h,pIdx(c.id));
+      if(Array.isArray(idx)&&idx.length) return;
+      const inv=await gGetJsonCompat(h,pInv(c.id));
+      if(Array.isArray(inv)&&inv.length) return;
+    }
     const idxViejo=await gGetJson(h,P_LEGACY_IDX);
     const invViejo=await gGetJson(h,P_LEGACY_INV);
     const nIdx=Array.isArray(idxViejo)?idxViejo.length:0, nInv=Array.isArray(invViejo)?invViejo.length:0;
@@ -2295,6 +2306,11 @@ async function migrarSiHaceFalta(){
     const a=porCli(idxViejo,'clienteId'), b=porCli(invViejo,'clienteId');
     for(const c of Object.keys(a)) await gPutJson(h,pIdx(c),a[c]);
     for(const c of Object.keys(b)) await gPutJson(h,pInv(c),b[c]);
+    /* Se deja constancia en Sistema/ de que esto ya ocurrió: es lo único que impide que
+       vuelva a ofrecerse si mañana cambian otra vez las rutas. */
+    try{ S.catGlobal=S.catGlobal||{};
+         S.catGlobal.migradoPorCliente={por:S.me.mail,cuando:new Date().toISOString()};
+         await gPutJson(h,P_CAT,soloGlobal(S.catGlobal)); }catch(e){}
     logEvent('MIGRACION_POR_CLIENTE',nIdx+' tickets · '+nInv+' equipos · clientes: '+
       [...new Set(Object.keys(a).concat(Object.keys(b)))].join(', '));
     toast('Migración completa: '+nIdx+' ticket(s) y '+nInv+' equipo(s) ahora viven por cliente.',null,10000);
@@ -5151,6 +5167,68 @@ async function migrarEstructuraCliente(cli,avisar,borrarCasos){
   }
   return {hechos:hechos,saltados:saltados,errores:errores};
 }
+/* ---- Comparar la ruta nueva con la anterior ----
+   Cuando un archivo existe en las dos, la aplicación lee el nuevo. Si el nuevo lo
+   escribió una migración equivocada, el bueno queda escondido detrás sin que nadie lo
+   note. Esto lo pone a la vista: cuántos registros tiene cada uno y cuál es más reciente,
+   para poder decidir con datos en vez de a ciegas. */
+/* Se calcula al llamarla, no al cargar: pRep se declara más abajo y una constante de
+   nivel superior lo leería antes de que exista. */
+function archivosCli(){
+  return [['idx','índice de tickets',pIdx],['inv','inventario',pInv],
+          ['crq','CRQs',pCrq],['sit','SITs',pSit],
+          ['cat','catálogo',pCatCli],['rep','plantillas de reporte',pRep]];
+}
+function cuentaDe(v){
+  if(Array.isArray(v)) return v.length+' registro(s)';
+  if(v&&typeof v==='object'){
+    const c=censoSedes(v);
+    if(c.sedes||c.alias) return c.sedes+' sede(s), '+c.pisos+' piso(s), '+c.alias+' alias';
+    return Object.keys(v).length+' clave(s)';
+  }
+  return '—';
+}
+async function compararRutas(cli){
+  const h=await H(), out=[];
+  for(const [k,etiqueta,ruta] of archivosCli()){
+    const nueva=ruta(cli), vieja=rutaVieja(nueva);
+    if(!vieja) continue;
+    let a=null,b=null;
+    try{ a=await gGetJson(h,nueva); }catch(e){}
+    try{ b=await gGetJson(h,vieja); }catch(e){}
+    if(a===null&&b===null) continue;
+    out.push({k:k,etiqueta:etiqueta,nueva:nueva,vieja:vieja,
+              hayNueva:a!==null&&a!==undefined, hayVieja:b!==null&&b!==undefined,
+              cuentaNueva:cuentaDe(a), cuentaVieja:cuentaDe(b),
+              iguales:JSON.stringify(a)===JSON.stringify(b)});
+  }
+  return out;
+}
+/* Hace prevalecer una de las dos copias. Nunca borra la otra en el mismo gesto: primero
+   se copia y se verifica, y la limpieza es una decisión aparte. */
+async function resolverRuta(cli,k,cual){
+  const h=await H();
+  const def=archivosCli().find(x=>x[0]===k);
+  if(!def) throw new Error('archivo desconocido');
+  const nueva=def[2](cli), vieja=rutaVieja(nueva);
+  if(cual==='vieja'){
+    const dato=await gGetJson(h,vieja);
+    if(dato===null||dato===undefined) throw new Error('no hay nada en la ruta anterior');
+    /* Lo que se va a pisar se guarda al lado, por si la elección fue la equivocada. */
+    const actual=await gGetJson(h,nueva);
+    if(actual!==null&&actual!==undefined)
+      await gPutJson(h,nueva.replace(/\.json$/,'_reemplazado.json'),actual);
+    await gPutJson(h,nueva,dato);
+    const ver=await gGetJson(h,nueva);
+    if(JSON.stringify(ver)!==JSON.stringify(dato)) throw new Error('la copia no se pudo verificar');
+    logEvent('RUTA_RESUELTA',cli+' · '+def[1]+': prevalece la versión anterior ('+cuentaDe(dato)+')');
+  }else{
+    await gDelete(h,vieja);
+    logEvent('RUTA_RESUELTA',cli+' · '+def[1]+': se conserva la versión nueva y se borra la anterior');
+  }
+}
+/* Nombre llano de un archivo, para los avisos. */
+function esc2Plano(k){ const d=archivosCli().find(x=>x[0]===k); return d? d[1] : k; }
 function renderEstructura(box){
   if(!esDueno()){ box.innerHTML='<div class="note">Mover archivos de sitio está reservado a <code>'+
     esc(DUENO)+'</code>.</div>'; return; }
@@ -5176,7 +5254,62 @@ function renderEstructura(box){
         '<button class="btn" data-mig="'+esc(id)+'" style="padding:4px 11px;font-size:12px">Migrar</button>'+
       '</td></tr>').join('')
       : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
-    '</tbody></table></div><div id="migRep"></div>';
+    '</tbody></table></div>'+
+    '<h2 style="margin-top:20px">Qué hay en cada ruta</h2>'+
+    '<div class="note">Cuando un archivo existe en la ruta nueva y en la anterior, la aplicación lee '+
+    '<b>la nueva</b>. Si la nueva la escribió una migración equivocada, la buena queda escondida detrás. '+
+    'Aquí se ven las dos y se decide cuál manda. Lo que se pisa se guarda al lado como '+
+    '<code>…_reemplazado.json</code>.</div>'+
+    '<div class="row" style="gap:8px;margin-bottom:10px">'+
+      '<select id="cmpCli" style="width:260px">'+ids.map(id=>'<option'+(id===S.cliente?' selected':'')+'>'+esc(id)+'</option>').join('')+'</select>'+
+      '<button class="btn sec" id="cmpVer">Comparar rutas</button></div>'+
+    '<div id="cmpRep"></div>'+
+    '<div id="migRep"></div>';
+  const verBtn=box.querySelector('#cmpVer');
+  const pintarCmp=async function(btn){
+    const cli=box.querySelector('#cmpCli').value;
+    const dest=box.querySelector('#cmpRep');
+    dest.innerHTML='<div class="note"><span class="spin"></span> Leyendo las dos rutas…</div>';
+    if(btn) busy(btn,true);
+    try{
+      const filas=await compararRutas(cli);
+      if(!filas.length){ dest.innerHTML='<div class="note">No queda nada en las rutas anteriores: '+
+        esc(cli)+' ya está completamente migrado.</div>'; return; }
+      dest.innerHTML='<div class="tw"><table><thead><tr><th>Archivo</th><th>Ruta nueva</th>'+
+        '<th>Ruta anterior</th><th></th></tr></thead><tbody>'+
+        filas.map(f=>'<tr><td><b>'+esc(f.etiqueta)+'</b>'+
+          (f.iguales? ' <span class="pill" style="background:var(--panel2);color:var(--ok)">idénticas</span>':'')+'</td>'+
+          '<td class="mono">'+(f.hayNueva? esc(f.cuentaNueva) : '<span style="color:var(--muted)">vacía</span>')+
+            '<div style="color:var(--muted);font-size:11px">'+esc(f.nueva)+'</div></td>'+
+          '<td class="mono">'+(f.hayVieja? esc(f.cuentaVieja) : '<span style="color:var(--muted)">vacía</span>')+
+            '<div style="color:var(--muted);font-size:11px">'+esc(f.vieja)+'</div></td>'+
+          '<td style="white-space:nowrap">'+
+            (f.hayVieja&&!f.iguales? '<button class="btn" data-usar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
+              'style="padding:4px 11px;font-size:12px">Que mande la anterior</button> ':'')+
+            (f.hayVieja? '<button class="btn sec" data-tirar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
+              'style="padding:4px 11px;font-size:12px">Conservar la nueva</button>':'')+
+          '</td></tr>').join('')+'</tbody></table></div>';
+      dest.querySelectorAll('[data-usar]').forEach(b=>b.onclick=async function(){
+        if(!confirm('El '+esc2Plano(b.dataset.usar)+' de la ruta anterior pasará a mandar.\n\n'+
+          'Lo que hay ahora en la ruta nueva se guarda como …_reemplazado.json.')) return;
+        busy(this,true);
+        try{ await resolverRuta(b.dataset.cli,b.dataset.usar,'vieja');
+             await cargarDatos(true); await catalogoPull(true);
+             toast('Listo. Ahora manda la versión anterior.',null,9000); await pintarCmp(null); }
+        catch(e){ toast('No se pudo: '+e.message,'err',10000); }
+        finally{ busy(this,false); } });
+      dest.querySelectorAll('[data-tirar]').forEach(b=>b.onclick=async function(){
+        if(!confirm('Se borrará el archivo de la ruta anterior. Va a la papelera de SharePoint.')) return;
+        busy(this,true);
+        try{ await resolverRuta(b.dataset.cli,b.dataset.tirar,'nueva');
+             toast('Archivo anterior borrado.'); await pintarCmp(null); }
+        catch(e){ toast('No se pudo: '+e.message,'err',10000); }
+        finally{ busy(this,false); } });
+    }catch(e){ dest.innerHTML='<div class="note" style="border-left-color:var(--err)">No se pudo comparar: '+
+      esc(e.message)+'</div>'; }
+    finally{ if(btn) busy(btn,false); }
+  };
+  if(verBtn) verBtn.onclick=function(){ pintarCmp(this); };
   box.querySelectorAll('[data-mig]').forEach(b=>b.onclick=async function(){
     const cli=b.dataset.mig;
     const casos=!!box.querySelector('[data-casos="'+cli+'"]:checked');
@@ -7861,6 +7994,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
   soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
   pUsr:pUsr,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
+  archivosCli:archivosCli,cuentaDe:cuentaDe,compararRutas:compararRutas,resolverRuta:resolverRuta,
   PLANTILLA_DS:PLANTILLA_DS,migrarEstructuraCliente:migrarEstructuraCliente,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
   guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
