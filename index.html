@@ -1027,7 +1027,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r74';
+const APP_VER = '2026-08-16 · r75';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1506,7 +1506,11 @@ async function catalogoPull(silent){
   try{
     const h=await H();
     const g=await gGetJson(h,P_CAT);
-    S.catGlobal = g || {admins:CAT_DEFAULT.admins.slice(), logoOperador:CAT_DEFAULT.logoOperador, version:0};
+    /* En memoria solo entra lo de Sipnology. Si el archivo trae secciones de cliente,
+       son restos del catálogo común: dejarlas vivas es lo que rearmaba la migración. */
+    S.sobrantesSistema=sobrantesGlobales(g);
+    S.catGlobal = g ? soloGlobal(g)
+                    : {admins:CAT_DEFAULT.admins.slice(), logoOperador:CAT_DEFAULT.logoOperador, version:0};
     /* Listar la carpeta devuelve solo los clientes que este usuario puede ver. */
     let ids=[];
     try{ ids=(await gList(h,'Clientes')).filter(f=>f.folder).map(f=>f.name); }catch(e){}
@@ -1579,6 +1583,16 @@ async function catalogoPull(silent){
     S.catOrigen = g? 'SharePoint' : 'valores de arranque';
     S.catError='';
     if(isAdmin()) await migrarCatalogoSiHaceFalta(h,g);
+    /* Si quedaron restos en Sistema/ y ya no hay nada que repartir, se limpian: mientras
+       sigan ahí, cualquier versión anterior del programa volvería a disparar el reparto. */
+    if(esDueno() && S.sobrantesSistema.length && (S.catGlobal||{}).repartido){
+      try{ await gPutJson(h,P_CAT,soloGlobal(S.catGlobal));
+           logEvent('SISTEMA_DEPURADO','se quitaron de '+P_CAT+': '+S.sobrantesSistema.join(', '));
+           S.sobrantesSistema=[]; }catch(e){}
+    }
+    if(S.sobrantesSistema.length && isAdmin())
+      toast('El archivo '+P_CAT+' todavía carga secciones que no le corresponden ('+
+        S.sobrantesSistema.join(', ')+'). Se ignoran, pero conviene limpiarlas.','warn',14000);
     poblarCatalogosUI();
     revisarRol();
     if(!silent) toast('Catálogo actualizado.');
@@ -1627,6 +1641,9 @@ async function catalogoPush(){
   if(cambioGlobal){
     S.catGlobal.version=(S.catGlobal.version||0)+1;
     S.catGlobal.actualizado=sello;
+    /* Se escribe SIEMPRE depurado: ni una sección de cliente puede volver a colarse
+       en Sistema/, porque de ahí es de donde revivía el reparto automático. */
+    S.catGlobal=soloGlobal(S.catGlobal);
     await gPutJson(h,P_CAT,S.catGlobal);
     escritos.push('Sistema');
   }
@@ -1704,44 +1721,105 @@ async function catalogoPush(){
   return true;
 }
 /* Reparte el catálogo antiguo la primera vez, sin destruir el original. */
+/* ---- El reparto del catálogo antiguo: UNA sola vez en la vida del sistema ----
+   Esta función existía para partir el catálogo común en uno por cliente. El problema
+   era su condición de arranque: «si el archivo global todavía tiene la lista de
+   clientes, reparte». Si la poda final fallaba —o si alguien volvía a escribir el
+   archivo global entero desde memoria— esa lista seguía ahí y el reparto se repetía
+   en CADA lectura del catálogo, es decir cada pocos segundos. Y al repetirse sobre un
+   archivo global ya podado, «repartía» sedes que ya no estaban en él:
+       dest.localidades = (g.localidades||[]).filter(...)  →  []
+   Eso borraba sedes, pisos y alias, y dejaba intactas categorías y SLA. Exactamente
+   el daño que se vio dos veces.
+   Ahora: se marca como hecho ANTES de empezar, no se ejecuta si ya hay catálogos por
+   cliente con sedes, y jamás se escribe encima de un cliente que ya tiene infraestructura. */
 async function migrarCatalogoSiHaceFalta(h,g){
-  if(!g || !Array.isArray(g.clientes) || !g.clientes.length) return;   // ya está repartido
+  if(!g) return;
+  if(g.repartido) return;                                              // ya consta que se hizo
+  if(!Array.isArray(g.clientes) || !g.clientes.length) return;         // no hay nada que repartir
+  if(!esDueno()) return;                                               // una sola persona, una sola vez
+  /* Si ya existe infraestructura repartida, el reparto sobra: se marca y se sale.
+     Repetirlo solo puede destruir. */
+  const yaRepartido=Object.keys(S.catCli||{}).some(id=>censoSedes(S.catCli[id]).sedes>0);
+  if(yaRepartido){
+    await marcarRepartido(h,g,'ya existían catálogos por cliente con sedes');
+    return;
+  }
   const tarea=tareaIniciar('separando los catálogos por cliente');
   try{
-    const resumen=[];
+    /* Respaldo del archivo anterior ANTES de tocar nada. */
+    await gPutJson(h,'Sistema/_tickets_catalogo_respaldo.json',g);
+    /* Y se marca como hecho ANTES de repartir: si algo falla a mitad, el reparto NO se
+       reintenta solo. Se avisa y se repara desde Administración → Restaurar catálogo. */
+    await marcarRepartido(h,g,'reparto iniciado');
+    const resumen=[], respetados=[];
     for(const c of g.clientes){
       if(!c.id) continue;
-      const dest=S.catCli[c.id]||catCliVacio(c.id,c.nombre);
+      const actual=S.catCli[c.id];
+      /* Regla dura: un cliente que ya tiene sedes no se toca. Nunca. */
+      if(actual && censoSedes(actual).sedes>0){ respetados.push(c.id); continue; }
+      const dest=actual||catCliVacio(c.id,c.nombre);
       dest.cliente=Object.assign({},dest.cliente,{id:c.id,nombre:c.nombre||c.id,
         dominios:c.dominios||[],correosNotif:c.correosNotif||[],
         modulos:c.modulos||['tickets','inventario'],logo:c.logo||''});
-      SEC_CLIENTE.forEach(k=>{ if(g[k]!==undefined) dest[k]=JSON.parse(JSON.stringify(g[k])); });
-      /* Las sedes y los alias se reparten: cada cliente se queda solo con los suyos. */
-      dest.localidades=(g.localidades||[]).filter(l=>!l.clienteId||l.clienteId===c.id);
-      dest.clientesExternos=(g.clientesExternos||[]).filter(u=>u.clienteId===c.id);
-      dest.aliasSedes={};
-      Object.keys(g.aliasSedes||{}).forEach(k=>{
-        const id=g.aliasSedes[k];
-        if(dest.localidades.some(l=>l.id===id)) dest.aliasSedes[k]=id;
-      });
+      SEC_CLIENTE.forEach(k=>{ if(g[k]!==undefined) dest[k]=clon(g[k]); });
+      /* Las sedes y los alias se reparten: cada cliente se queda solo con los suyos.
+         Si el archivo global ya no las trae, se deja lo que hubiera: repartir «nada»
+         no puede significar borrar. */
+      const locs=(g.localidades||[]).filter(l=>!l.clienteId||l.clienteId===c.id);
+      if(locs.length) dest.localidades=locs;
+      const ext=(g.clientesExternos||[]).filter(u=>u.clienteId===c.id);
+      if(ext.length) dest.clientesExternos=ext;
+      if(Object.keys(g.aliasSedes||{}).length){
+        const al={};
+        Object.keys(g.aliasSedes).forEach(k=>{
+          const id=g.aliasSedes[k];
+          if((dest.localidades||[]).some(l=>l.id===id)) al[k]=id;
+        });
+        if(Object.keys(al).length) dest.aliasSedes=al;
+      }
       dest.migradoDesde=P_CAT; dest.actualizado={por:S.me.mail,cuando:new Date().toISOString()};
       await gPutJson(h,pCatCli(c.id),dest);
       S.catCli[c.id]=dest;
-      resumen.push(c.id+': '+dest.localidades.length+' sede(s), '+dest.clientesExternos.length+' invitado(s)');
+      resumen.push(c.id+': '+(dest.localidades||[]).length+' sede(s), '+
+                   (dest.clientesExternos||[]).length+' invitado(s)');
     }
-    /* Respaldo del archivo anterior antes de podarlo. */
-    await gPutJson(h,'Sistema/_tickets_catalogo_respaldo.json',g);
-    const nuevo={version:(g.version||0)+1,admins:g.admins||[],logoOperador:g.logoOperador||'',
-                 actualizado:{por:S.me.mail,cuando:new Date().toISOString()},
-                 nota:'Los catálogos de cada cliente viven en Clientes/<ID>/catalogo.json'};
-    await gPutJson(h,P_CAT,nuevo);
-    S.catGlobal=nuevo;
     componerCat();
-    logEvent('CATALOGO_SEPARADO_POR_CLIENTE',resumen.join(' · '));
-    toast('Los catálogos se separaron por cliente: '+resumen.join(' · ')+
-          '. El archivo anterior quedó como respaldo.',null,14000);
-  }catch(e){ toast('No se pudo separar el catálogo: '+e.message,'err',12000); }
+    logEvent('CATALOGO_SEPARADO_POR_CLIENTE',resumen.join(' · ')+
+      (respetados.length? ' · intactos por tener sedes propias: '+respetados.join(', ') : ''));
+    if(resumen.length) toast('Los catálogos se separaron por cliente: '+resumen.join(' · ')+
+      '. El archivo anterior quedó como respaldo.',null,14000);
+  }catch(e){
+    logEvent('CATALOGO_REPARTO_FALLIDO',e.message);
+    toast('El reparto de catálogos falló a mitad: '+e.message+
+      '. NO se reintentará solo. Revisa Administración → Restaurar catálogo antes de seguir.','err',20000);
+  }
   finally{ tareaFin(tarea); }
+}
+/* Deja constancia en el archivo global de que el reparto ya ocurrió, y de paso lo poda.
+   Es lo único que impide que la migración vuelva a dispararse. */
+async function marcarRepartido(h,g,motivo){
+  const nuevo=soloGlobal(g);
+  nuevo.version=(g.version||0)+1;
+  nuevo.repartido={por:S.me.mail,cuando:new Date().toISOString(),motivo:motivo||''};
+  nuevo.nota='Los catálogos de cada cliente viven en Clientes/<ID>/catalogo.json';
+  await gPutJson(h,P_CAT,nuevo);
+  S.catGlobal=nuevo;
+  logEvent('CATALOGO_REPARTO_MARCADO',motivo||'');
+}
+/* El archivo de Sistema solo puede contener lo de Sipnology. Cualquier sección de
+   cliente que aparezca ahí es basura heredada: si se conserva, la migración vuelve a
+   dispararse y el daño se repite. Se depura al leer y al escribir. */
+function soloGlobal(g){
+  const out={};
+  SEC_GLOBAL.forEach(k=>{ if(g&&g[k]!==undefined) out[k]=clon(g[k]); });
+  ['version','actualizado','repartido','nota'].forEach(k=>{ if(g&&g[k]!==undefined) out[k]=clon(g[k]); });
+  return out;
+}
+/* Qué secciones de cliente se colaron en el archivo de Sistema. */
+function sobrantesGlobales(g){
+  if(!g) return [];
+  return Object.keys(g).filter(k=>SEC_CLIENTE.indexOf(k)!==-1 || k==='clientes');
 }
 
 /* ---------------------- 6bis. CLIENTE ACTIVO Y MÓDULOS ---------------------- */
@@ -7511,6 +7589,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice(),
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
+  soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
   guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
   catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
