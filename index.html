@@ -1009,7 +1009,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r68';
+const APP_VER = '2026-08-16 · r69';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1431,7 +1431,15 @@ async function catalogoPull(silent){
       try{
         const c=await gGetJson(h,pCatCli(id));
         if(c){ S.catCli[id]=c; S.catCliOk.add(id); }
-        else { S.catCli[id]=catCliVacio(id,id); S.catCliOk.add(id); }  // carpeta sin catálogo: nace vacío
+        else {
+          /* Sin catálogo puede ser un cliente recién creado o uno cuyo archivo se perdió.
+             Se distingue por si la carpeta ya tiene datos: si los tiene, se protege. */
+          let conDatos=false;
+          try{ conDatos = !!(await gGet(h,pInv(id))) || !!(await gGet(h,pIdx(id))); }catch(e){}
+          S.catCli[id]=catCliVacio(id,id);
+          if(conDatos) fallos.push(id+': la carpeta tiene datos pero le falta catalogo.json');
+          else S.catCliOk.add(id);
+        }
       }catch(e){ fallos.push(id+': '+e.message); }
     }
     /* Un catálogo que no se pudo leer NO se toca al guardar: sobrescribirlo con los
@@ -1491,7 +1499,17 @@ async function catalogoPush(){
       c? {nombre:c.nombre,dominios:c.dominios||[],correosNotif:c.correosNotif||[],
           modulos:c.modulos||['tickets','inventario'],logo:c.logo||'',activo:true}
        : {activo:false});
-    if(id===S.cliente) SEC_CLIENTE.forEach(k=>{ if(S.cat[k]!==undefined) dest[k]=S.cat[k]; });
+    if(id===S.cliente){
+      /* Red de seguridad: pasar de N sedes a ninguna casi siempre es un accidente. */
+      const antes=(dest.localidades||[]).length, ahora=(S.cat.localidades||[]).length;
+      if(antes>0 && ahora===0 &&
+         !confirm('El catálogo de '+id+' tiene '+antes+' sede(s) y se va a guardar sin ninguna.\n\n'+
+                  'Se perderían también sus pisos. ¿Es lo que quieres?')){
+        omitidos.push(id+' (se conservaron sus '+antes+' sede(s))');
+        continue;
+      }
+      SEC_CLIENTE.forEach(k=>{ if(S.cat[k]!==undefined) dest[k]=S.cat[k]; });
+    }
     dest.actualizado=sello;
     S.catCli[id]=dest;
     if(S.catCliOk) S.catCliOk.add(id);
@@ -4181,6 +4199,62 @@ async function reconstruirDesdeRespaldoMigracion(btn){
   }catch(e){ toast('No se pudo reconstruir: '+e.message,'err',12000); }
   finally{ tareaFin(tarea); busy(btn,false); }
 }
+/* Reconstruye las sedes y sus pisos a partir de los datos que sí sobrevivieron:
+   el inventario y los tickets llevan el ID de sede, su nombre y el piso de cada
+   equipo. Es la vía de recuperación cuando el catálogo se perdió pero los datos no. */
+function sedesDesdeDatos(){
+  const m={};
+  const meter=(id,nombre,piso)=>{
+    id=String(id||'').trim(); if(!id) return;
+    if(/^\d$/.test(id)) id='0'+id;
+    const o=m[id]||(m[id]={id:id,nombre:'',pisos:new Set()});
+    if(nombre && !o.nombre) o.nombre=String(nombre).replace(/^\[\d+\]\s*-\s*/,'').trim();
+    if(piso) o.pisos.add(String(piso).trim());
+  };
+  (S.inv||[]).forEach(e=>meter(e.localidadId, e.localidadNombre||nombreLoc(e.localidadId), e.piso));
+  (S.idx||[]).forEach(t=>{
+    const pisos=(t.pisos&&t.pisos.length)? t.pisos : String(t.piso||'').split(/\s*,\s*/);
+    pisos.filter(Boolean).forEach(p=>meter(t.localidadId,t.localidad,p));
+    if(!pisos.length) meter(t.localidadId,t.localidad,'');
+  });
+  return Object.keys(m).sort().map(id=>({id:id, clienteId:S.cliente,
+    nombre:m[id].nombre||('Sede '+id), pisos:[...m[id].pisos].filter(Boolean).sort()}));
+}
+async function reconstruirSedes(btn){
+  if(!esDueno()){ toast('Reconstruir sedes está reservado a '+DUENO+'.','err',9000); return; }
+  if(!S.cliente){ toast('Selecciona primero el cliente en el encabezado.','err'); return; }
+  const nuevas=sedesDesdeDatos();
+  if(!nuevas.length){ toast('No hay inventario ni tickets de los que deducir las sedes.','warn',9000); return; }
+  const actuales=(S.cat.localidades||[]);
+  const detalle=nuevas.map(l=>'  · ['+l.id+'] '+l.nombre+' — '+l.pisos.length+' piso(s)').join('\n');
+  if(!confirm('Se dedujeron '+nuevas.length+' sede(s) del inventario y los tickets de '+S.cliente+':\n\n'+
+    detalle+'\n\nEl catálogo tiene ahora '+actuales.length+' sede(s). Las deducidas se agregan y, si '+
+    'una ya existe, se le completan los pisos que falten. No se borra ninguna.\n\n¿Continuar?')) return;
+  const porId={}; actuales.forEach(l=>porId[l.id]=l);
+  let alta=0, comp=0;
+  nuevas.forEach(n=>{
+    const y=porId[n.id];
+    if(!y){ actuales.push(n); porId[n.id]=n; alta++; return; }
+    y.clienteId=y.clienteId||S.cliente;
+    if(!y.nombre||/^Sede \d+$/.test(y.nombre)) y.nombre=n.nombre;
+    y.pisos=y.pisos||[];
+    const antes=y.pisos.length;
+    n.pisos.forEach(p=>{ if(y.pisos.indexOf(p)===-1) y.pisos.push(p); });
+    y.pisos.sort();
+    if(y.pisos.length>antes) comp++;
+  });
+  actuales.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  S.cat.localidades=actuales;
+  busy(btn,true);
+  try{
+    if(await catalogoPush()){
+      logEvent('SEDES_RECONSTRUIDAS',S.cliente+' · '+alta+' alta(s), '+comp+' completada(s)');
+      toast(alta+' sede(s) agregadas y '+comp+' completadas con sus pisos.',null,10000);
+      poblarCatalogosUI(); renderCat();
+    }
+  }catch(e){ toast('No se pudo guardar: '+e.message,'err',10000); }
+  finally{ busy(btn,false); }
+}
 function renderRespaldo(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
@@ -4222,12 +4296,21 @@ function renderRespaldo(box){
         '↺ Reconstruir catálogos desde el respaldo de la migración</button>'+
       '<span style="color:var(--muted);font-size:12px">Vuelve a repartir <code>Sistema/_tickets_catalogo_respaldo.json</code> '+
       'entre los clientes. Úsalo si un catálogo quedó incompleto.</span>'+
+    '</div>'+
+    '<div class="row" style="margin-top:10px;gap:8px;align-items:center">'+
+      '<button class="btn sec" id="bkSedes" style="padding:5px 12px;font-size:12px"'+((esDueno()&&S.cliente)?'':' disabled')+'>'+
+        '↺ Reconstruir sedes y pisos desde el inventario</button>'+
+      '<span style="color:var(--muted);font-size:12px">Deduce las sedes de '+
+      (S.cliente? '<b>'+esc(nombreCliente())+'</b>' : 'el cliente activo')+
+      ' a partir del ID de localidad, el nombre y el piso que llevan sus equipos y tickets. No borra nada.</span>'+
     '</div>';
   box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
     await descargarRespaldo(b.dataset.bk,this); renderCat(); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=function(){ eliminarClienteDefinitivo(b.dataset.rm,this); });
   const rec=box.querySelector('#bkRecon');
   if(rec) rec.onclick=function(){ reconstruirDesdeRespaldoMigracion(this); };
+  const rsd=box.querySelector('#bkSedes');
+  if(rsd) rsd.onclick=function(){ reconstruirSedes(this); };
   const f=box.querySelector('#bkFile');
   if(f) f.onchange=function(){ const a=f.files[0]; f.value=''; if(a) restaurarRespaldo(a,this); };
 }
@@ -6982,6 +7065,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
   respaldoDe:respaldoDe,RESP_VER:RESP_VER,respaldados:()=>[..._respaldados],
   reconstruirDesdeRespaldoMigracion:reconstruirDesdeRespaldoMigracion,
+  sedesDesdeDatos:sedesDesdeDatos,reconstruirSedes:reconstruirSedes,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
