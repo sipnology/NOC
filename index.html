@@ -1028,7 +1028,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r77';
+const APP_VER = '2026-08-16 · r78';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -5244,17 +5244,23 @@ function renderEstructura(box){
     '<code>Clientes/&lt;ID&gt;/Casos/</code> con todas sus evidencias y vacía el índice de tickets. '+
     'Es lo que pediste para volver a cargar los tickets desde cero, pero no tiene vuelta atrás salvo '+
     'por la papelera de SharePoint.</div>'+
-    '<div class="tw"><table><thead><tr><th>Cliente</th><th>Estado</th><th></th></tr></thead><tbody>'+
-    (ids.length? ids.map(id=>'<tr><td><b>'+esc(((S.catCli[id]||{}).cliente||{}).nombre||id)+'</b>'+
-      '<div class="mono" style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
-      '<td id="est_'+esc(id)+'" class="mono" style="color:var(--muted)">sin revisar</td>'+
-      '<td style="white-space:nowrap">'+
-        '<label style="font-size:12px;color:var(--muted);margin-right:10px">'+
-          '<input type="checkbox" data-casos="'+esc(id)+'"> borrar expedientes</label>'+
-        '<button class="btn" data-mig="'+esc(id)+'" style="padding:4px 11px;font-size:12px">Migrar</button>'+
-      '</td></tr>').join('')
-      : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
-    '</tbody></table></div>'+
+    /* Un panel por cliente en vez de una fila de tabla: los botones de una celda con
+       nowrap se salían del área visible, y además mover archivos y borrar expedientes
+       son dos decisiones distintas que no deben compartir el mismo gesto. */
+    (ids.length? ids.map(id=>'<div class="panel" style="margin:0 0 12px">'+
+      '<h2>'+esc(((S.catCli[id]||{}).cliente||{}).nombre||id)+
+        ' <span class="mono" style="font-weight:400;font-size:12px;color:var(--muted)">Clientes/'+esc(id)+'/</span></h2>'+
+      '<div id="est_'+esc(id)+'" class="mono" style="color:var(--muted);font-size:12px;margin-bottom:10px">'+
+        'sin revisar</div>'+
+      '<div class="row" style="gap:10px;flex-wrap:wrap">'+
+        '<button class="btn" data-mig="'+esc(id)+'">🗂 Mover archivos a la estructura nueva</button>'+
+        '<button class="btn dan" data-casos="'+esc(id)+'">🗑 Borrar expedientes y vaciar el índice</button>'+
+      '</div>'+
+      '<div class="nota" style="margin-top:8px">Mover archivos no toca los tickets. Borrar expedientes '+
+        'elimina <code>Clientes/'+esc(id)+'/Casos/</code> con sus evidencias y deja el índice en cero: '+
+        'es lo que hay que hacer antes de volver a cargar los tickets desde cero.</div>'+
+    '</div>').join('')
+      : '<div class="note">Sin clientes.</div>')+
     '<h2 style="margin-top:20px">Qué hay en cada ruta</h2>'+
     '<div class="note">Cuando un archivo existe en la ruta nueva y en la anterior, la aplicación lee '+
     '<b>la nueva</b>. Si la nueva la escribió una migración equivocada, la buena queda escondida detrás. '+
@@ -5265,6 +5271,19 @@ function renderEstructura(box){
       '<button class="btn sec" id="cmpVer">Comparar rutas</button></div>'+
     '<div id="cmpRep"></div>'+
     '<div id="migRep"></div>';
+  /* El estado real se calcula solo: si no queda nada en las rutas anteriores, ya está. */
+  ids.forEach(async id=>{
+    try{
+      const f=await compararRutas(id);
+      const pend=f.filter(x=>x.hayVieja);
+      const e=box.querySelector('#est_'+id); if(!e) return;
+      if(!pend.length){ e.textContent='ya está en la estructura nueva'; e.style.color='var(--ok)';
+        const bm=box.querySelector('[data-mig="'+id+'"]');
+        if(bm){ bm.disabled=true; bm.title='No queda nada en las rutas anteriores'; } }
+      else { e.textContent='pendiente de mover: '+pend.map(x=>x.etiqueta).join(', ');
+             e.style.color='var(--warn)'; }
+    }catch(err){}
+  });
   const verBtn=box.querySelector('#cmpVer');
   const pintarCmp=async function(btn){
     const cli=box.querySelector('#cmpCli').value;
@@ -5310,13 +5329,44 @@ function renderEstructura(box){
     finally{ if(btn) busy(btn,false); }
   };
   if(verBtn) verBtn.onclick=function(){ pintarCmp(this); };
+  box.querySelectorAll('[data-casos]').forEach(b=>b.onclick=async function(){
+    const cli=b.dataset.casos;
+    const frase='BORRAR EXPEDIENTES '+cli;
+    const escrito=prompt('Se van a borrar TODOS los expedientes de '+cli+' con sus evidencias, y su '+
+      'índice de tickets quedará en cero.\n\nAntes se guarda un respaldo completo en su carpeta '+
+      D_BK+'/. Salvo por la papelera de SharePoint, esto no tiene vuelta atrás.\n\n'+
+      'Para confirmar, escribe exactamente: '+frase);
+    if(escrito===null) return;
+    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',8000); return; }
+    busy(this,true);
+    try{
+      await conTarea('borrando expedientes de '+cli,async avisar=>{
+        avisar('respaldando antes de borrar');
+        const r=await respaldoDe(cli,avisar);
+        const hh=await H();
+        const ruta=rutaBackup(cli,(r.generado||{}).cuando);
+        await gPutJson(hh,ruta,r);
+        const verif=await gGetJson(hh,ruta);
+        if(!verif||verif.cliente!==cli) throw new Error('el respaldo previo no se pudo verificar; no se borró nada');
+        const res=await migrarEstructuraCliente(cli,avisar,true);
+        logEvent('EXPEDIENTES_BORRADOS',cli+' · respaldo en '+ruta+' · '+
+          (res.errores.join(' | ')||'sin errores'));
+        box.querySelector('#migRep').innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+          '<b>'+esc(cli)+'</b> · expedientes borrados. Respaldo en <code>'+esc(ruta)+'</code>.'+
+          (res.errores.length? '<br><b>Errores:</b> '+esc(res.errores.join(' | ')) : '')+'</div>';
+      });
+      await cargarDatos(true);
+      toast('Expedientes de '+cli+' borrados. Ya puedes cargar los tickets desde cero.',null,11000);
+    }catch(e){ toast('No se pudo borrar: '+e.message,'err',12000); }
+    finally{ busy(this,false); }
+  });
   box.querySelectorAll('[data-mig]').forEach(b=>b.onclick=async function(){
     const cli=b.dataset.mig;
-    const casos=!!box.querySelector('[data-casos="'+cli+'"]:checked');
+    const casos=false;
     const frase='MIGRAR '+cli;
-    const escrito=prompt('Se va a reorganizar la carpeta de '+cli+
-      (casos? '\nY se BORRARÁN sus expedientes y su índice de tickets.' : '')+
-      '\n\nAntes se guarda un respaldo completo en su carpeta '+D_BK+'/.\n\n'+
+    const escrito=prompt('Se va a reorganizar la carpeta de '+cli+'.\n\n'+
+      'Los expedientes NO se tocan.\n\n'+
+      'Antes se guarda un respaldo completo en su carpeta '+D_BK+'/.\n\n'+
       'Para confirmar, escribe exactamente: '+frase);
     if(escrito===null) return;
     if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se movió nada.','warn',8000); return; }
