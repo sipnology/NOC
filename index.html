@@ -726,29 +726,50 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div style="font-size:12px;color:var(--muted);margin:-6px 0 8px" id="catCliente"></div>
     <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Lo de Sipnology
       —administradores y logo— se guarda en <code>Sistema/_tickets_catalogo.json</code>; lo de cada cliente,
-      en <code>Clientes/&lt;ID&gt;/catalogo.json</code>, aislado del resto.</div>
-    <div class="row"><select id="catSel" style="width:260px">
-      <option value="clientes">Clientes</option>
-      <option value="localidades">Localidades / Sedes (ID de 2 dígitos)</option>
-      <option value="pisos">Pisos por localidad</option>
-      <option value="categorias">Categorías y subcategorías</option>
-      <option value="tipos">Tipos de incidente por subcategoría</option>
-      <option value="prioridades">Prioridades y SLA</option>
-      <option value="equipos">Equipos / Dispositivos</option>
-      <option value="tiposDispositivo">Tipos de dispositivo</option>
-      <option value="imputables">Imputables</option>
-      <option value="aliasSedes">Alias de sedes (CRQs y SITs)</option>
-      <option value="clientesExternos">Usuarios cliente (acceso externo)</option>
-      <option value="catsConTiempos">Categorías con tiempos de falla</option>
-      <option value="estadosCRQ">Estados de CRQ</option>
-      <option value="mantenimiento">⚠ Mantenimiento · vaciar datos de pruebas</option>
-      <option value="respaldo">💾 Respaldo por cliente</option>
-      <option value="admins">Administradores</option>
-      <option value="historico">⬆ Importar histórico de tickets</option>
+      en <code>Clientes/&lt;ID&gt;/catalogo.json</code>, aislado del resto. Antes de cada escritura se
+      conserva la versión anterior en <code>catalogo_anterior.json</code>, recuperable desde
+      <b>Administración → Restaurar catálogo</b>.</div>
+    <!-- Agrupado por aquello sobre lo que se trabaja, no por el tipo de dato: quien
+         busca algo de una sede no debería tener que recorrer diecisiete apartados. -->
+    <div class="row"><select id="catSel" style="width:360px">
+      <optgroup label="Sede / Edificio">
+        <option value="localidades">Sedes · ID de 2 dígitos y nombre</option>
+        <option value="pisos">Pisos por sede</option>
+        <option value="aliasSedes">Alias de sedes (CRQs y SITs)</option>
+      </optgroup>
+      <optgroup label="Tickets">
+        <option value="categorias">Categorías y subcategorías</option>
+        <option value="tipos">Tipos de incidente por subcategoría</option>
+        <option value="prioridades">Prioridades y SLA</option>
+        <option value="imputables">Imputables</option>
+        <option value="catsConTiempos">Categorías con tiempo de falla</option>
+        <option value="historico">⬆ Importar histórico de tickets</option>
+      </optgroup>
+      <optgroup label="Inventario">
+        <option value="equipos">Equipos y dispositivos</option>
+        <option value="tiposDispositivo">Tipos de dispositivo</option>
+      </optgroup>
+      <optgroup label="CRQs">
+        <option value="estadosCRQ">Estados de CRQ</option>
+        <option value="impCrq">⬆ Importar CRQs</option>
+      </optgroup>
+      <optgroup label="SITs">
+        <option value="impSit">⬆ Importar SITs</option>
+      </optgroup>
+      <optgroup label="Administración">
+        <option value="clientes">Clientes</option>
+        <option value="clientesExternos">Usuarios cliente (acceso externo)</option>
+        <option value="admins">Administradores</option>
+        <option value="respaldo">💾 Respaldo y baja de clientes</option>
+        <option value="restaurarCat">↺ Restaurar catálogo de un cliente</option>
+        <option value="mantenimiento">⚠ Vaciar datos de pruebas</option>
+      </optgroup>
     </select>
       <button class="btn" id="btnCatSave" class="right">Guardar cambios</button>
       <button class="btn sec" id="btnCatReload">↻ Recargar</button>
+      <button class="btn sec" id="btnCatDescartar">Descartar cambios</button>
     </div>
+    <div id="catPend"></div>
     <div id="catBody" style="margin-top:14px"></div>
   </div>
 </section>
@@ -1006,7 +1027,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r71';
+const APP_VER = '2026-08-16 · r73';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1023,7 +1044,15 @@ const MAIL_ADJ_MB= 3;                 // límite de adjunto en correo Graph (sin
 
 /* ---------------------- 2. ESTADO GLOBAL ---------------------- */
 const S = {
-  cat:null, catGlobal:null, catCli:{}, inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
+  /* Tres capas, no una:
+       catCli   · lo que hay en SharePoint, tal cual se leyó. La interfaz nunca lo edita.
+       catEdit  · solo las secciones que alguien tocó y todavía no ha guardado, por cliente.
+       cat      · la lectura de las dos anteriores; es lo que consume el resto del programa.
+     Separarlas es lo que permite que la recarga automática entre cuando quiera: refresca
+     la capa de disco sin poder pisar lo que se está escribiendo, y al guardar solo se
+     escriben las secciones tocadas, así que editar un cliente no puede dañar a otro. */
+  cat:null, catGlobal:null, catCli:{}, catEdit:{}, catEditRoster:null,
+  inv:[], idx:[], crq:[], sit:[], bit:[], role:'cliente', me:{name:'',mail:''},
   cliente:'',              // cliente activo; '' = todos (solo para usuarios internos)
   _cliExistentes:null,     // IDs de cliente ya publicados: su ID queda bloqueado
   dashMod:'tickets',       // apartado activo del tablero: tickets | crq | sit
@@ -1281,6 +1310,17 @@ const pIdx  =c=>pCli(c)+'tickets_indice.json';
    describen la infraestructura de una organización: no pueden vivir en un archivo
    común que cualquiera con acceso a Sistema/ pueda leer. */
 const pCatCli=c=>pCli(c)+'catalogo.json';
+/* Copia de la versión inmediatamente anterior. Se escribe SIEMPRE antes de pisar el
+   catálogo, así que un borrado accidental nunca deja al cliente sin nada a que volver. */
+const pCatCliPrev=c=>pCli(c)+'catalogo_anterior.json';
+/* Cuenta lo que describe la infraestructura de una sede: es lo que se ha perdido dos
+   veces y lo que sirve para decidir si un archivo vale más que otro. */
+function censoSedes(cat){
+  const locs=(cat&&cat.localidades)||[];
+  return {sedes:locs.length,
+          pisos:locs.reduce((n,l)=>n+((l&&l.pisos)||[]).length,0),
+          alias:Object.keys((cat&&cat.aliasSedes)||{}).length};
+}
 /* Qué secciones son del cliente y cuáles son de Sipnology. */
 const SEC_CLIENTE=['localidades','categorias','tipos','prioridades','tiposDispositivo',
   'imputables','aliasSedes','clientesExternos','catsConTiempos','estadosCRQ','estatus'];
@@ -1398,23 +1438,70 @@ function catCliVacio(id,nombre){
 }
 /* Arma el S.cat que consume el resto de la aplicación: lo global más el catálogo
    del cliente activo. Con «Todos los clientes» solo quedan las secciones globales. */
+const clon=x=>x===undefined? undefined : JSON.parse(JSON.stringify(x));
+/* Firma de cada sección tal como está en disco. Comparar contra esto es lo que permite
+   saber qué tocó el usuario sin tener que marcarlo a mano en decenas de controles. */
+let _catBase={};
 function componerCat(){
   const def=JSON.parse(JSON.stringify(CAT_DEFAULT));
   const g=S.catGlobal||{};
   const c=S.catCli[S.cliente];
   const out=JSON.parse(JSON.stringify(def));
-  SEC_GLOBAL.forEach(k=>{ if(g[k]!==undefined) out[k]=g[k]; });
+  SEC_GLOBAL.forEach(k=>{ if(g[k]!==undefined) out[k]=clon(g[k]); });
   if(!out.logoOperador) out.logoOperador=def.logoOperador;
-  if(c){ SEC_CLIENTE.forEach(k=>{ if(c[k]!==undefined) out[k]=c[k]; }); }
+  if(c){ SEC_CLIENTE.forEach(k=>{ if(c[k]!==undefined) out[k]=clon(c[k]); }); }
   else { out.localidades=[]; out.clientesExternos=[]; out.aliasSedes={}; }
   /* Un cliente archivado conserva su carpeta y sus datos, pero sale del selector. */
   out.clientes=Object.keys(S.catCli)
     .filter(id=>((S.catCli[id]||{}).cliente||{}).activo!==false)
-    .map(id=>Object.assign({id:id},S.catCli[id].cliente||{}));
+    .map(id=>Object.assign({id:id},clon(S.catCli[id].cliente)||{}));
+  /* La base es el disco. Se fija ANTES de superponer nada. */
+  _catBase={};
+  SEC_CLIENTE.forEach(k=>{ _catBase[k]=JSON.stringify(out[k]===undefined?null:out[k]); });
+  _catBase.clientes=JSON.stringify(out.clientes);
+  /* Y encima, lo que el usuario tenga a medio escribir. Sobrevive a cualquier recarga. */
+  const ed=(S.catEdit||{})[S.cliente]||{};
+  Object.keys(ed).forEach(k=>{ out[k]=clon(ed[k]); });
+  if(S.catEditRoster) out.clientes=clon(S.catEditRoster);
   out.version=g.version||0;
   S.cat=out;
   S._cliExistentes=new Set(out.clientes.map(x=>x.id).filter(Boolean));
 }
+/* Pasa a la capa de ediciones todo lo que difiera del disco. Se llama antes de cada
+   recarga y antes de guardar; es idempotente y no depende de que ningún control avise. */
+function capturarEdiciones(){
+  if(!S.cat||!_catBase.clientes) return [];
+  const cli=S.cliente, tocadas=[];
+  S.catEdit=S.catEdit||{};
+  const ed = cli? (S.catEdit[cli]=S.catEdit[cli]||{}) : null;
+  SEC_CLIENTE.forEach(k=>{
+    const ahora=JSON.stringify(S.cat[k]===undefined?null:S.cat[k]);
+    if(ahora!==_catBase[k]){ if(ed){ ed[k]=JSON.parse(ahora); tocadas.push(k); } }
+    else if(ed && ed[k]!==undefined){ delete ed[k]; }   // volvió a coincidir con el disco
+  });
+  if(cli && ed && !Object.keys(ed).length) delete S.catEdit[cli];
+  const rost=JSON.stringify(S.cat.clientes||[]);
+  if(rost!==_catBase.clientes){ S.catEditRoster=JSON.parse(rost); tocadas.push('clientes'); }
+  else S.catEditRoster=null;
+  return tocadas;
+}
+/* Qué hay pendiente de guardar, en todos los clientes y no solo en el activo. */
+function pendientesCatalogo(){
+  capturarEdiciones();
+  const r=[];
+  Object.keys(S.catEdit||{}).forEach(id=>{
+    const ks=Object.keys(S.catEdit[id]||{});
+    if(ks.length) r.push({cliente:id, secciones:ks});
+  });
+  if(S.catEditRoster) r.push({cliente:'(lista de clientes)', secciones:['clientes']});
+  return r;
+}
+function limpiarEdiciones(){ S.catEdit={}; S.catEditRoster=null; }
+/* ---- ¿hay ediciones de catálogo sin guardar? ----
+   No se marca a mano en cada control (son decenas y siempre se olvida uno): se compara
+   el contenido contra la última versión confirmada. Sirve para que el sondeo automático
+   no releea SharePoint encima de lo que alguien está escribiendo. */
+function catSucio(){ return pendientesCatalogo().length>0; }
 async function catalogoPull(silent){
   try{
     const h=await H();
@@ -1423,11 +1510,32 @@ async function catalogoPull(silent){
     /* Listar la carpeta devuelve solo los clientes que este usuario puede ver. */
     let ids=[];
     try{ ids=(await gList(h,'Clientes')).filter(f=>f.folder).map(f=>f.name); }catch(e){}
-    S.catCli={}; S.catCliOk=new Set(); const fallos=[];
+    /* Lo que se esté escribiendo se pone a salvo ANTES de tocar la capa de disco. */
+    capturarEdiciones();
+    /* Lo que ya estaba en memoria es la última defensa: si una lectura vuelve vacía
+       por un fallo pasajero, se conserva en vez de sustituirla por un catálogo recién
+       nacido. Nacer vacío es exactamente lo que borra sedes, pisos y alias. */
+    const antes=S.catCli||{};
+    S.catCli={}; S.catCliOk=new Set(); const fallos=[], mermas=[];
     for(const id of ids){
+      const viejo=antes[id], cViejo=censoSedes(viejo);
       try{
         const c=await gGetJson(h,pCatCli(id));
-        if(c){ S.catCli[id]=c; S.catCliOk.add(id); }
+        if(c){
+          const cNuevo=censoSedes(c);
+          if(viejo && cViejo.sedes>0 && cNuevo.sedes===0){
+            /* El archivo ya viene dañado. Se conserva lo bueno en memoria y NO se
+               permite escribir encima hasta que alguien decida qué hacer. */
+            S.catCli[id]=viejo;
+            mermas.push(id+': el archivo llegó sin sedes y se conservaron las '+cViejo.sedes+' que ya estaban');
+            continue;
+          }
+          S.catCli[id]=c; S.catCliOk.add(id);
+        }
+        else if(viejo && cViejo.sedes>0){
+          S.catCli[id]=viejo;
+          mermas.push(id+': la lectura vino vacía y se conservó lo que ya estaba en pantalla');
+        }
         else {
           /* Sin catálogo puede ser un cliente recién creado o uno cuyo archivo se perdió.
              Se distingue por si la carpeta ya tiene datos: si los tiene, se protege. */
@@ -1437,7 +1545,31 @@ async function catalogoPull(silent){
           if(conDatos) fallos.push(id+': la carpeta tiene datos pero le falta catalogo.json');
           else S.catCliOk.add(id);
         }
-      }catch(e){ fallos.push(id+': '+e.message); }
+      }catch(e){
+        if(viejo){ S.catCli[id]=viejo; }
+        fallos.push(id+': '+e.message);
+      }
+    }
+    if(mermas.length){
+      toast('Ojo con el catálogo de sedes — '+mermas.join(' · ')+
+        '. Ve a Catálogos → Administración → Restaurar catálogo para recuperarlo.','err',20000);
+      logEvent('CATALOGO_MERMA_DETECTADA',mermas.join(' · '));
+    }
+    /* Si alguien más cambió en SharePoint una sección que este usuario tiene a medio
+       editar, gana lo que está en pantalla —no se le borra el trabajo— pero se le dice,
+       porque al guardar va a pisar lo del otro. */
+    const choques=[];
+    Object.keys(S.catEdit||{}).forEach(id=>{
+      const viejo=antes[id]||{}, nuevo=S.catCli[id]||{};
+      Object.keys(S.catEdit[id]||{}).forEach(k=>{
+        if(JSON.stringify(viejo[k]===undefined?null:viejo[k])!==
+           JSON.stringify(nuevo[k]===undefined?null:nuevo[k])) choques.push(id+' → '+k);
+      });
+    });
+    if(choques.length){
+      toast('Alguien más cambió en SharePoint algo que tú tienes sin guardar: '+choques.join(', ')+
+            '. Se conserva lo tuyo; si guardas, prevalecerá tu versión.','warn',16000);
+      logEvent('CATALOGO_CHOQUE_DE_EDICION',choques.join(' · '));
     }
     /* Un catálogo que no se pudo leer NO se toca al guardar: sobrescribirlo con los
        valores de arranque borraría las sedes reales del cliente. */
@@ -1471,52 +1603,104 @@ function revisarRol(){
   logEvent('ROL_ACTUALIZADO',antes+' → '+S.role);
   toast('Tu perfil cambió de '+antes+' a '+S.role+'.',null,9000);
 }
-/* Guarda cada sección donde le toca: lo global en Sistema/, lo del cliente en su carpeta.
-   Si no hay cliente activo solo se escribe lo global, para no inventar un destino. */
+/* Guarda solo lo que cambió, y solo donde cambió.
+   Antes se reescribía el catálogo entero de cada cliente en cada guardado: bastaba con
+   que una lectura hubiera fallado para que se escribiera un catálogo recién nacido
+   encima de uno bueno. Ahora se escriben ÚNICAMENTE las secciones que el usuario tocó,
+   fusionadas sobre una relectura fresca del archivo, así que editar un cliente no puede
+   repercutir en otro ni deshacer lo que alguien más acabe de guardar. */
 async function catalogoPush(){
   if(!isAdmin()){ toast('Solo el administrador puede modificar catálogos.','err'); return false; }
   const h=await H();
   const sello={por:S.me.mail,cuando:new Date().toISOString()};
+  capturarEdiciones();
+  const escritos=[], omitidos=[];
+
+  /* 1. Lo de Sipnology: administradores y logo. */
   S.catGlobal=S.catGlobal||{};
-  SEC_GLOBAL.forEach(k=>{ if(S.cat[k]!==undefined) S.catGlobal[k]=S.cat[k]; });
-  S.catGlobal.version=(S.catGlobal.version||0)+1;
-  S.catGlobal.actualizado=sello;
-  await gPutJson(h,P_CAT,S.catGlobal);
-  const escritos=['Sistema'], omitidos=[];
-  const roster={}; (S.cat.clientes||[]).forEach(c=>{ if(c.id) roster[c.id]=c; });
-  /* Se recorren TODOS los catálogos conocidos, no solo los visibles: si no se incluyera
-     al archivado, su marca de archivado nunca llegaría al archivo y reaparecería. */
-  const ids=[...new Set(Object.keys(S.catCli).concat(Object.keys(roster)))];
+  let cambioGlobal=false;
+  SEC_GLOBAL.forEach(k=>{
+    if(S.cat[k]===undefined) return;
+    if(JSON.stringify(S.catGlobal[k])===JSON.stringify(S.cat[k])) return;
+    S.catGlobal[k]=clon(S.cat[k]); cambioGlobal=true;
+  });
+  if(cambioGlobal){
+    S.catGlobal.version=(S.catGlobal.version||0)+1;
+    S.catGlobal.actualizado=sello;
+    await gPutJson(h,P_CAT,S.catGlobal);
+    escritos.push('Sistema');
+  }
+
+  /* 2. La ficha de cada cliente (nombre, dominios, módulos, logo, archivado).
+        Toca el bloque «cliente» del archivo y NADA más: ninguna sección de datos. */
+  const roster={}; (S.catEditRoster||S.cat.clientes||[]).forEach(c=>{ if(c.id) roster[c.id]=c; });
+  const idsFicha = S.catEditRoster
+    ? [...new Set(Object.keys(S.catCli).concat(Object.keys(roster)))]
+    : [];
+  /* 3. Las secciones de datos: solo los clientes con ediciones pendientes. */
+  const idsDatos = Object.keys(S.catEdit||{}).filter(id=>Object.keys(S.catEdit[id]||{}).length);
+  const ids=[...new Set(idsFicha.concat(idsDatos))];
+
   for(const id of ids){
-    const nuevo=!S.catCli[id];
-    if(!nuevo && S.catCliOk && !S.catCliOk.has(id)){ omitidos.push(id); continue; }
+    const nuevoCli=!S.catCli[id];
+    if(!nuevoCli && S.catCliOk && !S.catCliOk.has(id)){ omitidos.push(id); continue; }
+    /* Relectura fresca: se fusiona sobre lo que HAY, no sobre lo que se leyó hace rato. */
+    let disco=null;
+    if(!nuevoCli){
+      try{ disco=await gGetJson(h,pCatCli(id)); }
+      catch(e){ omitidos.push(id+' (no se pudo releer: '+e.message+')'); continue; }
+      if(!disco && censoSedes(S.catCli[id]).sedes>0){
+        omitidos.push(id+' (la relectura vino vacía y no se sobrescribe a ciegas)'); continue; }
+    }
     const c=roster[id];
-    const dest=S.catCli[id]||catCliVacio(id,(c&&c.nombre)||id);
-    dest.cliente=Object.assign({},dest.cliente,{id:id},
-      c? {nombre:c.nombre,dominios:c.dominios||[],correosNotif:c.correosNotif||[],
-          modulos:c.modulos||['tickets','inventario'],logo:c.logo||'',activo:true}
-       : {activo:false});
-    if(id===S.cliente){
-      /* Red de seguridad: pasar de N sedes a ninguna casi siempre es un accidente. */
-      const antes=(dest.localidades||[]).length, ahora=(S.cat.localidades||[]).length;
-      if(antes>0 && ahora===0 &&
-         !confirm('El catálogo de '+id+' tiene '+antes+' sede(s) y se va a guardar sin ninguna.\n\n'+
-                  'Se perderían también sus pisos. ¿Es lo que quieres?')){
-        omitidos.push(id+' (se conservaron sus '+antes+' sede(s))');
+    const dest=disco||S.catCli[id]||catCliVacio(id,(c&&c.nombre)||id);
+    if(idsFicha.indexOf(id)!==-1){
+      dest.cliente=Object.assign({},dest.cliente,{id:id},
+        c? {nombre:c.nombre,dominios:c.dominios||[],correosNotif:c.correosNotif||[],
+            modulos:c.modulos||['tickets','inventario'],logo:c.logo||'',activo:true}
+         : {activo:false});
+    }
+    const cAntes=censoSedes(dest);
+    const edic=(S.catEdit||{})[id]||{};
+    const secciones=Object.keys(edic);
+    if(secciones.indexOf('localidades')!==-1){
+      /* Red de seguridad: pasar de N sedes a ninguna casi siempre es un accidente.
+         Ya no basta con aceptar un aviso: hay que haberlo pedido a propósito. */
+      const ahora=(edic.localidades||[]).length;
+      if(cAntes.sedes>0 && ahora===0 && S._vaciarSedes!==id){
+        toast('No se guardó el catálogo de '+id+': tiene '+cAntes.sedes+' sede(s) y se iba a '+
+              'quedar sin ninguna. Si de verdad quieres vaciarlo, hazlo desde '+
+              'Sede/Edificio → Sedes con el botón «Vaciar todas las sedes».','err',16000);
+        logEvent('CATALOGO_VACIADO_BLOQUEADO',id+': '+cAntes.sedes+' sede(s) conservadas');
+        omitidos.push(id+' (se conservaron sus '+cAntes.sedes+' sede(s))');
         continue;
       }
-      SEC_CLIENTE.forEach(k=>{ if(S.cat[k]!==undefined) dest[k]=S.cat[k]; });
     }
+    secciones.forEach(k=>{ dest[k]=clon(edic[k]); });
+    const cDespues=censoSedes(dest);
+    /* Se guarda la versión anterior antes de pisarla, siempre que hubiera algo que perder. */
+    if(cAntes.sedes>0 && !nuevoCli){
+      try{ await gPutJson(h,pCatCliPrev(id),Object.assign({},disco||S.catCli[id],
+        {_reemplazadoEl:sello.cuando,_reemplazadoPor:sello.por})); }catch(e){}
+    }
+    if(cAntes.sedes>0 && cDespues.sedes<cAntes.sedes)
+      logEvent('CATALOGO_SEDES_A_LA_BAJA',id+': de '+cAntes.sedes+' a '+cDespues.sedes+' sede(s)');
     dest.actualizado=sello;
     S.catCli[id]=dest;
     if(S.catCliOk) S.catCliOk.add(id);
     await gPutJson(h,pCatCli(id),dest);
-    escritos.push(id+(c?'':' (archivado)'));
+    escritos.push(id+(secciones.length? ' ('+secciones.join(', ')+')' : ' (ficha)'));
   }
+  S._vaciarSedes=null;
   if(omitidos.length) toast('No se escribió el catálogo de '+omitidos.join(', ')+
     ': no se pudo leer antes y no se sobrescribe a ciegas.','warn',12000);
+  /* Solo se dan por guardadas las ediciones de los clientes que sí se escribieron. */
+  const fallidos=new Set(omitidos.map(x=>String(x).split(' ')[0]));
+  Object.keys(S.catEdit||{}).forEach(id=>{ if(!fallidos.has(id)) delete S.catEdit[id]; });
+  if(!fallidos.size) S.catEditRoster=null;
   componerCat();
-  logEvent('CATALOGO_ACTUALIZADO','version '+S.catGlobal.version+' · '+escritos.join(', '));
+  if(!escritos.length){ toast('No había cambios que guardar.',null,6000); return true; }
+  logEvent('CATALOGO_ACTUALIZADO','version '+(S.catGlobal.version||0)+' · '+escritos.join(', '));
   return true;
 }
 /* Reparte el catálogo antiguo la primera vez, sin destruir el original. */
@@ -1841,9 +2025,10 @@ async function cambiarCliente(id){
   logEvent('CLIENTE_ACTIVO',S.cliente||'(todos)');
 }
 /* Carga los datasets del alcance actual. */
-async function cargarDatos(silent){
+async function cargarDatos(silent,saltarInv){
   await idxPull(true);
-  if(moduloActivo('inventario')) await invPull(true); else { S.inv=[]; renderInv(); }
+  if(saltarInv){ renderInv(); }
+  else if(moduloActivo('inventario')) await invPull(true); else { S.inv=[]; renderInv(); }
   if(moduloActivo('crq')) await crqPull(true); else { S.crq=[]; }
   if(moduloActivo('sit')) await sitPull(true); else { S.sit=[]; }
   await repPull(true);
@@ -1972,7 +2157,14 @@ async function unlockApp(){
   if(isAdmin()) bitPull();
   logEvent('LOGIN','rol '+S.role+(_simRol?' · vista simulada':''));
   clearInterval(S._timer);
-  S._timer=setInterval(()=>{ catalogoPull(true); if(!invSucio()) cargarDatos(true); }, POLL_MS);
+  /* La actualización automática entra siempre. Puede hacerlo porque solo refresca la
+     capa de disco: las ediciones sin guardar viven aparte y se vuelven a superponer.
+     Lo único que se salta es releer el inventario mientras se está editando, porque
+     ese sí es un único arreglo en memoria sin capa de ediciones. */
+  S._timer=setInterval(()=>{
+    catalogoPull(true);
+    cargarDatos(true,invSucio());
+  }, POLL_MS);
   setTimeout(()=>{ toast('Sesión expirada por seguridad (3 h).','warn',9000); location.reload(); }, AUTH_TTL);
 }
 async function initAuthGate(){
@@ -3974,7 +4166,18 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
    editar, porque no habría dónde guardarlas. */
 const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
   'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
-  'estadosCRQ','mantenimiento','historico'];
+  'estadosCRQ','mantenimiento','historico','impCrq','impSit','restaurarCat'];
+/* A qué menú pertenece cada apartado. Sirve para el título de la pantalla y para las
+   pruebas: ningún apartado puede quedar huérfano de grupo. */
+const CAT_GRUPOS=[
+  ['Sede / Edificio',['localidades','pisos','aliasSedes']],
+  ['Tickets',['categorias','tipos','prioridades','imputables','catsConTiempos','historico']],
+  ['Inventario',['equipos','tiposDispositivo']],
+  ['CRQs',['estadosCRQ','impCrq']],
+  ['SITs',['impSit']],
+  ['Administración',['clientes','clientesExternos','admins','respaldo','restaurarCat','mantenimiento']]
+];
+function grupoDe(k){ const g=CAT_GRUPOS.find(x=>x[1].indexOf(k)!==-1); return g? g[0] : ''; }
 /* ---- Respaldo y restauración por cliente ----
    Un respaldo debe poder volver a entrar tal cual salió: se guarda un solo JSON con el
    catálogo del cliente, su inventario, sus CRQs, SITs, plantillas de reporte y el
@@ -4091,7 +4294,10 @@ async function restaurarRespaldo(origen,btn,etiqueta){
   try{
     await conTarea('restaurando '+cli,async avisar=>{
       const h=await H();
-      if(r.catalogo){ S.catCli[cli]=r.catalogo; await gPutJson(h,pCatCli(cli),r.catalogo); }
+      /* Restaurar es una operación de disco: se limpian las ediciones pendientes de ese
+         cliente para que no vuelvan a superponerse encima de lo recién restaurado. */
+      if(r.catalogo){ S.catCli[cli]=r.catalogo; if(S.catEdit) delete S.catEdit[cli];
+                      await gPutJson(h,pCatCli(cli),r.catalogo); componerCat(); }
       await gPutJson(h,pInv(cli), r.inventario||[]);
       await gPutJson(h,pCrq(cli), r.crq||[]);
       await gPutJson(h,pSit(cli), r.sit||[]);
@@ -4164,7 +4370,7 @@ async function eliminarClienteDefinitivo(cli,btn){
       r.evidencias.filter(x=>x.datos).length+' evidencia(s)');
     tareaAvance(tarea,'eliminando la carpeta de '+cli);
     await gDelete(h,'Clientes/'+sanitizeName(cli));
-    delete S.catCli[cli];
+    delete S.catCli[cli]; if(S.catEdit) delete S.catEdit[cli];
     if(S.cliente===cli){ S.cliente=''; }
     componerCat(); pintarSelectorCliente(); poblarCatalogosUI();
     logEvent('CLIENTE_ELIMINADO',cli+' · carpeta completa · '+n.tk+' ticket(s), '+n.inv+' equipo(s), '+
@@ -4172,6 +4378,93 @@ async function eliminarClienteDefinitivo(cli,btn){
     toast('Cliente '+cli+' eliminado. Su respaldo quedó en '+ruta+' y la carpeta en la papelera.',null,13000);
     await cargarDatos(true); renderCat();
   }catch(e){ toast('No se pudo eliminar: '+e.message,'err',12000); }
+  finally{ tareaFin(tarea); busy(btn,false); }
+}
+/* ---- Restaurar el catálogo de un cliente ----
+   Las sedes, sus pisos y sus alias se han perdido dos veces por lecturas fallidas que
+   acababan escribiendo un catálogo recién nacido. Aquí se reúnen todos los sitios donde
+   puede haber quedado una copia y se comparan por lo único que importa: cuánta
+   infraestructura describe cada una. */
+async function fuentesCatalogo(cli){
+  const h=await H(), out=[];
+  const mete=(origen,ruta,cat,cuando)=>{
+    if(!cat) return;
+    const c=censoSedes(cat);
+    if(!c.sedes && !c.alias) return;
+    out.push({origen:origen,ruta:ruta,cat:cat,cuando:cuando||'',censo:c});
+  };
+  try{ const a=await gGetJson(h,pCatCliPrev(cli));
+       mete('Versión anterior del propio cliente',pCatCliPrev(cli),a,
+            a&&(a._reemplazadoEl||((a.actualizado||{}).cuando))); }catch(e){}
+  try{ const g=await gGetJson(h,'Sistema/_tickets_catalogo_respaldo.json');
+       if(g){
+         const cat=JSON.parse(JSON.stringify(g));
+         cat.localidades=(g.localidades||[]).filter(l=>!l.clienteId||l.clienteId===cli);
+         cat.aliasSedes={};
+         Object.keys(g.aliasSedes||{}).forEach(k=>{
+           if(cat.localidades.some(l=>l.id===g.aliasSedes[k])) cat.aliasSedes[k]=g.aliasSedes[k]; });
+         mete('Catálogo común anterior al reparto por cliente','Sistema/_tickets_catalogo_respaldo.json',
+              cat,(g.actualizado||{}).cuando);
+       } }catch(e){}
+  for(const b of await listarBackups()){
+    try{ const r=await gGetJson(h,P_BACKUP+'/'+b.nombre);
+         if(r && r.cliente===cli) mete('Respaldo completo',P_BACKUP+'/'+b.nombre,r.catalogo,
+                                       (r.generado||{}).cuando||b.cuando);
+    }catch(e){}
+  }
+  return out.sort((a,b)=>(b.censo.sedes-a.censo.sedes)||String(b.cuando).localeCompare(String(a.cuando)));
+}
+function renderRestaurarCat(box){
+  if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
+  if(!S.cliente){ box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+    'Elige primero un cliente en el encabezado: se restaura el catálogo de uno concreto.</div>'; return; }
+  const hoy=censoSedes(S.cat);
+  box.innerHTML='<div class="note">Se comparan todas las copias que existen del catálogo de '+
+    '<b>'+esc(nombreCliente())+'</b>. Restaurar <b>solo la infraestructura</b> devuelve sedes, pisos y '+
+    'alias sin tocar categorías, SLAs ni usuarios; restaurar <b>todo</b> deja el catálogo tal como estaba '+
+    'en esa copia. En ambos casos la versión de ahora se guarda antes en <code>catalogo_anterior.json</code>.</div>'+
+    '<div class="note" style="border-left-color:var(--brand)">Ahora mismo: <b>'+hoy.sedes+'</b> sede(s), '+
+    '<b>'+hoy.pisos+'</b> piso(s) y <b>'+hoy.alias+'</b> alias.</div>'+
+    '<div id="rcLista"><div class="note"><span class="spin"></span> Buscando copias…</div></div>';
+  fuentesCatalogo(S.cliente).then(fs=>{
+    const c=box.querySelector('#rcLista'); if(!c) return;
+    if(!fs.length){ c.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+      'No se encontró ninguna copia con sedes para este cliente. Si tienes un respaldo descargado, '+
+      'cárgalo desde <b>Administración → Respaldo por cliente</b>.</div>'; return; }
+    c.innerHTML='<div class="tw"><table><thead><tr><th>Copia</th><th>Fecha</th><th>Sedes</th>'+
+      '<th>Pisos</th><th>Alias</th><th></th></tr></thead><tbody>'+
+      fs.map((f,i)=>'<tr><td><b>'+esc(f.origen)+'</b><div class="mono" style="color:var(--muted);font-size:11px">'+
+        esc(f.ruta)+'</div></td>'+
+        '<td class="mono">'+esc(f.cuando? fechaHumana(String(f.cuando).slice(0,10)) : '—')+'</td>'+
+        '<td class="mono"'+(f.censo.sedes>hoy.sedes?' style="color:var(--ok);font-weight:700"':'')+'>'+f.censo.sedes+'</td>'+
+        '<td class="mono">'+f.censo.pisos+'</td><td class="mono">'+f.censo.alias+'</td>'+
+        '<td style="white-space:nowrap">'+
+          '<button class="btn" data-rc="'+i+'" data-modo="sedes" style="padding:4px 11px;font-size:12px">Solo infraestructura</button> '+
+          '<button class="btn sec" data-rc="'+i+'" data-modo="todo" style="padding:4px 11px;font-size:12px">Todo el catálogo</button>'+
+        '</td></tr>').join('')+'</tbody></table></div>';
+    c.querySelectorAll('[data-rc]').forEach(b=>b.onclick=function(){
+      aplicarCatalogoRestaurado(fs[+b.dataset.rc],b.dataset.modo,this); });
+  }).catch(e=>{ const c=box.querySelector('#rcLista');
+    if(c) c.innerHTML='<div class="note" style="border-left-color:var(--err)">No se pudieron leer las copias: '+esc2(e.message)+'</div>'; });
+}
+async function aplicarCatalogoRestaurado(f,modo,btn){
+  const cli=S.cliente, cen=f.censo;
+  const soloInfra=modo==='sedes';
+  if(!confirm('Restaurar '+(soloInfra?'sedes, pisos y alias':'el catálogo completo')+' de '+nombreCliente()+
+    ' desde:\n'+f.ruta+'\n\n'+cen.sedes+' sede(s), '+cen.pisos+' piso(s) y '+cen.alias+' alias.\n\n'+
+    'La versión de ahora quedará en catalogo_anterior.json.')) return;
+  busy(btn,true);
+  const tarea=tareaIniciar('restaurando el catálogo de '+cli);
+  try{
+    const src=JSON.parse(JSON.stringify(f.cat));
+    const claves = soloInfra ? ['localidades','aliasSedes'] : SEC_CLIENTE;
+    claves.forEach(k=>{ if(src[k]!==undefined) S.cat[k]=src[k]; });
+    if(!await catalogoPush()) throw new Error('no se pudo escribir el catálogo');
+    logEvent('CATALOGO_RESTAURADO',cli+' desde '+f.ruta+' · '+(soloInfra?'solo infraestructura':'completo')+
+      ' · '+cen.sedes+' sede(s), '+cen.pisos+' piso(s), '+cen.alias+' alias');
+    poblarCatalogosUI(); renderCat();
+    toast('Catálogo restaurado: '+cen.sedes+' sede(s), '+cen.pisos+' piso(s) y '+cen.alias+' alias.',null,10000);
+  }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
   finally{ tareaFin(tarea); busy(btn,false); }
 }
 function renderRespaldo(box){
@@ -4236,10 +4529,11 @@ function renderRespaldo(box){
 function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
   const marca=$('#catCliente');
-  if(marca) marca.innerHTML = CAT_DE_CLIENTE.indexOf(k)!==-1
+  const gr=grupoDe(k);
+  if(marca) marca.innerHTML = (gr? '<b>'+esc(gr)+'</b> ' : '') + (CAT_DE_CLIENTE.indexOf(k)!==-1
     ? (S.cliente? '· catálogo de <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
                 : '· <b style="color:var(--warn)">sin cliente seleccionado</b>')
-    : '· catálogo de Sipnology, común a todos los clientes';
+    : '· catálogo de Sipnology, común a todos los clientes');
   if(CAT_DE_CLIENTE.indexOf(k)!==-1 && !S.cliente){
     box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
       'Esta sección es propia de cada cliente y se guarda en <code>Clientes/&lt;ID&gt;/catalogo.json</code>. '+
@@ -4247,6 +4541,7 @@ function renderCat(){
     return;
   }
   $('#btnCatSave').disabled = k==='equipos' ? !puedeEditarInventario() : ro;
+  renderPendCat();
   if(k==='historico') return renderHistorico(box,ro);
   /* Clientes tiene editor propio (módulos y logo): va antes que las tablas genéricas. */
   if(k==='clientes') return renderClientes(box,ro);
@@ -4254,6 +4549,9 @@ function renderCat(){
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='respaldo') return renderRespaldo(box);
+  if(k==='restaurarCat') return renderRestaurarCat(box);
+  if(k==='impCrq') return renderImportDS(box,DATASETS.crq);
+  if(k==='impSit') return renderImportDS(box,DATASETS.sit);
   if(k==='mantenimiento') return renderMantenimiento(box);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
@@ -4309,6 +4607,7 @@ function renderTabla(k,esq,box,ro){
     : '<tr><td colspan="'+(esq.cols.length+3)+'" style="text-align:center;color:var(--muted);padding:20px">Sin coincidencias</td></tr>')+
    '</tbody></table></div>'+
    '<div class="row" style="margin-top:10px"><button class="btn sec" id="catAdd"'+(ro?' disabled':'')+'>+ Agregar fila</button>'+
+   (k==='localidades'&&arr.length&&!ro? '<button class="btn dan" id="catVaciar">Vaciar todas las sedes</button>':'')+
    '<span style="color:var(--muted);font-size:12px">'+vista.length+' de '+arr.length+' fila(s)</span></div>';
   box.querySelectorAll('[data-sort]').forEach(th=>th.onclick=()=>{
     const c=th.dataset.sort;
@@ -4359,6 +4658,21 @@ function renderTabla(k,esq,box,ro){
   box.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>{ if(moverFila(arr,+b.dataset.down,+b.dataset.down+1)) renderCat(); });
   if(!ro) habilitarArrastre(box,arr);
   const add=box.querySelector('#catAdd'); if(add) add.onclick=()=>{ arr.push({}); renderCat(); };
+  /* Vaciar las sedes es la única operación que puede dejar al cliente sin infraestructura.
+     Se pide a propósito y se pide escrito: guardar no puede provocarlo por accidente. */
+  const vac=box.querySelector('#catVaciar');
+  if(vac) vac.onclick=()=>{
+    const cen=censoSedes(S.cat);
+    const conf=prompt('Se van a borrar las '+cen.sedes+' sede(s) de '+nombreCliente()+
+      ', con sus '+cen.pisos+' piso(s) y sus '+cen.alias+' alias.\n\n'+
+      'Escribe BORRAR SEDES para confirmarlo:');
+    if(String(conf||'').trim().toUpperCase()!=='BORRAR SEDES') return;
+    S._vaciarSedes=S.cliente;
+    S.cat.localidades=[]; S.cat.aliasSedes={};
+    logEvent('SEDES_VACIADAS_A_PROPOSITO',S.cliente+': '+cen.sedes+' sede(s)');
+    renderCat();
+    toast('Sedes vaciadas en pantalla. Pulsa «Guardar cambios» para que sea definitivo.','warn',12000);
+  };
 }
 function habilitarArrastre(box,arr){
   let origen=null;
@@ -4432,6 +4746,55 @@ function renderLista(k,titulo,box,ro){
 }
 /* Vaciado masivo por módulo. Existe para limpiar la carga de pruebas antes de arrancar
    en producción; por eso pide escribir una frase y no solo aceptar un diálogo. */
+/* Importación de CRQs y SITs desde el propio catálogo. Es la misma máquina que la del
+   módulo (dsImportar): aquí solo se le pone puerta, para que quien administra el
+   cliente no tenga que salirse a otro módulo a cargar un archivo. */
+function renderImportDS(box,ds){
+  const ro=!isAdmin();
+  const cols=ds.cols.filter(c=>c.k!=='acc').slice(0,10).map(c=>c.t);
+  box.innerHTML='<div class="note">Se cargan '+esc(ds.plural)+' desde un <code>.xlsx</code> exportado del '+
+    'sistema de origen. Las columnas se reconocen por su nombre, así que no importa el orden ni '+
+    'que sobren columnas: lo único obligatorio es el identificador del '+esc(ds.titulo)+'.</div>'+
+    '<div class="note"><b>Acumular por ID</b> conserva lo que ya hay y actualiza lo que coincida; '+
+    '<b>Reemplazar todo</b> deja únicamente lo del archivo. Si un registro capturado a mano choca '+
+    'con uno del archivo, se pregunta antes de pisarlo.</div>'+
+    (S.cliente? '' : '<div class="note" style="border-left-color:var(--warn)">Elige un cliente en el '+
+      'encabezado: los '+esc(ds.plural)+' se guardan dentro de su carpeta.</div>')+
+    '<div class="row" style="margin-top:12px;gap:8px">'+
+      '<label class="btn" style="cursor:'+((ro||!S.cliente)?'not-allowed':'pointer')+';opacity:'+((ro||!S.cliente)?'.45':'1')+'">'+
+        '⬆ Elegir archivo(s) de '+esc(ds.plural)+
+        '<input type="file" id="dsImpFile" accept=".xlsx" multiple class="hide"'+((ro||!S.cliente)?' disabled':'')+'></label>'+
+      '<select id="dsImpModo" style="width:230px"'+((ro||!S.cliente)?' disabled':'')+'>'+
+        '<option value="merge">Acumular por ID</option><option value="replace">Reemplazar todo</option></select>'+
+      '<span style="color:var(--muted);font-size:12px">'+dsLista(ds).length+' '+esc(ds.plural)+' cargados hoy</span>'+
+    '</div>'+
+    '<div style="margin-top:14px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;'+
+      'letter-spacing:.4px">Columnas que se reconocen</label>'+
+      '<div style="margin-top:6px">'+cols.map(t=>'<span class="pill" style="background:var(--panel2);color:var(--txt);margin:0 5px 5px 0;display:inline-block">'+esc(t)+'</span>').join('')+'</div></div>'+
+    '<div id="dsImpRep"></div>';
+  const f=box.querySelector('#dsImpFile');
+  if(f) f.onchange=async()=>{
+    const files=Array.prototype.slice.call(f.files||[]); f.value='';
+    if(!files.length) return;
+    if(!S.cliente){ toast('Selecciona un cliente concreto antes de importar.','err',8000); return; }
+    await dsImportar(ds,files,box.querySelector('#dsImpModo').value);
+    renderCat();
+  };
+}
+/* Los cambios de catálogo ya no dependen de que nadie recargue: se anuncian, se pueden
+   descartar y sobreviven a la actualización automática hasta que se guarden. */
+function renderPendCat(){
+  const c=$('#catPend'); if(!c) return;
+  const p=pendientesCatalogo();
+  const d=$('#btnCatDescartar'); if(d&&d.style) d.style.display=p.length?'':'none';
+  if(!p.length){ c.innerHTML=''; return; }
+  const nombre=id=>{ const x=(S.cat.clientes||[]).find(y=>y.id===id); return (x&&x.nombre)||id; };
+  c.innerHTML='<div class="note" style="border-left-color:var(--warn);margin-top:10px">'+
+    '<b>Cambios sin guardar.</b> Se conservan aunque el catálogo se actualice solo, '+
+    'y se escriben únicamente estas secciones:<br>'+
+    p.map(x=>'· <b>'+esc(x.cliente==='(lista de clientes)'?x.cliente:nombre(x.cliente))+'</b>: '+
+      esc(x.secciones.join(', '))).join('<br>')+'</div>';
+}
 function renderMantenimiento(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   if(!S.cliente){ box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
@@ -4602,8 +4965,8 @@ function renderClientes(box,ro){
     const escrito=prompt('Para confirmar, escribe exactamente: '+frase);
     if(escrito===null) return;
     if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se archivó nada.','warn',7000); return; }
-    const dest=S.catCli[c.id]; if(dest){ dest.cliente=dest.cliente||{}; dest.cliente.activo=false;
-      dest.cliente.archivado={por:S.me.mail,cuando:new Date().toISOString()}; }
+    /* Sacarlo de la lista basta: al guardar, quien no está en la lista se marca como
+       archivado en su propio archivo. No se toca aquí la capa de disco. */
     arr.splice(+b.dataset.del,1);
     if(await catalogoPush()){ logEvent('CLIENTE_ARCHIVADO',c.id+' · '+(c.nombre||'')); toast('Cliente archivado.'); }
     if(S.cliente===c.id){ S.cliente=''; pintarSelectorCliente(); }
@@ -6239,10 +6602,13 @@ function dsBarraImport(ds){
   };
 }
 async function dsImportar(ds,files,modo){
-  const rep=$(ds.filtros);
+  /* El informe se pinta junto al origen: si la carga se lanzó desde el catálogo, ahí;
+     si se lanzó desde el módulo, bajo sus filtros. */
+  const destino=$('#dsImpRep')||(($(ds.filtros)||{}).parentNode);
+  if(!destino) throw new Error('no hay dónde mostrar el resultado de la importación');
   const caja=document.createElement('div'); caja.id='dsRep_'+ds.k; caja.style.marginTop='12px';
   const previo=$('#dsRep_'+ds.k); if(previo) previo.remove();
-  rep.parentNode.appendChild(caja);
+  destino.appendChild(caja);
   caja.innerHTML='<div class="note"><span class="spin"></span> Leyendo '+files.length+' archivo(s)…</div>';
   try{
     const nuevos=[], errores=[];
@@ -6865,7 +7231,18 @@ function enlazarEventos(){
 
   // Catálogos
   $('#catSel').onchange=renderCat;
+  /* Recargar ya no destruye nada: las ediciones viven en su propia capa y se vuelven a
+     poner encima de lo que llegue de SharePoint. Para tirarlas está el botón de al lado. */
   $('#btnCatReload').onclick=async()=>{ await catalogoPull(); await invPull(); renderCat(); };
+  $('#btnCatDescartar').onclick=async()=>{
+    const p=pendientesCatalogo();
+    if(!p.length){ toast('No hay cambios de catálogo sin guardar.',null,6000); return; }
+    if(!confirm('Se van a descartar los cambios sin guardar de:\n\n'+
+      p.map(x=>'  · '+x.cliente+': '+x.secciones.join(', ')).join('\n')+
+      '\n\nSe volverá a lo que hay en SharePoint. ¿Descartar?')) return;
+    limpiarEdiciones(); componerCat(); poblarCatalogosUI(); renderCat();
+    toast('Cambios descartados.');
+  };
   $('#btnCatSave').onclick=async function(){ busy(this,true);
     try{
       const esInv=$('#catSel').value==='equipos';
@@ -7042,12 +7419,15 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice(),
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
+  catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
+  limpiarEdiciones:limpiarEdiciones,censoSedes:censoSedes,pCatCliPrev:pCatCliPrev,
   EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable,
   clientesVisibles:clientesVisibles,modulosDe:modulosDe,moduloActivo:moduloActivo,
   categoriaConTiempos:categoriaConTiempos,comprimirImagen:comprimirImagen,pesoRTE:pesoRTE,
   IMG_ANCHO:IMG_ANCHO,IMG_CALIDAD:IMG_CALIDAD,DESC_MAX_MB:DESC_MAX_MB,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
+  CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,fuentesCatalogo:fuentesCatalogo,
   respaldoDe:respaldoDe,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
