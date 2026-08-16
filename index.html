@@ -1027,7 +1027,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r73';
+const APP_VER = '2026-08-16 · r74';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1885,7 +1885,66 @@ function aplicarScopeCliente(){
 }
 
 /* ---------------------- 8. BITÁCORA ---------------------- */
-let _bitFallo=false;
+/* Escribir la bitácora es lo último que ocurre en muchas acciones, así que es lo primero
+   que se corta cuando alguien cierra la pestaña: la petición se aborta y el navegador
+   devuelve «Failed to fetch», que NO es un problema de permisos. Para que ninguna
+   actividad se pierda por eso, lo que no se puede escribir se guarda en el propio
+   navegador y se sube en cuanto hay conexión o en la siguiente sesión. */
+let _bitFallo=false, _cerrando=false;
+const BIT_COLA='sip_bit_pendientes';
+/* Un fallo de red, un corte o una pestaña que se cierra. Nada que ver con los permisos:
+   esos llegan como 401 o 403 y sí merecen mandar a revisar SharePoint. */
+function esFalloDeRed(err){
+  const m=String((err&&err.message)||err||'');
+  return /failed to fetch|networkerror|load failed|the network connection was lost|aborted|abortor/i.test(m)
+      || (err&&(err.name==='AbortError'||err.name==='TypeError'));
+}
+function esFalloDePermiso(err){
+  const m=String((err&&err.message)||err||'');
+  return /\b40[13]\b|forbidden|unauthorized|accessdenied|no tienes permiso/i.test(m);
+}
+function colaBit(){ try{ const a=JSON.parse(localStorage.getItem(BIT_COLA)||'[]');
+  return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function guardarColaBit(a){
+  try{ localStorage.setItem(BIT_COLA,JSON.stringify(a.slice(-500))); }catch(e){}
+}
+function encolarBit(entry,ruta){
+  const a=colaBit();
+  if(a.some(x=>x.ruta===ruta && x.entry && x.entry.hora===entry.hora && x.entry.evento===entry.evento
+               && x.entry.detalle===entry.detalle)) return;   // no se duplica al reintentar
+  a.push({ruta:ruta,entry:entry}); guardarColaBit(a);
+}
+/* Añade entradas al archivo del mes, releyendo antes para no pisar a otro usuario. */
+async function bitAnexar(h,ruta,entradas){
+  let a=await gGetJson(h,ruta); a=Array.isArray(a)?a:[];
+  entradas.forEach(e=>a.unshift(e));
+  if(a.length>20000) a=a.slice(0,20000);
+  await gPutJson(h,ruta,a);
+  /* Relectura: un PUT que devuelve 200 pero no persiste dejaría la auditoría incompleta. */
+  const ver=await gGetJson(h,ruta);
+  if(!Array.isArray(ver)||!ver.length) throw new Error('el archivo se escribió pero volvió vacío');
+}
+/* Sube lo que quedó pendiente de sesiones o intentos anteriores. Se llama al entrar y
+   después de cada escritura buena, así que la cola se vacía sola. */
+async function vaciarColaBit(){
+  const a=colaBit();
+  if(!a.length) return 0;
+  const h=await H();
+  const porRuta={};
+  a.forEach(x=>{ (porRuta[x.ruta]=porRuta[x.ruta]||[]).push(x.entry); });
+  const quedan=[];
+  let subidas=0;
+  for(const ruta of Object.keys(porRuta)){
+    try{ await bitAnexar(h,ruta,porRuta[ruta].slice().reverse()); subidas+=porRuta[ruta].length; }
+    catch(e){ porRuta[ruta].forEach(en=>quedan.push({ruta:ruta,entry:en})); }
+  }
+  guardarColaBit(quedan);
+  if(subidas && !quedan.length){
+    S.bitEscribe='ok'; _bitFallo=false; renderBitDiag();
+    toast(subidas+' registro(s) de bitácora que habían quedado pendientes ya se subieron.',null,9000);
+  }
+  return subidas;
+}
 function logEvent(evento,detalle){
   const d=new Date();
   const entry={fecha:todayISO(d), hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()),
@@ -1896,23 +1955,44 @@ function logEvent(evento,detalle){
     cliente:S.cliente||''};
   S.bit.unshift(entry); renderBit();
   const ruta=rutaBit(mesDe(d),entry.usuario);
+  /* Se guarda en el navegador ANTES de intentar subirlo. Si la pestaña se cierra a
+     mitad de la petición, la entrada ya está a salvo y se sube en la próxima sesión. */
+  encolarBit(entry,ruta);
   S._q = S._q.then(async()=>{
     const h=await H();
-    let a=await gGetJson(h,ruta); a=Array.isArray(a)?a:[];
-    a.unshift(entry); if(a.length>20000) a=a.slice(0,20000);
-    await gPutJson(h,ruta,a);
-    /* Relectura: un PUT que devuelve 200 pero no persiste dejaría la auditoría incompleta. */
-    const ver=await gGetJson(h,ruta);
-    if(!Array.isArray(ver)||!ver.length) throw new Error('el archivo se escribió pero volvió vacío');
+    let ultimo=null;
+    /* Dos reintentos con espera: la mayoría de los «Failed to fetch» son un parpadeo. */
+    for(let intento=0;intento<3;intento++){
+      try{ await bitAnexar(h,ruta,[entry]); ultimo=null; break; }
+      catch(e){ ultimo=e;
+        if(intento<2 && esFalloDeRed(e) && !_cerrando)
+          await new Promise(r=>setTimeout(r,intento?4000:1500));
+        else break; }
+    }
+    if(ultimo) throw ultimo;
+    /* Se subió: la entrada sale de la cola y de paso se sube lo que quedara atrás. */
+    guardarColaBit(colaBit().filter(x=>!(x.ruta===ruta && x.entry.hora===entry.hora &&
+      x.entry.evento===entry.evento && x.entry.detalle===entry.detalle)));
     _bitFallo=false; S.bitEscribe='ok';
+    await vaciarColaBit();
   }).catch(err=>{
-    /* Antes esto se tragaba el error y la bitácora quedaba incompleta sin que nadie lo notara. */
-    S.bitEscribe='error: '+err.message;
+    const red=esFalloDeRed(err), permiso=esFalloDePermiso(err);
+    S.bitEscribe='pendiente: '+err.message;
     renderBitDiag();
-    if(!_bitFallo){ _bitFallo=true;
+    /* Si la pestaña se está cerrando no se alarma a nadie: la entrada quedó en la cola. */
+    if(_cerrando || _bitFallo) return;
+    _bitFallo=true;
+    if(permiso){
       toast('No se pudo escribir en la bitácora: '+err.message+
-        '. Tu actividad no quedará registrada para los demás. Revisa que tengas permiso de '+
-        'escritura (Colaborar) sobre la carpeta '+P_BIT+'/ en SharePoint.','err',16000); }
+        '. Revisa que tengas permiso de escritura (Colaborar) sobre la carpeta '+P_BIT+
+        '/ en SharePoint. Mientras tanto, tu actividad queda guardada en este navegador.','err',16000);
+    }else if(red){
+      toast('La bitácora no se pudo subir ahora mismo (fallo de red o pestaña cerrándose). '+
+        'Tu actividad quedó guardada en este navegador y se subirá sola en cuanto haya conexión.','warn',12000);
+    }else{
+      toast('No se pudo escribir en la bitácora: '+err.message+
+        '. La actividad quedó guardada en este navegador y se reintentará.','warn',14000);
+    }
   });
 }
 /* Lee los archivos de todos los usuarios de los últimos meses y los mezcla. */
@@ -2155,6 +2235,9 @@ async function unlockApp(){
   await migrarSiHaceFalta();
   await cargarDatos(true);
   if(isAdmin()) bitPull();
+  /* Lo que quedó pendiente de la sesión anterior (o de un cierre a media escritura)
+     se sube ahora, antes de registrar la entrada de hoy. */
+  try{ await vaciarColaBit(); }catch(e){}
   logEvent('LOGIN','rol '+S.role+(_simRol?' · vista simulada':''));
   clearInterval(S._timer);
   /* La actualización automática entra siempre. Puede hacerlo porque solo refresca la
@@ -7074,9 +7157,11 @@ function renderBitDiag(){
   if(!isAdmin()){ c.innerHTML=''; return; }
   const d=S.bitDiag; if(!d){ c.innerHTML=''; return; }
   const err=(d.errores||[]).length, esc2=x=>esc(String(x));
+  const enCola=colaBit().length;
   const escribe=S.bitEscribe&&S.bitEscribe!=='ok'
-    ? '<div style="margin-top:6px"><b>Tu propia escritura está fallando:</b> '+esc2(S.bitEscribe.replace(/^error: /,''))+
-      '. Mientras no se corrija, tu actividad no la verá nadie más.</div>' : '';
+    ? '<div style="margin-top:6px"><b>Hay actividad tuya sin subir:</b> '+esc2(String(S.bitEscribe).replace(/^(error|pendiente): /,''))+
+      '.'+(enCola? ' Quedan <b>'+enCola+'</b> registro(s) guardados en este navegador; se suben solos '+
+      'en cuanto haya conexión o en tu próxima sesión.' : '')+'</div>' : '';
   /* Solo se habla cuando hay algo que decir: si todo se leyó y se escribe bien,
      el diagnóstico estorba. */
   if(!err && !escribe){ c.innerHTML=''; return; }
@@ -7377,6 +7462,13 @@ function enlazarEventos(){
 }
 
 /* ---------------------- 22. ARRANQUE ---------------------- */
+/* Cerrar la pestaña aborta las peticiones en vuelo. Se marca para que el fallo se trate
+   como lo que es —una salida— y no como un problema de permisos. */
+['pagehide','beforeunload'].forEach(ev=>window.addEventListener(ev,()=>{ _cerrando=true; }));
+/* Si el navegador recupera la red, no hay que esperar a la siguiente sesión. */
+window.addEventListener('online',()=>{ vaciarColaBit().catch(e=>{
+  /* Sigue sin haber red: no se avisa nada, la cola ya guarda lo pendiente. */
+  S.bitEscribe='pendiente: '+e.message; renderBitDiag(); }); });
 window.addEventListener('beforeunload',function(e){
   /* Con un proceso a medias no se borra el token todavía: si el usuario decide
      quedarse, la sesión debe seguir viva. */
@@ -7419,6 +7511,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   invConfirmado:invConfirmado,invDescartar:invDescartar,
   cambios:()=>_invCambios.slice(),
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
+  esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
+  guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
   catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
   limpiarEdiciones:limpiarEdiciones,censoSedes:censoSedes,pCatCliPrev:pCatCliPrev,
   EDITABLES:EDITABLES,valorEditable:valorEditable,aplicarEditable:aplicarEditable,
