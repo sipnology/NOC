@@ -742,6 +742,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <option value="catsConTiempos">Categorías con tiempos de falla</option>
       <option value="estadosCRQ">Estados de CRQ</option>
       <option value="mantenimiento">⚠ Mantenimiento · vaciar datos de pruebas</option>
+      <option value="respaldo">💾 Respaldo por cliente</option>
       <option value="admins">Administradores</option>
       <option value="historico">⬆ Importar histórico de tickets</option>
     </select>
@@ -1008,7 +1009,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-15 · r63';
+const APP_VER = '2026-08-16 · r65';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1407,7 +1408,10 @@ function componerCat(){
   if(!out.logoOperador) out.logoOperador=def.logoOperador;
   if(c){ SEC_CLIENTE.forEach(k=>{ if(c[k]!==undefined) out[k]=c[k]; }); }
   else { out.localidades=[]; out.clientesExternos=[]; out.aliasSedes={}; }
-  out.clientes=Object.keys(S.catCli).map(id=>Object.assign({id:id},S.catCli[id].cliente||{}));
+  /* Un cliente archivado conserva su carpeta y sus datos, pero sale del selector. */
+  out.clientes=Object.keys(S.catCli)
+    .filter(id=>((S.catCli[id]||{}).cliente||{}).activo!==false)
+    .map(id=>Object.assign({id:id},S.catCli[id].cliente||{}));
   out.version=g.version||0;
   S.cat=out;
   S._cliExistentes=new Set(out.clientes.map(x=>x.id).filter(Boolean));
@@ -1469,7 +1473,8 @@ async function catalogoPush(){
     if(!c.id) continue;
     const dest=S.catCli[c.id]||catCliVacio(c.id,c.nombre);
     dest.cliente=Object.assign({},dest.cliente,{id:c.id,nombre:c.nombre,dominios:c.dominios||[],
-      correosNotif:c.correosNotif||[],modulos:c.modulos||['tickets','inventario'],logo:c.logo||''});
+      correosNotif:c.correosNotif||[],modulos:c.modulos||['tickets','inventario'],logo:c.logo||'',
+      activo:true});
     if(c.id===S.cliente) SEC_CLIENTE.forEach(k=>{ if(S.cat[k]!==undefined) dest[k]=S.cat[k]; });
     dest.actualizado=sello;
     S.catCli[c.id]=dest;
@@ -1795,8 +1800,9 @@ async function cambiarCliente(id){
     $('#selCliente').value=S.cliente; return; }
   S.cliente=id||'';
   try{ localStorage.setItem(PREF_CLI,S.cliente); }catch(e){}
-  /* Cada cliente trae su propia clasificación y sus sedes: hay que recomponer. */
-  componerCat(); poblarCatalogosUI();
+  /* Cada cliente trae su propia clasificación y sus sedes: hay que recomponer y,
+     si el usuario está viendo Catálogos, volver a dibujar la sección abierta. */
+  componerCat(); poblarCatalogosUI(); renderCat();
   pintarMarca(); aplicarModulosUI(); aplicarClienteApertura();
   await cargarDatos(true);
   logEvent('CLIENTE_ACTIVO',S.cliente||'(todos)');
@@ -3936,6 +3942,160 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
 const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
   'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
   'estadosCRQ','mantenimiento','historico'];
+/* ---- Respaldo y restauración por cliente ----
+   Un respaldo debe poder volver a entrar tal cual salió: se guarda un solo JSON con el
+   catálogo del cliente, su inventario, sus CRQs, SITs, plantillas de reporte y el
+   expediente completo de cada ticket, con su historial y sus pausas. */
+const RESP_VER=2;
+/* Un archivo suelto por encima de este tamaño se referencia pero no se incrusta. */
+const RESP_MAX_ARCHIVO=25*1024*1024;
+async function respaldoDe(cli,avisar){
+  const h=await H();
+  const leer=async r=>{ try{ return await gGetJson(h,r); }catch(e){ return null; } };
+  const cat=S.catCli[cli]||null;
+  const inv=(await leer(pInv(cli)))||[];
+  const idx=(await leer(pIdx(cli)))||[];
+  const crq=(await leer(pCrq(cli)))||[];
+  const sit=(await leer(pSit(cli)))||[];
+  const rep=(await leer(pRep(cli)))||[];
+  const tickets=[]; let n=0;
+  for(const e of idx){
+    n++; if(avisar) avisar('leyendo expediente '+n+' de '+idx.length);
+    const ruta=e.ruta||(pCasos(cli)+'/'+String(e.fechaAp).slice(0,7)+'/'+sanitizeName(e.id));
+    const t=await leer(ruta+'/ticket.json');
+    if(t) tickets.push(t); else tickets.push(Object.assign({},e,{_soloIndice:true}));
+  }
+  /* Las evidencias viajan dentro del respaldo, en base64: un respaldo al que le faltan
+     los archivos no sirve para reconstruir el expediente ante una auditoría. */
+  const adj=[]; let pesados=[], total=0, i=0;
+  const lista=[];
+  tickets.forEach(t=>(t.adjuntos||[]).forEach(a=>lista.push({t:t,a:a})));
+  for(const {t,a} of lista){
+    i++; if(avisar) avisar('descargando evidencia '+i+' de '+lista.length+': '+a.nombre);
+    const ruta=(t.ruta||'')+'/'+a.nombre;
+    const reg={ticket:t.id, archivo:a.nombre, tam:a.tam||0, ruta:ruta, tipo:a.tipo||'', datos:''};
+    try{
+      const meta=await gGet(h,ruta);
+      if(meta){
+        reg.tam=meta.size||reg.tam;
+        if((meta.size||0)>RESP_MAX_ARCHIVO){ pesados.push(a.nombre+' ('+pesoLegible(meta.size)+')'); }
+        else{
+          const b=await (await fetch(meta['@microsoft.graph.downloadUrl'])).blob();
+          reg.tipo=b.type||reg.tipo;
+          reg.datos=await new Promise(res=>{const fr=new FileReader();
+            fr.onload=()=>res(String(fr.result).split(',')[1]); fr.readAsDataURL(b);});
+          total+=b.size;
+        }
+      } else reg.falta=true;
+    }catch(e){ reg.error=e.message; }
+    adj.push(reg);
+  }
+  return {formato:'respaldo-noc-sipnology', version:RESP_VER, cliente:cli,
+    generado:{por:S.me.mail,cuando:new Date().toISOString(),app:APP_VER},
+    catalogo:cat, inventario:inv, indice:idx, tickets:tickets, crq:crq, sit:sit, reportes:rep,
+    evidencias:adj, bytesEvidencias:total, omitidos:pesados};
+}
+async function descargarRespaldo(cli,btn){
+  if(!isAdmin()){ toast('Solo el administrador puede respaldar.','err'); return; }
+  busy(btn,true);
+  try{
+    const r=await conTarea('respaldando '+cli,avisar=>respaldoDe(cli,avisar));
+    const nombre='Respaldo_'+sanitizeName(cli)+'_'+todayISO(new Date())+'.json';
+    const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
+    bajar(blob,nombre);
+    const conDatos=r.evidencias.filter(x=>x.datos).length;
+    logEvent('RESPALDO_DESCARGADO',cli+' · '+r.tickets.length+' ticket(s) · '+r.inventario.length+
+             ' equipo(s) · '+conDatos+'/'+r.evidencias.length+' evidencia(s) incluida(s) · '+pesoLegible(blob.size));
+    toast('Respaldo de '+cli+': '+r.tickets.length+' ticket(s), '+r.inventario.length+' equipo(s), '+
+          conDatos+' evidencia(s) · '+pesoLegible(blob.size)+'.',null,11000);
+    if((r.omitidos||[]).length) toast('No se incrustaron por tamaño: '+r.omitidos.join(', ')+
+      '. Quedan referenciadas y siguen en SharePoint.','warn',12000);
+  }catch(e){ toast('No se pudo respaldar: '+e.message,'err',10000); }
+  finally{ busy(btn,false); }
+}
+async function restaurarRespaldo(file,btn){
+  if(!isAdmin()){ toast('Solo el administrador puede restaurar.','err'); return; }
+  let r=null;
+  try{ r=JSON.parse(await file.text()); }catch(e){ toast('El archivo no es un respaldo válido.','err'); return; }
+  if(!r || r.formato!=='respaldo-noc-sipnology'){ toast('El archivo no es un respaldo de este sistema.','err',8000); return; }
+  const cli=r.cliente;
+  const existe=!!S.catCli[cli];
+  const frase='RESTAURAR '+cli;
+  const escrito=prompt('Vas a restaurar el respaldo de «'+cli+'» generado el '+
+    fechaHumana(String((r.generado||{}).cuando||'').slice(0,10))+
+    ' con '+(r.tickets||[]).length+' ticket(s) y '+(r.inventario||[]).length+' equipo(s).\n\n'+
+    (existe? 'SOBRESCRIBE los datos actuales de ese cliente.' : 'El cliente no existe: se creará.')+
+    '\n\nIncluye '+((r.evidencias||[]).filter(x=>x.datos).length)+' evidencia(s), que se vuelven a subir.\n\n'+
+    'Escribe exactamente: '+frase);
+  if(escrito===null) return;
+  if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se restauró nada.','warn',7000); return; }
+  busy(btn,true);
+  try{
+    await conTarea('restaurando '+cli,async avisar=>{
+      const h=await H();
+      if(r.catalogo){ S.catCli[cli]=r.catalogo; await gPutJson(h,pCatCli(cli),r.catalogo); }
+      await gPutJson(h,pInv(cli), r.inventario||[]);
+      await gPutJson(h,pCrq(cli), r.crq||[]);
+      await gPutJson(h,pSit(cli), r.sit||[]);
+      await gPutJson(h,pRep(cli), r.reportes||[]);
+      const idx=[]; let n=0;
+      for(const t of (r.tickets||[])){
+        n++; avisar('escribiendo expediente '+n+' de '+(r.tickets||[]).length);
+        if(t._soloIndice){ idx.push(t); continue; }
+        const ruta=t.ruta||(pCasos(cli)+'/'+String(t.fechaAp).slice(0,7)+'/'+sanitizeName(t.id));
+        await gPutJson(h,ruta+'/ticket.json',t);
+        idx.push(idxEntry(t));
+      }
+      await gPutJson(h,pIdx(cli), idx.length? idx : (r.indice||[]));
+      const ev=(r.evidencias||[]).filter(x=>x.datos); let k=0;
+      for(const x of ev){
+        k++; avisar('restaurando evidencia '+k+' de '+ev.length+': '+x.archivo);
+        try{
+          const bin=atob(x.datos); const u8=new Uint8Array(bin.length);
+          for(let j=0;j<bin.length;j++) u8[j]=bin.charCodeAt(j);
+          const blob=new Blob([u8],{type:x.tipo||'application/octet-stream'});
+          blob.name=x.archivo;
+          await gUpload(h,x.ruta,blob);
+        }catch(e){ console.warn('evidencia',x.archivo,e.message); }
+      }
+    });
+    logEvent('RESPALDO_RESTAURADO',cli+' · '+(r.tickets||[]).length+' ticket(s) · '+
+      (r.evidencias||[]).filter(x=>x.datos).length+' evidencia(s)');
+    toast('Respaldo restaurado en '+cli+'. Refrescando…',null,8000);
+    componerCat(); await cargarDatos(true); renderCat();
+  }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
+  finally{ busy(btn,false); }
+}
+function renderRespaldo(box){
+  if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
+  const ids=Object.keys(S.catCli).sort();
+  const fila=id=>{
+    const c=(S.catCli[id]||{}).cliente||{};
+    const arch=c.activo===false;
+    return '<tr><td><b>'+esc(c.nombre||id)+'</b>'+(arch?' <span class="pill" style="background:var(--panel2);color:var(--warn)">archivado</span>':'')+
+      '<div style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
+      '<td class="mono">'+esc(((S.catCli[id]||{}).localidades||[]).length)+'</td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px">⬇ Descargar respaldo</button>'+
+      '</td></tr>';
+  };
+  box.innerHTML='<div class="note">Un respaldo incluye el catálogo del cliente, su inventario, sus CRQs, '+
+    'SITs, plantillas de reporte y el <b>expediente completo de cada ticket</b> con su historial y sus pausas. '+
+    'Se descarga como un solo archivo <code>.json</code> que este mismo módulo puede volver a cargar.</div>'+
+    '<div class="note">Incluye también <b>los archivos adjuntos</b> de cada ticket, incrustados en el respaldo, '+
+    'así que puede pesar. Un archivo suelto de más de 25 MB se referencia sin incrustar y se avisa al terminar.</div>'+
+    '<div class="tw"><table><thead><tr><th>Cliente</th><th>Sedes</th><th></th></tr></thead><tbody>'+
+    (ids.length? ids.map(fila).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
+    '</tbody></table></div>'+
+    '<div class="row" style="margin-top:14px;gap:8px;align-items:center">'+
+      '<label class="btn sec" style="cursor:pointer">⬆ Restaurar desde un respaldo'+
+        '<input type="file" id="bkFile" accept=".json" class="hide"></label>'+
+      '<span style="color:var(--muted);font-size:12px">Pide confirmación escrita y sobrescribe los datos del cliente que indique el archivo.</span>'+
+    '</div>';
+  box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=function(){ descargarRespaldo(b.dataset.bk,this); });
+  const f=box.querySelector('#bkFile');
+  if(f) f.onchange=function(){ const a=f.files[0]; f.value=''; if(a) restaurarRespaldo(a,this); };
+}
 function renderCat(){
   const k=$('#catSel').value, box=$('#catBody'), ro=!isAdmin();
   const marca=$('#catCliente');
@@ -3956,6 +4116,7 @@ function renderCat(){
   if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
+  if(k==='respaldo') return renderRespaldo(box);
   if(k==='mantenimiento') return renderMantenimiento(box);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
@@ -4272,12 +4433,29 @@ function renderClientes(box,ro){
     }catch(e){ toast(e.message,'err',7000); }
   });
   box.querySelectorAll('[data-nologo]').forEach(b=>b.onclick=()=>{ delete arr[+b.dataset.nologo].logo; renderCat(); });
-  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
     const c=arr[+b.dataset.del];
-    const n=S.idx.filter(t=>t.clienteId===c.id).length;
-    if(n){ alert('No se puede eliminar «'+c.nombre+'»: tiene '+n+' ticket(s) asociados.'); return; }
-    if(confirm('¿Eliminar el cliente «'+(c.nombre||c.id)+'»?\nSus datos en SharePoint no se borran.')){
-      arr.splice(+b.dataset.del,1); renderCat(); }
+    /* Archivar y no borrar: la carpeta del cliente sigue en SharePoint con sus tickets,
+       su inventario y sus evidencias. Aun así se exige respaldo y confirmación escrita:
+       un cliente archivado desaparece de la vista y es fácil olvidar que sus datos siguen ahí. */
+    if(!confirm('«'+(c.nombre||c.id)+'» se archiva: desaparece del selector y de los catálogos, '+
+      'pero su carpeta Clientes/'+c.id+'/ queda intacta en SharePoint con todos sus datos.\n\n¿Continuar?')) return;
+    if(confirm('¿Descargar ahora el respaldo completo de «'+(c.nombre||c.id)+'»?\n\n'+
+      'Incluye catálogo, inventario, tickets con su historial y los archivos adjuntos.\n'+
+      'Aceptar descarga el respaldo antes de archivar; Cancelar continúa sin respaldo.')){
+      await descargarRespaldo(c.id,b);
+    } else if(!confirm('Vas a archivar «'+(c.nombre||c.id)+'» SIN descargar respaldo.\n\n'+
+      'Sus datos seguirán en SharePoint, pero nadie los verá desde la aplicación.\n\n¿Seguro?')) return;
+    const frase='ARCHIVAR '+c.id;
+    const escrito=prompt('Para confirmar, escribe exactamente: '+frase);
+    if(escrito===null) return;
+    if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se archivó nada.','warn',7000); return; }
+    const dest=S.catCli[c.id]; if(dest){ dest.cliente=dest.cliente||{}; dest.cliente.activo=false;
+      dest.cliente.archivado={por:S.me.mail,cuando:new Date().toISOString()}; }
+    arr.splice(+b.dataset.del,1);
+    if(await catalogoPush()){ logEvent('CLIENTE_ARCHIVADO',c.id+' · '+(c.nombre||'')); toast('Cliente archivado.'); }
+    if(S.cliente===c.id){ S.cliente=''; pintarSelectorCliente(); }
+    componerCat(); renderCat();
   });
   const add=box.querySelector('#cliAdd');
   if(add) add.onclick=()=>{ arr.push({id:'',nombre:'',dominios:[],correosNotif:[],modulos:['tickets','inventario']}); renderCat(); };
@@ -6664,6 +6842,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   IMG_ANCHO:IMG_ANCHO,IMG_CALIDAD:IMG_CALIDAD,DESC_MAX_MB:DESC_MAX_MB,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
+  respaldoDe:respaldoDe,RESP_VER:RESP_VER,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
