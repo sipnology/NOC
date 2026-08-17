@@ -1038,7 +1038,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r88';
+const APP_VER = '2026-08-17 · r89';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4300,29 +4300,64 @@ function medirPng(dataUrl){
 }
 /* Inserta la banda de marca en una hoja y devuelve la fila donde va el encabezado.
    Solo lleva lo esencial: los dos logos, el tipo de reporte y la fecha. */
-async function bandaMarcaXlsx(wb,ws,titulo,nCols){
+/* ---- Banda de marca de las hojas de Excel ----
+   Antes el logo del cliente se anclaba en «nCols-2», que en una hoja de tres columnas
+   cae en la B: encima del título. Y el título iba en negro sobre el fondo blanco de la
+   hoja, sin parecerse al PDF. Ahora la banda es una franja azul oscura que ocupa todo
+   el ancho, con el título en blanco, y el logo del cliente se coloca midiendo los anchos
+   reales de las columnas para que quede pegado al borde derecho, tenga la hoja las
+   columnas que tenga. */
+const XL_BANDA='FF0F172A', XL_BANDA_TXT='FFFFFFFF', XL_BANDA_SUB='FF93A0BD';
+/* Excel mide las columnas en caracteres; esta es la conversión que usa a 96 ppp. */
+const anchoPx=w=>Math.round((+w||20)*7+5);
+async function bandaMarcaXlsx(wb,ws,titulo,cols){
+  const anchos=Array.isArray(cols)? cols.map(c=>c[2]||20)
+                                  : new Array(Math.max(1,+cols||1)).fill(20);
+  const nCols=anchos.length;
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
-  const alto=logoOp||logoCli?3:2;
-  for(let i=0;i<alto;i++) ws.addRow([]);
-  ws.getRow(1).height=logoOp||logoCli?34:18;
-  ws.mergeCells(1,1,1,Math.max(3,Math.min(nCols,8)));
-  const c=ws.getCell(1,1);
-  c.value=titulo;
-  c.font={bold:true,size:12,color:{argb:'FF0F172A'}};
-  c.alignment={vertical:'middle',horizontal:'left',indent:logoOp?14:1};
+  for(let i=0;i<3;i++) ws.addRow([]);
+  ws.getRow(1).height=30; ws.getRow(2).height=15; ws.getRow(3).height=6;
+  /* La franja se pinta en las tres filas y en todas las columnas: si se dejara a medias,
+     se vería un escalón blanco a la derecha en cuanto la tabla fuera ancha. */
+  for(let f=1;f<=3;f++){
+    for(let c=1;c<=nCols;c++){
+      ws.getCell(f,c).fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_BANDA}};
+    }
+  }
+  ws.mergeCells(1,1,1,nCols);
+  ws.mergeCells(2,1,2,nCols);
+  const c1=ws.getCell(1,1);
+  c1.value=titulo;
+  c1.font={bold:true,size:13,color:{argb:XL_BANDA_TXT}};
+  /* El sangrado se mide desde el borde izquierdo del rango combinado, no de una columna,
+     así que despeja el logo sea cual sea el ancho de la primera columna. */
+  c1.alignment={vertical:'middle',horizontal:'left',indent:logoOp?14:1};
   const c2=ws.getCell(2,1);
   c2.value=fechaHumana(todayISO());
-  c2.font={size:9,color:{argb:'FF5F6B7F'}};
-  c2.alignment={horizontal:'left',indent:logoOp?14:1};
+  c2.font={size:9,color:{argb:XL_BANDA_SUB}};
+  c2.alignment={vertical:'top',horizontal:'left',indent:logoOp?14:1};
   try{
     if(logoOp){ const d=medirPng(logoOp);
       const id=wb.addImage({base64:logoOp.split(',')[1],extension:'png'});
-      ws.addImage(id,{tl:{col:0.15,row:0.15},ext:{width:96,height:Math.round(96*d.h/d.w)}}); }
-    if(logoCli){ const d=medirPng(logoCli);
+      ws.addImage(id,{tl:{col:0.18,row:0.30},ext:{width:92,height:Math.round(92*d.h/d.w)}}); }
+    if(logoCli){
+      const d=medirPng(logoCli);
+      const anchoLogo=84, alturaLogo=Math.round(anchoLogo*d.h/d.w);
+      const total=anchos.reduce((a,w)=>a+anchoPx(w),0);
+      /* Se busca en qué columna cae el punto donde debe empezar el logo para quedar
+         a unos 14 px del borde derecho de la última columna. */
+      const meta=Math.max(0,total-anchoLogo-14);
+      let acum=0, col=nCols-1, off=0;
+      for(let i=0;i<nCols;i++){
+        const w=anchoPx(anchos[i]);
+        if(acum+w>meta){ col=i; off=Math.min(0.98,Math.max(0,(meta-acum)/w)); break; }
+        acum+=w;
+      }
       const id=wb.addImage({base64:logoCli.split(',')[1],extension:'png'});
-      ws.addImage(id,{tl:{col:Math.max(1,nCols-2),row:0.15},ext:{width:86,height:Math.round(86*d.h/d.w)}}); }
+      ws.addImage(id,{tl:{col:col+off,row:0.30},ext:{width:anchoLogo,height:alturaLogo}});
+    }
   }catch(e){}
-  return alto+1;
+  return 4;
 }
 const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad'],['cliente','Cliente'],
   ['localidad','Localidad'],['piso','Piso'],['categoria','Categoría'],['subcategoria','Subcategoría'],
@@ -4345,9 +4380,12 @@ async function exportExcel(data,nombre){
   if(typeof ExcelJS==='undefined'){ toast('ExcelJS no disponible.','err'); return; }
   const wb=new ExcelJS.Workbook(); wb.creator='Sipnology · Sistema de Tickets NOC'; wb.created=new Date();
   const ws=wb.addWorksheet('Tickets');
-  const hr=await bandaMarcaXlsx(wb,ws,'Reporte de tickets',COLS.length);
+  /* El mismo ancho que se aplica a la columna es el que se le declara a la banda: si no,
+     el logo del cliente se colocaría midiendo una hoja que no es la que sale. */
+  const anchosT=COLS.map(c=>Math.max(14,Math.min(38,c[1].length+8)));
+  const hr=await bandaMarcaXlsx(wb,ws,'Reporte de tickets',COLS.map((c,i)=>[c[0],c[1],anchosT[i]]));
   ws.addRow(COLS.map(c=>c[1]));
-  COLS.forEach((c,i)=>{ ws.getColumn(i+1).width=Math.max(14,Math.min(38,c[1].length+8)); });
+  COLS.forEach((c,i)=>{ ws.getColumn(i+1).width=anchosT[i]; });
   data.forEach(t=>ws.addRow(COLS.map(c=>celda(t,c[0]))));
   const r1=ws.getRow(hr);
   r1.font={bold:true,color:{argb:'FFFFFFFF'}};
@@ -5993,7 +6031,7 @@ async function escribirXlsx(nombre,hojas,devolver){
   const wb=new ExcelJS.Workbook(); wb.creator='Sipnology · Sistema de Tickets NOC'; wb.created=new Date();
   for(const h of hojas){
     const ws=wb.addWorksheet(h.nombre);
-    const hr=h.sinMarca? 1 : await bandaMarcaXlsx(wb,ws,nombre.replace(/_/g,' '),h.cols.length);
+    const hr=h.sinMarca? 1 : await bandaMarcaXlsx(wb,ws,nombre.replace(/_/g,' '),h.cols);
     if(hr>1) ws.addRow(h.cols.map(c=>c[1])); else ws.addRow(h.cols.map(c=>c[1]));
     h.cols.forEach((c,i)=>{ ws.getColumn(i+1).width=c[2]||20; });
     (h.filas||[]).forEach(f=>ws.addRow(h.cols.map(c=>f[c[0]]!==undefined?f[c[0]]:'')));
