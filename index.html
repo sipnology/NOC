@@ -1016,7 +1016,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r84';
+const APP_VER = '2026-08-16 · r86';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4464,8 +4464,18 @@ const P_BACKUP='Backup';
 /* Cada cliente guarda sus respaldos dentro de su propia carpeta: si mañana se le retira
    el acceso a alguien, se le retira también el de sus respaldos. La carpeta global se
    sigue leyendo para no perder de vista los que ya estaban ahí. */
+/* El nombre lleva la fecha y la hora LOCALES. Antes se escribía el instante en UTC
+   —«...T22-06-38-321Z»— y quien lo leía en México veía las diez de la noche en un
+   archivo creado a las cuatro de la tarde. La marca en UTC sigue guardada dentro del
+   archivo, que es donde tiene sentido; el nombre es para leerlo. */
+const selloArchivo=cuando=>{
+  const d=cuando? new Date(cuando) : new Date();
+  const x=isNaN(d)? new Date() : d;
+  return x.getFullYear()+'-'+pad2(x.getMonth()+1)+'-'+pad2(x.getDate())+'_'+
+         pad2(x.getHours())+'-'+pad2(x.getMinutes())+'-'+pad2(x.getSeconds());
+};
 const rutaBackup=(cli,cuando)=>pCli(cli)+D_BK+'/Respaldo_'+sanitizeName(cli)+'_'+
-  String(cuando||new Date().toISOString()).replace(/[:.]/g,'-')+'.json';
+  selloArchivo(cuando)+'.json';
 /* Un archivo suelto por encima de este tamaño se referencia pero no se incrusta. */
 const RESP_MAX_ARCHIVO=25*1024*1024;
 async function respaldoDe(cli,avisar){
@@ -4519,7 +4529,7 @@ async function descargarRespaldo(cli,btn){
   busy(btn,true);
   try{
     const r=await conTarea('respaldando '+cli,avisar=>respaldoDe(cli,avisar));
-    const nombre='Respaldo_'+sanitizeName(cli)+'_'+todayISO(new Date())+'.json';
+    const nombre='Respaldo_'+sanitizeName(cli)+'_'+selloArchivo()+'.json';
     const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
     bajar(blob,nombre);
     const conDatos=r.evidencias.filter(x=>x.datos).length;
@@ -4579,8 +4589,9 @@ async function restaurarRespaldo(origen,btn,etiqueta,partes){
   const listaPartes=PARTES_RESP.filter(p=>sel.has(p[0]))
     .map(p=>'  · '+p[1]+': '+p[4](r)).join('\n');
   const frase='RESTAURAR '+cli;
+  const sg=selloLocal((r.generado||{}).cuando);
   const escrito=prompt('Vas a restaurar en «'+cli+'» desde '+(etiqueta? '«'+etiqueta+'»' : 'el respaldo')+
-    ', generado el '+fechaHumana(String((r.generado||{}).cuando||'').slice(0,10))+'.\n\n'+
+    ', generado el '+sg.fecha+' a las '+sg.hora+'.\n\n'+
     'Se repondrá:\n'+listaPartes+'\n\n'+
     'Lo que no aparece en esa lista NO se toca.\n\n'+
     (existe? 'Lo que sí aparece SOBRESCRIBE lo que hay ahora.' : 'El cliente no existe: se creará.')+
@@ -4687,8 +4698,7 @@ async function eliminarClienteDefinitivo(cli,btn){
    Mezclarla en el respaldo de BBVA significaría entregarle, en un solo archivo, la
    actividad de todos los demás. */
 const P_BIT_BK='Sistema/RespaldosBitacora';
-const rutaBackupBit=cuando=>P_BIT_BK+'/Bitacora_'+
-  String(cuando||new Date().toISOString()).replace(/[:.]/g,'-')+'.json';
+const rutaBackupBit=cuando=>P_BIT_BK+'/Bitacora_'+selloArchivo(cuando)+'.json';
 async function respaldoBitacora(avisar){
   const h=await H();
   const meses=[], archivos=[];
@@ -4721,7 +4731,7 @@ async function descargarRespaldoBitacora(btn){
   try{
     const r=await conTarea('respaldando la bitácora',avisar=>respaldoBitacora(avisar));
     const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
-    bajar(blob,'Bitacora_'+todayISO(new Date())+'.json');
+    bajar(blob,'Bitacora_'+selloArchivo()+'.json');
     let enSP='';
     try{
       const h=await H();
@@ -4808,10 +4818,11 @@ function renderRespaldoBitacora(box){
   listarBackupsBitacora().then(bs=>{
     const c=box.querySelector('#bitBkLista'); if(!c) return;
     c.innerHTML = bs.length
-      ? '<div class="tw" style="max-height:220px"><table><thead><tr><th>Archivo</th><th>Guardado</th>'+
-        '<th>Tamaño</th><th></th></tr></thead><tbody>'+
+      ? '<div class="tw" style="max-height:220px"><table><thead><tr><th>Archivo</th><th>Fecha</th>'+
+        '<th>Hora</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
         bs.map(x=>'<tr><td class="mono">'+esc(x.nombre)+'</td>'+
-          '<td class="mono">'+esc(fechaHumana(String(x.cuando).slice(0,10)))+'</td>'+
+          '<td class="mono">'+esc(selloLocal(x.cuando).fecha)+'</td>'+
+          '<td class="mono">'+esc(selloLocal(x.cuando).hora)+'</td>'+
           '<td class="mono">'+esc(pesoLegible(x.tam))+'</td>'+
           '<td><button class="btn sec" data-bitr="'+esc(x.ruta)+'" style="padding:4px 11px;font-size:12px"'+
             (esDueno()?'':' disabled')+'>↺ Restaurar</button></td></tr>').join('')+
@@ -4885,7 +4896,8 @@ function renderRestaurar(box){
     '</div>'+
     (!r? '' :
       '<div class="note" style="border-left-color:var(--brand2)">Respaldo de <b>'+esc(r.cliente)+'</b>, '+
-        'generado el '+esc(fechaHumana(String((r.generado||{}).cuando||'').slice(0,10)))+
+        'generado el '+esc(selloLocal((r.generado||{}).cuando).fecha)+
+        ' a las '+esc(selloLocal((r.generado||{}).cuando).hora)+
         ' por '+esc((r.generado||{}).por||'—')+
         (S.catCli[r.cliente]? '. Ese cliente <b>ya existe</b>: lo que marques se sobrescribe.'
                             : '. Ese cliente <b>no existe</b>: se creará.')+'</div>'+
@@ -4962,18 +4974,29 @@ async function borrarBackup(ruta,btn){
   }catch(e){ toast('No se pudo borrar: '+e.message,'err',10000); }
   finally{ busy(btn,false); }
 }
+/* SharePoint devuelve la marca de tiempo en UTC. Fecha y hora se sacan del mismo
+   instante convertido a hora local: si se tomara la fecha del texto y la hora del
+   objeto, cerca de medianoche dirían días distintos. */
+function selloLocal(iso){
+  const d=new Date(String(iso||''));
+  if(isNaN(d)) return {fecha:'—',hora:'—'};
+  return {fecha:pad2(d.getDate())+'/'+pad2(d.getMonth()+1)+'/'+d.getFullYear(),
+          hora:pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds())};
+}
 /* Las dos listas de respaldos muestran lo mismo; lo único que cambia es qué se puede
    hacer con cada fila. Se pinta una vez y se reutiliza para no tener dos verdades. */
 function tablaBackups(bs,accion){
   if(!bs.length) return '<div class="note">Todavía no hay respaldos guardados.</div>';
   return '<div class="tw" style="max-height:300px"><table><thead><tr><th>Cliente</th><th>Archivo</th>'+
-    '<th>Guardado</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
-    bs.map(b=>'<tr><td><b>'+esc(clienteDeBackup(b))+'</b></td>'+
+    '<th>Fecha</th><th>Hora</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
+    bs.map(b=>{ const t=selloLocal(b.cuando);
+      return '<tr><td><b>'+esc(clienteDeBackup(b))+'</b></td>'+
       '<td class="mono">'+esc(b.nombre)+
         '<div style="color:var(--muted);font-size:11px">'+esc(b.ruta||'')+'</div></td>'+
-      '<td class="mono">'+esc(fechaHumana(String(b.cuando).slice(0,10)))+'</td>'+
+      '<td class="mono">'+esc(t.fecha)+'</td>'+
+      '<td class="mono">'+esc(t.hora)+'</td>'+
       '<td class="mono">'+esc(pesoLegible(b.tam))+'</td>'+
-      '<td style="white-space:nowrap">'+accion(b)+'</td></tr>').join('')+
+      '<td style="white-space:nowrap">'+accion(b)+'</td></tr>'; }).join('')+
     '</tbody></table></div>';
 }
 function renderRespaldo(box){
@@ -8143,7 +8166,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   respaldoDe:respaldoDe,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
-  tablaBackups:tablaBackups,
+  tablaBackups:tablaBackups,selloLocal:selloLocal,selloArchivo:selloArchivo,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
