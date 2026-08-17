@@ -1016,7 +1016,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r83';
+const APP_VER = '2026-08-16 · r84';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4871,15 +4871,17 @@ function renderRestaurar(box){
   if(!esDueno()){ box.innerHTML='<div class="note">Restaurar sobrescribe datos: está reservado a <code>'+
     esc(DUENO)+'</code>.</div>'; return; }
   const r=_respElegido;
-  box.innerHTML='<div class="note">Elige un respaldo —de los guardados arriba o de un archivo tuyo— y '+
-    'marca qué partes quieres reponer. Lo que no marques <b>no se toca</b>: se queda como está ahora.</div>'+
-    '<div class="row" style="gap:8px;margin-bottom:12px;align-items:center">'+
-      '<label class="btn sec" style="cursor:pointer">⬆ Cargar un respaldo desde mi equipo'+
+  box.innerHTML='<div class="note">Elige un respaldo de la lista o carga un archivo tuyo, y marca qué '+
+    'partes quieres reponer. Lo que no marques <b>no se toca</b>: se queda como está ahora. Se restaura '+
+    'siempre en el cliente que diga el respaldo, no en el que tengas elegido arriba.</div>'+
+    '<div id="restLista"><div class="note"><span class="spin"></span> Leyendo respaldos…</div></div>'+
+    '<div class="row" style="gap:8px;margin:12px 0;align-items:center">'+
+      '<label class="btn sec" style="cursor:pointer">⬆ …o cargar un respaldo desde mi equipo'+
         '<input type="file" id="restFile" accept=".json" class="hide"></label>'+
-      (r? '<button class="btn sec" id="restQuitar">Quitar el respaldo cargado</button>' : '')+
+      (r? '<button class="btn sec" id="restQuitar">Quitar el respaldo elegido</button>' : '')+
       '<span style="color:var(--muted);font-size:12px">'+
-        (r? 'Cargado: <b class="mono">'+esc(_respEtiqueta)+'</b>'
-          : 'Ninguno cargado todavía.')+'</span>'+
+        (r? 'Elegido: <b class="mono">'+esc(_respEtiqueta)+'</b>'
+          : 'Ninguno elegido todavía.')+'</span>'+
     '</div>'+
     (!r? '' :
       '<div class="note" style="border-left-color:var(--brand2)">Respaldo de <b>'+esc(r.cliente)+'</b>, '+
@@ -4900,6 +4902,12 @@ function renderRestaurar(box){
         '<button class="btn sec" id="restMarcar">Marcar todo</button>'+
         '<button class="btn sec" id="restNada">Desmarcar todo</button>'+
       '</div>');
+  listarBackups().then(bs=>{
+    const c=box.querySelector('#restLista'); if(!c) return;
+    c.innerHTML=tablaBackups(bs,b=>'<button class="btn" data-bkr="'+esc(b.ruta)+
+      '" style="padding:4px 11px;font-size:12px">↺ Restaurar</button>');
+    c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ elegirParaRestaurar(b.dataset.bkr,this); });
+  });
   const f=box.querySelector('#restFile');
   if(f) f.onchange=async function(){
     const a=f.files[0]; f.value=''; if(!a) return;
@@ -4918,42 +4926,93 @@ function renderRestaurar(box){
     restaurarRespaldo(_respElegido,this,_respEtiqueta,partes);
   };
 }
+/* Cuenta lo que tiene cada cliente. Se lee de SharePoint porque en memoria solo está
+   lo del cliente activo, y esta tabla habla de todos. */
+async function totalesCliente(cli){
+  const h=await H();
+  const leer=async r=>{ try{ const v=await gGetJsonCompat(h,r); return Array.isArray(v)? v : []; }
+                        catch(e){ return []; } };
+  const cat=S.catCli[cli]||{};
+  const locs=cat.localidades||[];
+  const [inv,idx,crq,sit]=await Promise.all([leer(pInv(cli)),leer(pIdx(cli)),leer(pCrq(cli)),leer(pSit(cli))]);
+  return {sedes:locs.length,
+          pisos:locs.reduce((n,l)=>n+((l&&l.pisos)||[]).length,0),
+          tickets:idx.length, crq:crq.length, sit:sit.length, inv:inv.length};
+}
+/* Del nombre del archivo sale de quién es: los respaldos de la carpeta global heredada
+   no tienen un cliente en su ruta, pero sí en su nombre. */
+function clienteDeBackup(b){
+  const m=/Respaldo_([^_]+)_/.exec(b.nombre||'');
+  if(m) return m[1];
+  const r=/^Clientes\/([^/]+)\//.exec(b.ruta||'');
+  return r? r[1] : '—';
+}
+async function borrarBackup(ruta,btn){
+  if(!esDueno()){ toast('Borrar respaldos está reservado a '+DUENO+'.','err',9000); return; }
+  const nombre=String(ruta).split('/').pop();
+  if(!confirm('Se borrará el respaldo:\n\n'+nombre+'\n\nVa a la papelera de SharePoint, así que se '+
+    'puede recuperar desde ahí. ¿Borrarlo?')) return;
+  busy(btn,true);
+  try{
+    const h=await H();
+    await gDelete(h,ruta);
+    logEvent('RESPALDO_BORRADO',ruta);
+    toast('Respaldo borrado. Está en la papelera de SharePoint.',null,9000);
+    renderCat();
+  }catch(e){ toast('No se pudo borrar: '+e.message,'err',10000); }
+  finally{ busy(btn,false); }
+}
+/* Las dos listas de respaldos muestran lo mismo; lo único que cambia es qué se puede
+   hacer con cada fila. Se pinta una vez y se reutiliza para no tener dos verdades. */
+function tablaBackups(bs,accion){
+  if(!bs.length) return '<div class="note">Todavía no hay respaldos guardados.</div>';
+  return '<div class="tw" style="max-height:300px"><table><thead><tr><th>Cliente</th><th>Archivo</th>'+
+    '<th>Guardado</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
+    bs.map(b=>'<tr><td><b>'+esc(clienteDeBackup(b))+'</b></td>'+
+      '<td class="mono">'+esc(b.nombre)+
+        '<div style="color:var(--muted);font-size:11px">'+esc(b.ruta||'')+'</div></td>'+
+      '<td class="mono">'+esc(fechaHumana(String(b.cuando).slice(0,10)))+'</td>'+
+      '<td class="mono">'+esc(pesoLegible(b.tam))+'</td>'+
+      '<td style="white-space:nowrap">'+accion(b)+'</td></tr>').join('')+
+    '</tbody></table></div>';
+}
 function renderRespaldo(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
+  const cifra=(id,k)=>'<td class="mono" id="tot_'+esc(k)+'_'+esc(id)+'" style="color:var(--muted)">…</td>';
   const fila=id=>{
     const c=(S.catCli[id]||{}).cliente||{};
     const arch=c.activo===false;
     return '<tr><td><b>'+esc(c.nombre||id)+'</b>'+(arch?' <span class="pill" style="background:var(--panel2);color:var(--warn)">archivado</span>':'')+
       '<div style="color:var(--muted);font-size:11px">Clientes/'+esc(id)+'/</div></td>'+
-      '<td class="mono">'+esc(((S.catCli[id]||{}).localidades||[]).length)+'</td>'+
+      ['sedes','pisos','tickets','crq','sit','inv'].map(k=>cifra(id,k)).join('')+
       '<td style="white-space:nowrap">'+
         '<button class="btn sec" data-bk="'+esc(id)+'" style="padding:4px 11px;font-size:12px" '+
           'title="Lo descarga a tu equipo y además lo guarda en SharePoint">💾 Respaldar</button> '+
         '<button class="btn dan" data-rm="'+esc(id)+'" style="padding:4px 11px;font-size:12px"'+
           (!esDueno()? ' disabled title="Reservado al dueño del sistema"'
-                     : ' title="Respalda en '+P_BACKUP+'/ y luego borra la carpeta del cliente"')+
+                     : ' title="Respalda en su carpeta y luego borra la del cliente"')+
           '>🗑 Baja definitiva</button>'+
       '</td></tr>';
   };
-  box.innerHTML='<div class="note"><b>El respaldo de un cliente lo incluye todo:</b> su catálogo completo '+
+  box.innerHTML='<h2 style="margin-top:0">Respaldar</h2>'+
+    '<div class="note"><b>El respaldo de un cliente lo incluye todo:</b> su catálogo completo '+
     '(sedes, pisos, alias, categorías, SLA, usuarios invitados y logo), su inventario, sus CRQs, sus SITs, '+
     'sus plantillas de reporte y el <b>expediente de cada ticket</b> con su historial, sus pausas y sus '+
-    'evidencias. Restaurarlo repone exactamente eso. Es un solo archivo <code>.json</code>.</div>'+
-    '<div class="note">Incluye también <b>los archivos adjuntos</b> de cada ticket, incrustados en el respaldo, '+
-    'así que puede pesar. Un archivo suelto de más de 25 MB se referencia sin incrustar y se avisa al terminar.</div>'+
+    'evidencias, incrustadas en el propio archivo. Es un solo <code>.json</code>, y por eso puede pesar: '+
+    'un adjunto suelto de más de 25 MB se referencia sin incrustar y se avisa al terminar.</div>'+
     '<div class="note" style="border-left-color:var(--p1)"><b>Archivar</b> (desde Clientes) oculta al cliente y '+
     'conserva todo. <b>Baja definitiva</b> borra la carpeta <code>Clientes/&lt;ID&gt;/</code> con sus tickets, '+
-    'evidencias e inventario; va a la papelera de SharePoint y se habilita solo después de descargar el respaldo '+
-    'en esta sesión. Archivar, dar de baja y restaurar están reservados a <code>'+esc(DUENO)+'</code>; '+
-    'cualquier administrador puede descargar respaldos.</div>'+
-    '<div class="tw"><table><thead><tr><th>Cliente</th><th>Sedes</th><th></th></tr></thead><tbody>'+
-    (ids.length? ids.map(fila).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
+    'evidencias e inventario; antes escribe un respaldo completo y lo verifica, y la carpeta va a la papelera '+
+    'de SharePoint. Archivar, dar de baja, restaurar y borrar respaldos están reservados a '+
+    '<code>'+esc(DUENO)+'</code>; cualquier administrador puede respaldar.</div>'+
+    '<div class="tw"><table><thead><tr><th>Cliente</th><th>Sedes</th><th>Pisos</th><th>Tickets</th>'+
+    '<th>CRQs</th><th>SITs</th><th>Equipos</th><th></th></tr></thead><tbody>'+
+    (ids.length? ids.map(fila).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px">Sin clientes</td></tr>')+
     '</tbody></table></div>'+
-    '<h2 style="margin-top:18px">Respaldos guardados en SharePoint</h2>'+
-    '<div class="note">Cada respaldo se guarda en <code>Clientes/&lt;ID&gt;/'+D_BK+'/</code>, dentro de la '+
-    'carpeta del propio cliente. El botón <b>Respaldar</b> lo descarga a tu equipo y además lo deja ahí, '+
-    'y al dar de baja un cliente se escribe uno completo antes de borrar nada.</div>'+
+    '<h2 style="margin-top:24px">Respaldos guardados en SharePoint</h2>'+
+    '<div class="note">Cada respaldo vive en <code>Clientes/&lt;ID&gt;/'+D_BK+'/</code>, dentro de la carpeta '+
+    'del propio cliente. Aquí solo se consultan y se borran; para reponer uno, usa <b>Restaurar</b>, más abajo.</div>'+
     '<div id="bkLista"><div class="note"><span class="spin"></span> Leyendo respaldos…</div></div>'+
     '<h2 style="margin-top:24px">Restaurar</h2>'+
     '<div id="cajaRest"></div>'+
@@ -4964,19 +5023,28 @@ function renderRespaldo(box){
   box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
     await descargarRespaldo(b.dataset.bk,this); renderCat(); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=function(){ eliminarClienteDefinitivo(b.dataset.rm,this); });
+  /* Cada fila se llena por su cuenta: la tabla aparece de inmediato y las cifras van
+     cayendo. Con diez clientes, esperar a leerlos todos dejaría la pantalla en blanco. */
+  ids.forEach(async id=>{
+    try{
+      const t=await totalesCliente(id);
+      [['sedes',t.sedes],['pisos',t.pisos],['tickets',t.tickets],
+       ['crq',t.crq],['sit',t.sit],['inv',t.inv]].forEach(([k,v])=>{
+        const c=box.querySelector('#tot_'+k+'_'+id);
+        if(c){ c.textContent=v; c.style.color=v? 'var(--txt)' : 'var(--muted)'; }
+      });
+    }catch(e){
+      ['sedes','pisos','tickets','crq','sit','inv'].forEach(k=>{
+        const c=box.querySelector('#tot_'+k+'_'+id);
+        if(c){ c.textContent='?'; c.title='No se pudo leer: '+e.message; }
+      });
+    }
+  });
   listarBackups().then(bs=>{
     const c=box.querySelector('#bkLista'); if(!c) return;
-    c.innerHTML = bs.length
-      ? '<div class="tw" style="max-height:260px"><table><thead><tr><th>Archivo</th><th>Guardado</th><th>Tamaño</th><th></th></tr></thead><tbody>'+
-        bs.map(b=>'<tr><td class="mono">'+esc(b.nombre)+
-            '<div style="color:var(--muted);font-size:11px">'+esc(b.ruta||'')+'</div></td>'+
-          '<td class="mono">'+esc(fechaHumana(String(b.cuando).slice(0,10)))+'</td>'+
-          '<td class="mono">'+esc(pesoLegible(b.tam))+'</td>'+
-          '<td><button class="btn sec" data-bkr="'+esc(b.ruta||b.nombre)+'" style="padding:4px 11px;font-size:12px"'+
-            (esDueno()?'':' disabled')+'>Elegir para restaurar</button></td></tr>').join('')+
-        '</tbody></table></div>'
-      : '<div class="note">Todavía no hay respaldos guardados.</div>';
-    c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ elegirParaRestaurar(b.dataset.bkr,this); });
+    c.innerHTML=tablaBackups(bs,b=>'<button class="btn dan" data-bkdel="'+esc(b.ruta)+
+      '" style="padding:4px 11px;font-size:12px"'+(esDueno()?'':' disabled')+'>🗑 Borrar</button>');
+    c.querySelectorAll('[data-bkdel]').forEach(b=>b.onclick=function(){ borrarBackup(b.dataset.bkdel,this); });
   });
 }
 /* Tira de apartados del área elegida. Se navega de uno a otro con un clic, sin pasar
@@ -8074,6 +8142,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
   respaldoDe:respaldoDe,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
+  totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
+  tablaBackups:tablaBackups,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
