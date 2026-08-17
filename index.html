@@ -315,14 +315,21 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .rte-tb .botonImg{display:inline-flex;align-items:center;justify-content:center;width:30px;height:26px;
  border-radius:5px;cursor:pointer;font-size:12px;color:var(--muted);border:1px solid transparent}
 .rte-tb .botonImg:hover{background:var(--panel);color:var(--txt)}
-/* ---------- Imágenes dentro del editor ---------- */
-.rte img.sel{outline:2px solid var(--brand2);outline-offset:2px}
-.imgTb{display:flex;gap:4px;flex-wrap:wrap;align-items:center;background:var(--panel2);
- border:1px solid var(--brand2);border-top:0;border-radius:0 0 8px 8px;padding:5px 7px;font-size:12px}
-.imgTb button{background:transparent;border:1px solid var(--line);color:var(--txt);height:24px;
- padding:0 9px;border-radius:5px;cursor:pointer;font-size:11.5px}
-.imgTb button:hover{background:var(--panel)}
-.imgTb .et{color:var(--muted);font-size:11px;margin-right:2px}
+/* ---------- Imágenes dentro del editor ----------
+   Los tiradores viven en una capa por encima del editor, no dentro de él: si fueran
+   parte del contenido acabarían guardados en el expediente. */
+.rteWrap{position:relative}
+.rte img.sel{outline:2px solid var(--brand2);outline-offset:1px}
+.imgCapa{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:0 0 8px 8px}
+.imgMarco{position:absolute;border:1px solid var(--brand2);pointer-events:none;display:none}
+.imgTir{position:absolute;width:11px;height:11px;background:var(--brand2);border:1px solid #fff;
+ border-radius:2px;pointer-events:auto;display:none;z-index:2}
+.imgTir.nw,.imgTir.se{cursor:nwse-resize}
+.imgTir.ne,.imgTir.sw{cursor:nesw-resize}
+.imgTir.n,.imgTir.s{cursor:ns-resize}
+.imgTir.e,.imgTir.w{cursor:ew-resize}
+.imgMedida{position:absolute;background:var(--brand2);color:#fff;font-size:11px;font-weight:700;
+ padding:2px 7px;border-radius:4px;pointer-events:none;display:none;white-space:nowrap;z-index:3}
 .rte{min-height:130px;max-height:320px;overflow:auto;background:var(--panel2);border:1px solid var(--line);
  border-radius:0 0 8px 8px;padding:10px;font-size:13px}
 .rte:focus{outline:2px solid var(--brand2);outline-offset:-1px}
@@ -1031,7 +1038,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r87';
+const APP_VER = '2026-08-16 · r88';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2694,76 +2701,128 @@ function avisarPesoRTE(rte){
   return mb;
 }
 /* ---- Manipular una imagen ya pegada ----
-   Chrome dejó de poner tiradores de redimensión en las imágenes de un contenteditable,
-   así que una captura entraba y ya no se podía tocar: ni achicarla, ni subirla, ni
-   quitarla sin pelear con el cursor. Al pulsarla se selecciona y aparece una barra con
-   lo que de verdad hace falta. El tamaño se guarda en el propio HTML del expediente,
-   así que se ve igual en el ticket, en el correo y en el PDF. */
-const ANCHOS_IMG=[['25','25 %'],['50','50 %'],['75','75 %'],['100','Ancho completo']];
-function anchoDeImg(img){
-  const m=/(\d+)%/.exec(img.style.width||'');
-  return m? m[1] : '100';
+   Chrome dejó de poner tiradores de redimensión en las imágenes de un contenteditable.
+   Se reponen aquí, con el comportamiento que cualquiera espera de un procesador de
+   textos: pulsas la imagen, salen ocho tiradores, arrastras una esquina y cambia de
+   tamaño conservando la proporción; desde un lado, solo esa dimensión. Para moverla,
+   se arrastra, que es lo que el navegador ya sabe hacer. Para quitarla, Suprimir.
+
+   Los tiradores NO viven dentro del editor: si fueran contenido acabarían guardados en
+   el expediente. Van en una capa hermana, superpuesta. */
+const TIRADORES=['nw','n','ne','e','se','s','sw','w'];
+/* El ancho se guarda en porcentaje del editor, no en píxeles: así la imagen conserva
+   su proporción relativa en el correo y en el PDF, donde el ancho de página es otro. */
+function anchoPctImg(img,rte){
+  const cont=rte.clientWidth-20;
+  const m=/([\d.]+)%/.exec(img.style.width||'');
+  if(m) return +m[1];
+  return cont>0? Math.min(100,Math.round(img.getBoundingClientRect().width/cont*100)) : 100;
 }
 function enlazarImagenesRTE(rte){
   if(!rte || !rte.parentNode || typeof rte.parentNode.insertBefore!=='function') return;
   if(rte.dataset.imgLista==='1') return;
   rte.dataset.imgLista='1';
-  const bar=document.createElement('div');
-  bar.className='imgTb hide';
-  bar.innerHTML='<span class="et">Imagen</span>'+
-    ANCHOS_IMG.map(([v,t])=>'<button type="button" data-ancho="'+v+'">'+t+'</button>').join('')+
-    '<span class="et" style="margin-left:6px">Mover</span>'+
-    '<button type="button" data-mover="-1" title="Subirla un bloque">↑</button>'+
-    '<button type="button" data-mover="1" title="Bajarla un bloque">↓</button>'+
-    '<button type="button" data-quitar="1" title="Quitarla" style="margin-left:6px;color:var(--err)">🗑 Quitar</button>'+
-    '<button type="button" data-cerrar="1" style="margin-left:auto">Listo</button>';
-  rte.parentNode.insertBefore(bar,rte.nextSibling);
-  let sel=null;
-  const marcar=img=>{
-    if(sel) sel.classList.remove('sel');
-    sel=img||null;
-    if(sel){ sel.classList.add('sel'); bar.classList.remove('hide');
-             bar.querySelectorAll('[data-ancho]').forEach(b=>{
-               b.style.borderColor = b.dataset.ancho===anchoDeImg(sel)? 'var(--brand2)' : 'var(--line)'; });
-    } else bar.classList.add('hide');
+  /* El editor se envuelve para tener un sistema de coordenadas propio. */
+  const wrap=document.createElement('div');
+  wrap.className='rteWrap';
+  rte.parentNode.insertBefore(wrap,rte);
+  wrap.appendChild(rte);
+  const capa=document.createElement('div');
+  capa.className='imgCapa';
+  capa.innerHTML='<div class="imgMarco"></div>'+
+    TIRADORES.map(t=>'<div class="imgTir '+t+'" data-tir="'+t+'"></div>').join('')+
+    '<div class="imgMedida"></div>';
+  wrap.appendChild(capa);
+  const marco=capa.querySelector('.imgMarco');
+  const medida=capa.querySelector('.imgMedida');
+  const tiras=TIRADORES.map(t=>capa.querySelector('.imgTir.'+t));
+  let sel=null, arrastre=null;
+
+  const ocultar=()=>{ marco.style.display='none'; medida.style.display='none';
+                      tiras.forEach(t=>t.style.display='none'); };
+  const situar=()=>{
+    if(!sel || !sel.isConnected){ marcar(null); return; }
+    const r=sel.getBoundingClientRect(), w=wrap.getBoundingClientRect();
+    const x=r.left-w.left, y=r.top-w.top;
+    marco.style.display='block';
+    marco.style.left=x+'px'; marco.style.top=y+'px';
+    marco.style.width=r.width+'px'; marco.style.height=r.height+'px';
+    const pos={nw:[x,y],n:[x+r.width/2,y],ne:[x+r.width,y],e:[x+r.width,y+r.height/2],
+               se:[x+r.width,y+r.height],s:[x+r.width/2,y+r.height],sw:[x,y+r.height],
+               w:[x,y+r.height/2]};
+    TIRADORES.forEach((t,i)=>{
+      const [px,py]=pos[t];
+      tiras[i].style.display='block';
+      tiras[i].style.left=(px-5.5)+'px';
+      tiras[i].style.top=(py-5.5)+'px';
+    });
+    medida.style.display= arrastre? 'block':'none';
+    if(arrastre){
+      medida.textContent=Math.round(r.width)+' × '+Math.round(r.height)+' px';
+      medida.style.left=Math.max(0,x)+'px';
+      medida.style.top=Math.max(0,y-24)+'px';
+    }
   };
+  function marcar(img){
+    if(sel) sel.classList.remove('sel');
+    sel=img&&img.isConnected? img : null;
+    if(sel){ sel.classList.add('sel'); situar(); } else ocultar();
+  }
   rte.addEventListener('click',e=>{
     const img=e.target.closest&&e.target.closest('img');
     marcar(img && rte.contains(img)? img : null);
   });
-  /* Pulsar fuera del editor y de su barra suelta la selección. */
+  rte.addEventListener('scroll',situar);
+  window.addEventListener('resize',situar);
   document.addEventListener('click',e=>{
-    if(!sel) return;
-    if(rte.contains(e.target)||bar.contains(e.target)) return;
+    if(!sel||arrastre) return;
+    if(rte.contains(e.target)||capa.contains(e.target)) return;
     marcar(null);
   });
-  bar.addEventListener('click',e=>{
-    const b=e.target.closest('button'); if(!b||!sel) return;
-    e.preventDefault();
-    if(b.dataset.ancho){ sel.style.width=b.dataset.ancho+'%'; sel.style.height='auto'; marcar(sel); return; }
-    if(b.dataset.mover){
-      const dir=+b.dataset.mover;
-      /* Se mueve entre los hijos directos del editor: es lo que el usuario ve como
-         «un bloque más arriba», sin meterse dentro de un párrafo ajeno. */
-      let nodo=sel; while(nodo.parentNode && nodo.parentNode!==rte) nodo=nodo.parentNode;
-      const destino = dir<0? nodo.previousElementSibling : nodo.nextElementSibling;
-      if(!destino){ toast(dir<0? 'La imagen ya está arriba del todo.' : 'La imagen ya está al final.',null,5000); return; }
-      if(dir<0) rte.insertBefore(nodo,destino); else rte.insertBefore(destino,nodo);
-      marcar(sel);
-      return;
-    }
-    if(b.dataset.quitar){
-      let nodo=sel; while(nodo.parentNode && nodo.parentNode!==rte) nodo=nodo.parentNode;
-      const img=sel; marcar(null);
-      if(nodo!==img && nodo.textContent.trim()==='') nodo.remove(); else img.remove();
-      return;
-    }
-    if(b.dataset.cerrar) marcar(null);
-  });
-  /* Suprimir con la imagen seleccionada la borra, que es lo que espera cualquiera. */
+  /* Suprimir con la imagen seleccionada la borra, como en cualquier documento. */
   rte.addEventListener('keydown',e=>{
     if(!sel) return;
     if(e.key==='Delete'||e.key==='Backspace'){ e.preventDefault(); const i=sel; marcar(null); i.remove(); }
+  });
+  /* Al arrastrar la propia imagen, el navegador la mueve solo; solo hay que quitar los
+     tiradores de en medio mientras dura y volver a situarlos al soltar. */
+  rte.addEventListener('dragstart',e=>{ if(e.target&&e.target.tagName==='IMG') ocultar(); });
+  rte.addEventListener('dragend',()=>setTimeout(situar,0));
+
+  capa.addEventListener('pointerdown',e=>{
+    const t=e.target.closest&&e.target.closest('[data-tir]');
+    if(!t||!sel) return;
+    e.preventDefault();
+    const r=sel.getBoundingClientRect();
+    arrastre={tir:t.dataset.tir, x0:e.clientX, y0:e.clientY, w0:r.width, h0:r.height,
+              prop:r.height/(r.width||1), cont:Math.max(1,rte.clientWidth-20)};
+    t.setPointerCapture&&t.setPointerCapture(e.pointerId);
+    situar();
+  });
+  capa.addEventListener('pointermove',e=>{
+    if(!arrastre||!sel) return;
+    const dx=e.clientX-arrastre.x0, dy=e.clientY-arrastre.y0, t=arrastre.tir;
+    let w=arrastre.w0;
+    /* Las esquinas conservan la proporción; los lados izquierdo y derecho solo cambian
+       el ancho, y los de arriba y abajo derivan el ancho de la altura pedida. */
+    if(t==='e'||t==='ne'||t==='se') w=arrastre.w0+dx;
+    else if(t==='w'||t==='nw'||t==='sw') w=arrastre.w0-dx;
+    else if(t==='s') w=(arrastre.h0+dy)/arrastre.prop;
+    else if(t==='n') w=(arrastre.h0-dy)/arrastre.prop;
+    const pct=Math.max(5,Math.min(100,Math.round(w/arrastre.cont*100)));
+    sel.style.width=pct+'%';
+    sel.style.height='auto';
+    situar();
+  });
+  const soltar=()=>{ if(!arrastre) return; arrastre=null; situar(); };
+  capa.addEventListener('pointerup',soltar);
+  capa.addEventListener('pointercancel',soltar);
+  /* Doble clic devuelve la imagen a su ancho natural, sin tener que afinar el arrastre. */
+  rte.addEventListener('dblclick',e=>{
+    const img=e.target.closest&&e.target.closest('img');
+    if(!img||!rte.contains(img)) return;
+    img.style.width=''; img.style.height='';
+    marcar(img);
   });
 }
 function enlazarRTE(){
