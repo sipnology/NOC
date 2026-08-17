@@ -1016,7 +1016,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r82';
+const APP_VER = '2026-08-16 · r83';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4563,17 +4563,7 @@ async function listarBackups(){
   }
   return out.sort((a,b)=>String(b.cuando).localeCompare(String(a.cuando)));
 }
-async function restaurarDesdeBackup(ruta,btn){
-  try{
-    const h=await H();
-    /* Se recibe la ruta completa: los respaldos viven en la carpeta de cada cliente y
-       ya no todos en una sola, así que el nombre por sí solo no basta. */
-    const r=await gGetJson(h,ruta);
-    if(!r) throw new Error('no se pudo leer '+ruta);
-    await restaurarRespaldo(r,btn,ruta);
-  }catch(e){ toast('No se pudo abrir el respaldo: '+e.message,'err',10000); }
-}
-async function restaurarRespaldo(origen,btn,etiqueta){
+async function restaurarRespaldo(origen,btn,etiqueta,partes){
   if(!esDueno()){ toast('Restaurar un respaldo sobrescribe los datos del cliente: '+
     'está reservado a '+DUENO+'.','err',10000); return; }
   let r=origen;
@@ -4583,13 +4573,18 @@ async function restaurarRespaldo(origen,btn,etiqueta){
   if(!r || r.formato!=='respaldo-noc-sipnology'){ toast('El origen no es un respaldo de este sistema.','err',8000); return; }
   const cli=r.cliente;
   const existe=!!S.catCli[cli];
+  /* Sin selección explícita se repone todo, que es lo que hacía antes. */
+  const sel=new Set(partes && partes.length? partes : PARTES_RESP.map(p=>p[0]));
+  const quiere=k=>sel.has(k);
+  const listaPartes=PARTES_RESP.filter(p=>sel.has(p[0]))
+    .map(p=>'  · '+p[1]+': '+p[4](r)).join('\n');
   const frase='RESTAURAR '+cli;
-  const escrito=prompt('Vas a restaurar '+(etiqueta? '«'+etiqueta+'»' : 'el respaldo')+' de «'+cli+'» generado el '+
-    fechaHumana(String((r.generado||{}).cuando||'').slice(0,10))+
-    ' con '+(r.tickets||[]).length+' ticket(s) y '+(r.inventario||[]).length+' equipo(s).\n\n'+
-    (existe? 'SOBRESCRIBE los datos actuales de ese cliente.' : 'El cliente no existe: se creará.')+
-    '\n\nIncluye '+((r.evidencias||[]).filter(x=>x.datos).length)+' evidencia(s), que se vuelven a subir.\n\n'+
-    'Escribe exactamente: '+frase);
+  const escrito=prompt('Vas a restaurar en «'+cli+'» desde '+(etiqueta? '«'+etiqueta+'»' : 'el respaldo')+
+    ', generado el '+fechaHumana(String((r.generado||{}).cuando||'').slice(0,10))+'.\n\n'+
+    'Se repondrá:\n'+listaPartes+'\n\n'+
+    'Lo que no aparece en esa lista NO se toca.\n\n'+
+    (existe? 'Lo que sí aparece SOBRESCRIBE lo que hay ahora.' : 'El cliente no existe: se creará.')+
+    '\n\nEscribe exactamente: '+frase);
   if(escrito===null) return;
   if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se restauró nada.','warn',7000); return; }
   busy(btn,true);
@@ -4598,22 +4593,25 @@ async function restaurarRespaldo(origen,btn,etiqueta){
       const h=await H();
       /* Restaurar es una operación de disco: se limpian las ediciones pendientes de ese
          cliente para que no vuelvan a superponerse encima de lo recién restaurado. */
-      if(r.catalogo){ S.catCli[cli]=r.catalogo; if(S.catEdit) delete S.catEdit[cli];
-                      await gPutJson(h,pCatCli(cli),r.catalogo); componerCat(); }
-      await gPutJson(h,pInv(cli), r.inventario||[]);
-      await gPutJson(h,pCrq(cli), r.crq||[]);
-      await gPutJson(h,pSit(cli), r.sit||[]);
-      await gPutJson(h,pRep(cli), r.reportes||[]);
-      const idx=[]; let n=0;
-      for(const t of (r.tickets||[])){
-        n++; avisar('escribiendo expediente '+n+' de '+(r.tickets||[]).length);
-        if(t._soloIndice){ idx.push(t); continue; }
-        const ruta=t.ruta||(pCasos(cli)+'/'+String(t.fechaAp).slice(0,7)+'/'+sanitizeName(t.id));
-        await gPutJson(h,ruta+'/ticket.json',t);
-        idx.push(idxEntry(t));
+      if(quiere('catalogo') && r.catalogo){
+        S.catCli[cli]=r.catalogo; if(S.catEdit) delete S.catEdit[cli];
+        await gPutJson(h,pCatCli(cli),r.catalogo); componerCat(); }
+      if(quiere('inventario')) await gPutJson(h,pInv(cli), r.inventario||[]);
+      if(quiere('crq')) await gPutJson(h,pCrq(cli), r.crq||[]);
+      if(quiere('sit')) await gPutJson(h,pSit(cli), r.sit||[]);
+      if(quiere('reportes')) await gPutJson(h,pRep(cli), r.reportes||[]);
+      if(quiere('tickets')){
+        const idx=[]; let n=0;
+        for(const t of (r.tickets||[])){
+          n++; avisar('escribiendo expediente '+n+' de '+(r.tickets||[]).length);
+          if(t._soloIndice){ idx.push(t); continue; }
+          const ruta=t.ruta||(pCasos(cli)+'/'+String(t.fechaAp).slice(0,7)+'/'+sanitizeName(t.id));
+          await gPutJson(h,ruta+'/ticket.json',t);
+          idx.push(idxEntry(t));
+        }
+        await gPutJson(h,pIdx(cli), idx.length? idx : (r.indice||[]));
       }
-      await gPutJson(h,pIdx(cli), idx.length? idx : (r.indice||[]));
-      const ev=(r.evidencias||[]).filter(x=>x.datos); let k=0;
+      const ev=quiere('evidencias')? (r.evidencias||[]).filter(x=>x.datos) : []; let k=0;
       for(const x of ev){
         k++; avisar('restaurando evidencia '+k+' de '+ev.length+': '+x.archivo);
         try{
@@ -4625,9 +4623,10 @@ async function restaurarRespaldo(origen,btn,etiqueta){
         }catch(e){ console.warn('evidencia',x.archivo,e.message); }
       }
     });
-    logEvent('RESPALDO_RESTAURADO',cli+' · '+(etiqueta||'archivo local')+' · '+(r.tickets||[]).length+
-      ' ticket(s) · '+(r.evidencias||[]).filter(x=>x.datos).length+' evidencia(s)');
-    toast('Respaldo restaurado en '+cli+'. Refrescando…',null,8000);
+    logEvent('RESPALDO_RESTAURADO',cli+' · '+(etiqueta||'archivo local')+' · partes: '+
+      PARTES_RESP.filter(p=>sel.has(p[0])).map(p=>p[1]).join(', '));
+    toast('Restaurado en '+cli+': '+PARTES_RESP.filter(p=>sel.has(p[0])).map(p=>p[1].toLowerCase()).join(', ')+
+      '. Refrescando…',null,10000);
     componerCat(); await cargarDatos(true); renderCat();
   }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
   finally{ busy(btn,false); }
@@ -4680,93 +4679,6 @@ async function eliminarClienteDefinitivo(cli,btn){
     toast('Cliente '+cli+' eliminado. Su respaldo quedó en '+ruta+' y la carpeta en la papelera.',null,13000);
     await cargarDatos(true); renderCat();
   }catch(e){ toast('No se pudo eliminar: '+e.message,'err',12000); }
-  finally{ tareaFin(tarea); busy(btn,false); }
-}
-/* ---- Restaurar el catálogo de un cliente ----
-   Las sedes, sus pisos y sus alias se han perdido dos veces por lecturas fallidas que
-   acababan escribiendo un catálogo recién nacido. Aquí se reúnen todos los sitios donde
-   puede haber quedado una copia y se comparan por lo único que importa: cuánta
-   infraestructura describe cada una. */
-async function fuentesCatalogo(cli){
-  const h=await H(), out=[];
-  const mete=(origen,ruta,cat,cuando)=>{
-    if(!cat) return;
-    const c=censoSedes(cat);
-    if(!c.sedes && !c.alias) return;
-    out.push({origen:origen,ruta:ruta,cat:cat,cuando:cuando||'',censo:c});
-  };
-  try{ const a=await gGetJsonCompat(h,pCatCliPrev(cli));
-       mete('Versión anterior del propio cliente',pCatCliPrev(cli),a,
-            a&&(a._reemplazadoEl||((a.actualizado||{}).cuando))); }catch(e){}
-  try{ const g=await gGetJson(h,'Sistema/_tickets_catalogo_respaldo.json');
-       if(g){
-         const cat=JSON.parse(JSON.stringify(g));
-         cat.localidades=(g.localidades||[]).filter(l=>!l.clienteId||l.clienteId===cli);
-         cat.aliasSedes={};
-         Object.keys(g.aliasSedes||{}).forEach(k=>{
-           if(cat.localidades.some(l=>l.id===g.aliasSedes[k])) cat.aliasSedes[k]=g.aliasSedes[k]; });
-         mete('Catálogo común anterior al reparto por cliente','Sistema/_tickets_catalogo_respaldo.json',
-              cat,(g.actualizado||{}).cuando);
-       } }catch(e){}
-  for(const b of await listarBackups()){
-    try{ const r=await gGetJson(h,P_BACKUP+'/'+b.nombre);
-         if(r && r.cliente===cli) mete('Respaldo completo',P_BACKUP+'/'+b.nombre,r.catalogo,
-                                       (r.generado||{}).cuando||b.cuando);
-    }catch(e){}
-  }
-  return out.sort((a,b)=>(b.censo.sedes-a.censo.sedes)||String(b.cuando).localeCompare(String(a.cuando)));
-}
-function renderRestaurarCat(box){
-  if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
-  if(!S.cliente){ box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
-    'Elige primero un cliente en el encabezado: se restaura el catálogo de uno concreto.</div>'; return; }
-  const hoy=censoSedes(S.cat);
-  box.innerHTML='<div class="note">Se comparan todas las copias que existen del catálogo de '+
-    '<b>'+esc(nombreCliente())+'</b>. Restaurar <b>solo la infraestructura</b> devuelve sedes, pisos y '+
-    'alias sin tocar categorías, SLAs ni usuarios; restaurar <b>todo</b> deja el catálogo tal como estaba '+
-    'en esa copia. En ambos casos la versión de ahora se guarda antes en <code>catalogo_anterior.json</code>.</div>'+
-    '<div class="note" style="border-left-color:var(--brand)">Ahora mismo: <b>'+hoy.sedes+'</b> sede(s), '+
-    '<b>'+hoy.pisos+'</b> piso(s) y <b>'+hoy.alias+'</b> alias.</div>'+
-    '<div id="rcLista"><div class="note"><span class="spin"></span> Buscando copias…</div></div>';
-  fuentesCatalogo(S.cliente).then(fs=>{
-    const c=box.querySelector('#rcLista'); if(!c) return;
-    if(!fs.length){ c.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
-      'No se encontró ninguna copia con sedes para este cliente. Si tienes un respaldo descargado, '+
-      'cárgalo desde <b>Administración → Respaldo por cliente</b>.</div>'; return; }
-    c.innerHTML='<div class="tw"><table><thead><tr><th>Copia</th><th>Fecha</th><th>Sedes</th>'+
-      '<th>Pisos</th><th>Alias</th><th></th></tr></thead><tbody>'+
-      fs.map((f,i)=>'<tr><td><b>'+esc(f.origen)+'</b><div class="mono" style="color:var(--muted);font-size:11px">'+
-        esc(f.ruta)+'</div></td>'+
-        '<td class="mono">'+esc(f.cuando? fechaHumana(String(f.cuando).slice(0,10)) : '—')+'</td>'+
-        '<td class="mono"'+(f.censo.sedes>hoy.sedes?' style="color:var(--ok);font-weight:700"':'')+'>'+f.censo.sedes+'</td>'+
-        '<td class="mono">'+f.censo.pisos+'</td><td class="mono">'+f.censo.alias+'</td>'+
-        '<td style="white-space:nowrap">'+
-          '<button class="btn" data-rc="'+i+'" data-modo="sedes" style="padding:4px 11px;font-size:12px">Solo infraestructura</button> '+
-          '<button class="btn sec" data-rc="'+i+'" data-modo="todo" style="padding:4px 11px;font-size:12px">Todo el catálogo</button>'+
-        '</td></tr>').join('')+'</tbody></table></div>';
-    c.querySelectorAll('[data-rc]').forEach(b=>b.onclick=function(){
-      aplicarCatalogoRestaurado(fs[+b.dataset.rc],b.dataset.modo,this); });
-  }).catch(e=>{ const c=box.querySelector('#rcLista');
-    if(c) c.innerHTML='<div class="note" style="border-left-color:var(--err)">No se pudieron leer las copias: '+esc2(e.message)+'</div>'; });
-}
-async function aplicarCatalogoRestaurado(f,modo,btn){
-  const cli=S.cliente, cen=f.censo;
-  const soloInfra=modo==='sedes';
-  if(!confirm('Restaurar '+(soloInfra?'sedes, pisos y alias':'el catálogo completo')+' de '+nombreCliente()+
-    ' desde:\n'+f.ruta+'\n\n'+cen.sedes+' sede(s), '+cen.pisos+' piso(s) y '+cen.alias+' alias.\n\n'+
-    'La versión de ahora quedará en catalogo_anterior.json.')) return;
-  busy(btn,true);
-  const tarea=tareaIniciar('restaurando el catálogo de '+cli);
-  try{
-    const src=JSON.parse(JSON.stringify(f.cat));
-    const claves = soloInfra ? ['localidades','aliasSedes'] : SEC_CLIENTE;
-    claves.forEach(k=>{ if(src[k]!==undefined) S.cat[k]=src[k]; });
-    if(!await catalogoPush()) throw new Error('no se pudo escribir el catálogo');
-    logEvent('CATALOGO_RESTAURADO',cli+' desde '+f.ruta+' · '+(soloInfra?'solo infraestructura':'completo')+
-      ' · '+cen.sedes+' sede(s), '+cen.pisos+' piso(s), '+cen.alias+' alias');
-    poblarCatalogosUI(); renderCat();
-    toast('Catálogo restaurado: '+cen.sedes+' sede(s), '+cen.pisos+' piso(s) y '+cen.alias+' alias.',null,10000);
-  }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
   finally{ tareaFin(tarea); busy(btn,false); }
 }
 /* ---- Respaldo de la bitácora ----
@@ -4914,6 +4826,98 @@ function renderRespaldoBitacora(box){
     });
   });
 }
+/* ---- Restaurar, por partes ----
+   Restaurar entero rara vez es lo que hace falta: lo normal es que se haya estropeado
+   una cosa —el inventario, el catálogo, un lote de tickets— y reponer el resto sería
+   tirar el trabajo hecho desde el respaldo. Por eso se elige qué entra. */
+const PARTES_RESP=[
+  ['catalogo','Catálogo','sedes, pisos, alias, categorías, SLA, usuarios y logo',
+    r=>r.catalogo? 1 : 0, r=>r.catalogo? 'completo' : 'no viene en el respaldo'],
+  ['inventario','Inventario','todos los equipos del cliente',
+    r=>(r.inventario||[]).length, r=>(r.inventario||[]).length+' equipo(s)'],
+  ['tickets','Tickets y expedientes','el índice y el expediente de cada ticket',
+    r=>(r.tickets||[]).length, r=>(r.tickets||[]).length+' ticket(s)'],
+  ['evidencias','Evidencias y adjuntos','los archivos que cuelgan de cada ticket',
+    r=>(r.evidencias||[]).filter(x=>x.datos).length,
+    r=>(r.evidencias||[]).filter(x=>x.datos).length+' archivo(s)'],
+  ['crq','CRQs','los cambios importados o capturados',
+    r=>(r.crq||[]).length, r=>(r.crq||[]).length+' CRQ(s)'],
+  ['sit','SITs','las solicitudes de servicio',
+    r=>(r.sit||[]).length, r=>(r.sit||[]).length+' SIT(s)'],
+  ['reportes','Plantillas de reporte','las plantillas compartidas del cliente',
+    r=>(r.reportes||[]).length, r=>(r.reportes||[]).length+' plantilla(s)']
+];
+let _respElegido=null, _respEtiqueta='';
+/* Trae un respaldo de SharePoint al apartado de Restaurar, sin restaurar todavía. */
+async function elegirParaRestaurar(ruta,btn){
+  busy(btn,true);
+  try{
+    const h=await H();
+    const r=await gGetJson(h,ruta);
+    if(!r) throw new Error('no se pudo leer '+ruta);
+    ponerRespaldoElegido(r,ruta);
+  }catch(e){ toast('No se pudo abrir el respaldo: '+e.message,'err',10000); }
+  finally{ busy(btn,false); }
+}
+function ponerRespaldoElegido(r,etiqueta){
+  if(!r || r.formato!=='respaldo-noc-sipnology'){
+    toast('Ese archivo no es un respaldo de este sistema.','err',9000); return; }
+  _respElegido=r; _respEtiqueta=etiqueta||'archivo local';
+  renderCat();
+  const c=$('#cajaRest'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'});
+  toast('Respaldo cargado. Elige qué restaurar y confirma.',null,8000);
+}
+function renderRestaurar(box){
+  if(!esDueno()){ box.innerHTML='<div class="note">Restaurar sobrescribe datos: está reservado a <code>'+
+    esc(DUENO)+'</code>.</div>'; return; }
+  const r=_respElegido;
+  box.innerHTML='<div class="note">Elige un respaldo —de los guardados arriba o de un archivo tuyo— y '+
+    'marca qué partes quieres reponer. Lo que no marques <b>no se toca</b>: se queda como está ahora.</div>'+
+    '<div class="row" style="gap:8px;margin-bottom:12px;align-items:center">'+
+      '<label class="btn sec" style="cursor:pointer">⬆ Cargar un respaldo desde mi equipo'+
+        '<input type="file" id="restFile" accept=".json" class="hide"></label>'+
+      (r? '<button class="btn sec" id="restQuitar">Quitar el respaldo cargado</button>' : '')+
+      '<span style="color:var(--muted);font-size:12px">'+
+        (r? 'Cargado: <b class="mono">'+esc(_respEtiqueta)+'</b>'
+          : 'Ninguno cargado todavía.')+'</span>'+
+    '</div>'+
+    (!r? '' :
+      '<div class="note" style="border-left-color:var(--brand2)">Respaldo de <b>'+esc(r.cliente)+'</b>, '+
+        'generado el '+esc(fechaHumana(String((r.generado||{}).cuando||'').slice(0,10)))+
+        ' por '+esc((r.generado||{}).por||'—')+
+        (S.catCli[r.cliente]? '. Ese cliente <b>ya existe</b>: lo que marques se sobrescribe.'
+                            : '. Ese cliente <b>no existe</b>: se creará.')+'</div>'+
+      '<div class="tw"><table><thead><tr><th style="width:1%"></th><th>Qué se repone</th>'+
+        '<th>Trae</th></tr></thead><tbody>'+
+        PARTES_RESP.map(([k,titulo,desc,cuenta,texto])=>{
+          const n=cuenta(r);
+          return '<tr><td><input type="checkbox" data-parte="'+esc(k)+'"'+(n?' checked':' disabled')+'></td>'+
+            '<td><b>'+esc(titulo)+'</b><div style="font-size:11.5px;color:var(--muted)">'+esc(desc)+'</div></td>'+
+            '<td class="mono"'+(n?'':' style="color:var(--muted)"')+'>'+esc(texto(r))+'</td></tr>';
+        }).join('')+'</tbody></table></div>'+
+      '<div class="row" style="margin-top:12px;gap:8px">'+
+        '<button class="btn" id="restTodo">Restaurar lo seleccionado</button>'+
+        '<button class="btn sec" id="restMarcar">Marcar todo</button>'+
+        '<button class="btn sec" id="restNada">Desmarcar todo</button>'+
+      '</div>');
+  const f=box.querySelector('#restFile');
+  if(f) f.onchange=async function(){
+    const a=f.files[0]; f.value=''; if(!a) return;
+    try{ ponerRespaldoElegido(JSON.parse(await a.text()),a.name); }
+    catch(e){ toast('El archivo no es un respaldo válido.','err',9000); }
+  };
+  const q=box.querySelector('#restQuitar');
+  if(q) q.onclick=()=>{ _respElegido=null; _respEtiqueta=''; renderCat(); };
+  const marcar=v=>box.querySelectorAll('[data-parte]').forEach(c=>{ if(!c.disabled) c.checked=v; });
+  const bm=box.querySelector('#restMarcar'); if(bm) bm.onclick=()=>marcar(true);
+  const bn=box.querySelector('#restNada'); if(bn) bn.onclick=()=>marcar(false);
+  const bt=box.querySelector('#restTodo');
+  if(bt) bt.onclick=function(){
+    const partes=[...box.querySelectorAll('[data-parte]')].filter(c=>c.checked).map(c=>c.dataset.parte);
+    if(!partes.length){ toast('No marcaste nada que restaurar.','warn',7000); return; }
+    restaurarRespaldo(_respElegido,this,_respEtiqueta,partes);
+  };
+}
 function renderRespaldo(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
@@ -4950,30 +4954,16 @@ function renderRespaldo(box){
     '<div class="note">Cada respaldo se guarda en <code>Clientes/&lt;ID&gt;/'+D_BK+'/</code>, dentro de la '+
     'carpeta del propio cliente. El botón <b>Respaldar</b> lo descarga a tu equipo y además lo deja ahí, '+
     'y al dar de baja un cliente se escribe uno completo antes de borrar nada.</div>'+
-    '<div id="bkLista"><div class="note"><span class="spin"></span> Leyendo '+P_BACKUP+'/…</div></div>'+
-    '<div class="row" style="margin-top:12px;gap:8px;align-items:center">'+
-      '<label class="btn sec" style="cursor:'+(esDueno()?'pointer':'not-allowed')+';opacity:'+(esDueno()?'1':'.45')+'">'+
-        '⬆ …o restaurar desde un archivo local'+
-        '<input type="file" id="bkFile" accept=".json" class="hide"'+(esDueno()?'':' disabled')+'></label>'+
-      '<span style="color:var(--muted);font-size:12px">Pide confirmación escrita y sobrescribe los datos del cliente que indique el respaldo.</span>'+
-    '</div>'+
-    /* Restaurar el catálogo y comparar rutas viven aquí: son la misma tarea —recuperar
-       algo que se perdió o quedó tapado— y tenerlas en tres sitios distintos solo hacía
-       que nadie supiera dónde buscar. */
-    '<h2 style="margin-top:22px">Bitácora del sistema</h2>'+
-    '<div id="cajaBit"></div>'+
-    '<h2 style="margin-top:22px">Recuperar solo el catálogo</h2>'+
-    '<div id="cajaRestCat"></div>'+
-    '<h2 style="margin-top:22px">Qué hay en cada ruta</h2>'+
-    '<div id="cajaRutas"></div>';
+    '<div id="bkLista"><div class="note"><span class="spin"></span> Leyendo respaldos…</div></div>'+
+    '<h2 style="margin-top:24px">Restaurar</h2>'+
+    '<div id="cajaRest"></div>'+
+    '<h2 style="margin-top:24px">Bitácora del sistema</h2>'+
+    '<div id="cajaBit"></div>';
+  const cajaRes=box.querySelector('#cajaRest'); if(cajaRes) renderRestaurar(cajaRes);
   const cajaB=box.querySelector('#cajaBit'); if(cajaB) renderRespaldoBitacora(cajaB);
-  const cajaR=box.querySelector('#cajaRestCat'); if(cajaR) renderRestaurarCat(cajaR);
-  const cajaRu=box.querySelector('#cajaRutas'); if(cajaRu) renderComparadorRutas(cajaRu);
   box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
     await descargarRespaldo(b.dataset.bk,this); renderCat(); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=function(){ eliminarClienteDefinitivo(b.dataset.rm,this); });
-  const f=box.querySelector('#bkFile');
-  if(f) f.onchange=function(){ const a=f.files[0]; f.value=''; if(a) restaurarRespaldo(a,this); };
   listarBackups().then(bs=>{
     const c=box.querySelector('#bkLista'); if(!c) return;
     c.innerHTML = bs.length
@@ -4983,10 +4973,10 @@ function renderRespaldo(box){
           '<td class="mono">'+esc(fechaHumana(String(b.cuando).slice(0,10)))+'</td>'+
           '<td class="mono">'+esc(pesoLegible(b.tam))+'</td>'+
           '<td><button class="btn sec" data-bkr="'+esc(b.ruta||b.nombre)+'" style="padding:4px 11px;font-size:12px"'+
-            (esDueno()?'':' disabled')+'>↺ Restaurar</button></td></tr>').join('')+
+            (esDueno()?'':' disabled')+'>Elegir para restaurar</button></td></tr>').join('')+
         '</tbody></table></div>'
-      : '<div class="note">Todavía no hay respaldos en <code>'+P_BACKUP+'/</code>.</div>';
-    c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ restaurarDesdeBackup(b.dataset.bkr,this); });
+      : '<div class="note">Todavía no hay respaldos guardados.</div>';
+    c.querySelectorAll('[data-bkr]').forEach(b=>b.onclick=function(){ elegirParaRestaurar(b.dataset.bkr,this); });
   });
 }
 /* Tira de apartados del área elegida. Se navega de uno a otro con un clic, sin pasar
@@ -5317,129 +5307,6 @@ function renderPendCat(){
     'y se escriben únicamente estas secciones:<br>'+
     p.map(x=>'· <b>'+esc(x.cliente==='(lista de clientes)'?x.cliente:nombre(x.cliente))+'</b>: '+
       esc(x.secciones.join(', '))).join('<br>')+'</div>';
-}
-/* ---- Comparar la ruta nueva con la anterior ----
-   Cuando un archivo existe en las dos, la aplicación lee el nuevo. Si el nuevo lo
-   escribió una migración equivocada, el bueno queda escondido detrás sin que nadie lo
-   note. Esto lo pone a la vista: cuántos registros tiene cada uno y cuál es más reciente,
-   para poder decidir con datos en vez de a ciegas. */
-/* Se calcula al llamarla, no al cargar: pRep se declara más abajo y una constante de
-   nivel superior lo leería antes de que exista. */
-function archivosCli(){
-  return [['idx','índice de tickets',pIdx],['inv','inventario',pInv],
-          ['crq','CRQs',pCrq],['sit','SITs',pSit],
-          ['cat','catálogo',pCatCli],['rep','plantillas de reporte',pRep]];
-}
-function cuentaDe(v){
-  if(Array.isArray(v)) return v.length+' registro(s)';
-  if(v&&typeof v==='object'){
-    const c=censoSedes(v);
-    if(c.sedes||c.alias) return c.sedes+' sede(s), '+c.pisos+' piso(s), '+c.alias+' alias';
-    return Object.keys(v).length+' clave(s)';
-  }
-  return '—';
-}
-async function compararRutas(cli){
-  const h=await H(), out=[];
-  for(const [k,etiqueta,ruta] of archivosCli()){
-    const nueva=ruta(cli), vieja=rutaVieja(nueva);
-    if(!vieja) continue;
-    let a=null,b=null;
-    try{ a=await gGetJson(h,nueva); }catch(e){}
-    try{ b=await gGetJson(h,vieja); }catch(e){}
-    if(a===null&&b===null) continue;
-    out.push({k:k,etiqueta:etiqueta,nueva:nueva,vieja:vieja,
-              hayNueva:a!==null&&a!==undefined, hayVieja:b!==null&&b!==undefined,
-              cuentaNueva:cuentaDe(a), cuentaVieja:cuentaDe(b),
-              iguales:JSON.stringify(a)===JSON.stringify(b)});
-  }
-  return out;
-}
-/* Hace prevalecer una de las dos copias. Nunca borra la otra en el mismo gesto: primero
-   se copia y se verifica, y la limpieza es una decisión aparte. */
-async function resolverRuta(cli,k,cual){
-  const h=await H();
-  const def=archivosCli().find(x=>x[0]===k);
-  if(!def) throw new Error('archivo desconocido');
-  const nueva=def[2](cli), vieja=rutaVieja(nueva);
-  if(cual==='vieja'){
-    const dato=await gGetJson(h,vieja);
-    if(dato===null||dato===undefined) throw new Error('no hay nada en la ruta anterior');
-    /* Lo que se va a pisar se guarda al lado, por si la elección fue la equivocada. */
-    const actual=await gGetJson(h,nueva);
-    if(actual!==null&&actual!==undefined)
-      await gPutJson(h,nueva.replace(/\.json$/,'_reemplazado.json'),actual);
-    await gPutJson(h,nueva,dato);
-    const ver=await gGetJson(h,nueva);
-    if(JSON.stringify(ver)!==JSON.stringify(dato)) throw new Error('la copia no se pudo verificar');
-    logEvent('RUTA_RESUELTA',cli+' · '+def[1]+': prevalece la versión anterior ('+cuentaDe(dato)+')');
-  }else{
-    await gDelete(h,vieja);
-    logEvent('RUTA_RESUELTA',cli+' · '+def[1]+': se conserva la versión nueva y se borra la anterior');
-  }
-}
-/* Nombre llano de un archivo, para los avisos. */
-function esc2Plano(k){ const d=archivosCli().find(x=>x[0]===k); return d? d[1] : k; }
-/* ---- Comparador de rutas ----
-   La migración a la estructura por materia ya se hizo y su pantalla desapareció, pero
-   esto se queda: si un archivo vuelve a aparecer en las dos rutas, la aplicación lee la
-   nueva y la buena queda escondida detrás sin que nadie lo note. Ya pasó una vez. */
-function renderComparadorRutas(box){
-  if(!esDueno()){ box.innerHTML='<div class="note">Reservado a <code>'+esc(DUENO)+'</code>.</div>'; return; }
-  const ids=Object.keys(S.catCli).sort();
-  box.innerHTML='<div class="note">Cuando un archivo existe en la ruta actual y en la anterior, la '+
-    'aplicación lee <b>la actual</b>. Si esa la escribió una migración equivocada, la buena queda '+
-    'escondida detrás. Aquí se ven las dos y se decide cuál manda; lo que se pisa se guarda al lado '+
-    'como <code>…_reemplazado.json</code>.</div>'+
-    '<div class="row" style="gap:8px;margin-bottom:10px">'+
-      '<select id="cmpCli" style="width:260px">'+
-        ids.map(id=>'<option'+(id===S.cliente?' selected':'')+'>'+esc(id)+'</option>').join('')+'</select>'+
-      '<button class="btn sec" id="cmpVer">Comparar rutas</button></div>'+
-    '<div id="cmpRep"></div>';
-  const pintar=async function(btn){
-    const cli=box.querySelector('#cmpCli').value;
-    const dest=box.querySelector('#cmpRep');
-    dest.innerHTML='<div class="note"><span class="spin"></span> Leyendo las dos rutas…</div>';
-    if(btn) busy(btn,true);
-    try{
-      const filas=await compararRutas(cli);
-      if(!filas.length){ dest.innerHTML='<div class="note" style="border-left-color:var(--ok)">'+
-        esc(cli)+' está limpio: no queda nada en las rutas anteriores.</div>'; return; }
-      dest.innerHTML='<div class="tw"><table><thead><tr><th>Archivo</th><th>Ruta actual</th>'+
-        '<th>Ruta anterior</th><th></th></tr></thead><tbody>'+
-        filas.map(f=>'<tr><td><b>'+esc(f.etiqueta)+'</b>'+
-          (f.iguales? ' <span class="pill" style="background:var(--panel2);color:var(--ok)">idénticas</span>':'')+'</td>'+
-          '<td class="mono">'+(f.hayNueva? esc(f.cuentaNueva) : '<span style="color:var(--muted)">vacía</span>')+
-            '<div style="color:var(--muted);font-size:11px">'+esc(f.nueva)+'</div></td>'+
-          '<td class="mono">'+(f.hayVieja? esc(f.cuentaVieja) : '<span style="color:var(--muted)">vacía</span>')+
-            '<div style="color:var(--muted);font-size:11px">'+esc(f.vieja)+'</div></td>'+
-          '<td style="white-space:nowrap">'+
-            (f.hayVieja&&!f.iguales? '<button class="btn" data-usar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
-              'style="padding:4px 11px;font-size:12px">Que mande la anterior</button> ':'')+
-            (f.hayVieja? '<button class="btn sec" data-tirar="'+esc(f.k)+'" data-cli="'+esc(cli)+'" '+
-              'style="padding:4px 11px;font-size:12px">Conservar la actual</button>':'')+
-          '</td></tr>').join('')+'</tbody></table></div>';
-      dest.querySelectorAll('[data-usar]').forEach(b=>b.onclick=async function(){
-        if(!confirm('El '+esc2Plano(b.dataset.usar)+' de la ruta anterior pasará a mandar.\n\n'+
-          'Lo que hay ahora en la ruta actual se guarda como …_reemplazado.json.')) return;
-        busy(this,true);
-        try{ await resolverRuta(b.dataset.cli,b.dataset.usar,'vieja');
-             await cargarDatos(true); await catalogoPull(true);
-             toast('Listo. Ahora manda la versión anterior.',null,9000); await pintar(null); }
-        catch(e){ toast('No se pudo: '+e.message,'err',10000); }
-        finally{ busy(this,false); } });
-      dest.querySelectorAll('[data-tirar]').forEach(b=>b.onclick=async function(){
-        if(!confirm('Se borrará el archivo de la ruta anterior. Va a la papelera de SharePoint.')) return;
-        busy(this,true);
-        try{ await resolverRuta(b.dataset.cli,b.dataset.tirar,'nueva');
-             toast('Archivo anterior borrado.'); await pintar(null); }
-        catch(e){ toast('No se pudo: '+e.message,'err',10000); }
-        finally{ busy(this,false); } });
-    }catch(e){ dest.innerHTML='<div class="note" style="border-left-color:var(--err)">No se pudo comparar: '+
-      esc(e.message)+'</div>'; }
-    finally{ if(btn) busy(btn,false); }
-  };
-  const b=box.querySelector('#cmpVer'); if(b) b.onclick=function(){ pintar(this); };
 }
 /* Borra los expedientes de un cliente y deja su índice en cero, respaldando antes.
    Vive en Mantenimiento, que es donde se vacían datos, y no mezclado con una migración. */
@@ -8190,7 +8057,6 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   cambioTxt:cambioTxt,cambioSec:cambioSec,cambioHora:cambioHora,pendientesPorSeccion:pendientesPorSeccion,
   soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
   pUsr:pUsr,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
-  archivosCli:archivosCli,cuentaDe:cuentaDe,compararRutas:compararRutas,resolverRuta:resolverRuta,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
   respaldoBitacora:respaldoBitacora,restaurarBitacora:restaurarBitacora,P_BIT_BK:P_BIT_BK,
@@ -8205,8 +8071,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   IMG_ANCHO:IMG_ANCHO,IMG_CALIDAD:IMG_CALIDAD,DESC_MAX_MB:DESC_MAX_MB,
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
-  CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,fuentesCatalogo:fuentesCatalogo,
+  CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
   respaldoDe:respaldoDe,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
+  PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
