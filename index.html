@@ -20,10 +20,19 @@ body{margin:0;background:var(--bg);color:var(--txt);
 h1,h2,h3{margin:0 0 10px;font-weight:600}
 a{color:var(--brand2)}
 /* ---------- Auth gate ---------- */
+/* Mismas medidas que el cotizador: los dos productos se ven seguidos y una diferencia
+   de veinte píxeles en la tarjeta de entrada se nota más de lo que parece. */
 #authGate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
- background:linear-gradient(180deg,#0f1e3d,#0f172a)}
-#authGate .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 38px;
- width:min(420px,92vw);text-align:center;box-shadow:var(--sh)}
+ background:var(--bg);padding:24px}
+#authGate .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:30px 34px;
+ width:min(440px,92vw);max-width:440px;text-align:center;box-shadow:0 14px 46px rgba(0,0,0,.45)}
+#authGate .logo .mark{height:44px}
+#authGate .logo .name{font-size:26px;letter-spacing:.5px}
+#authGate .sub{font-size:14px;color:var(--muted);margin:0}
+#authGate .note{font-size:13px;color:#cbd5e1;background:#0f1a30;border:0;border-radius:8px;
+ padding:12px 14px;margin:18px 0}
+#authGate .btn{width:100%;font-size:15px;font-weight:700;padding:13px 22px;border-radius:8px}
+#authGate .pie{font-size:12px;color:#64748b;margin-top:16px}
 .logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:6px}
 .logo .mark{height:42px;width:auto;display:block;background:none;border:0;object-fit:contain}
 #marcaTexto .mark{height:38px}
@@ -354,10 +363,8 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div class="sub">Sistema de Control de Tickets · NOC</div>
     <div id="gateMsg" class="note" style="text-align:left">Inicia sesión con tu cuenta corporativa de Microsoft 365.
       La sesión se cierra al salir de la pestaña, así que se pide autenticación cada vez.</div>
-    <button class="btn" id="btnLogin" style="width:100%;padding:11px">Iniciar sesión con Microsoft 365</button>
-    <div style="margin-top:14px;font-size:11.5px;color:var(--muted)">
-      Clientes externos: usen el correo con el que fueron invitados.
-    </div>
+    <button class="btn" id="btnLogin">Iniciar sesión con Microsoft 365</button>
+    <div class="pie">Clientes externos: usen el correo con el que fueron invitados.</div>
   </div>
 </div>
 
@@ -672,8 +679,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
         <button class="btn dan" id="repBorrar" style="padding:6px 12px">Eliminar</button>
       </span>
     </div>
-    <div class="note">Las plantillas se guardan en SharePoint y las ve todo el NOC, así el reporte mensual
-      sale igual lo genere quien lo genere. Se guardan por cliente.</div>
   </div>
 
   <div class="panel">
@@ -736,11 +741,6 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   <div class="panel">
     <h2>Catálogos maestros</h2>
     <div style="color:var(--muted);margin:-6px 0 10px" id="catCliente"></div>
-    <div class="note" id="catWarn">Solo el administrador puede modificar catálogos. Lo de Sipnology
-      —administradores y logo— se guarda en <code>Sistema/_tickets_catalogo.json</code>; lo de cada cliente,
-      en <code>Clientes/&lt;ID&gt;/catalogo.json</code>, aislado del resto. Antes de cada escritura se
-      conserva la versión anterior en <code>catalogo_anterior.json</code>, recuperable desde
-      <b>Administración → Restaurar catálogo</b>.</div>
     <!-- Agrupado por aquello sobre lo que se trabaja, no por el tipo de dato: quien
          busca algo de una sede no debería tener que recorrer diecisiete apartados. -->
     <!-- El desplegable elige el área; los apartados de cada una se abren desde su
@@ -1016,7 +1016,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-16 · r80';
+const APP_VER = '2026-08-16 · r82';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4444,7 +4444,7 @@ const CAT_AREAS=[
     ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
     ['admins','Administradores','Quién puede modificar los catálogos'],
     ['respaldo','Respaldo y Restauración','Generar respaldos, restaurarlos y dar de baja'],
-    ['mantenimiento','Vaciar datos de pruebas','Borrar tickets, CRQs, SITs y expedientes']]}
+    ['mantenimiento','Eliminar datos','Borrar en bloque tickets, CRQs, SITs y expedientes']]}
 ];
 const CAT_GRUPOS=CAT_AREAS.map(a=>[a.nombre,a.secciones.map(s=>s[0])]);
 function grupoDe(k){ const g=CAT_GRUPOS.find(x=>x[1].indexOf(k)!==-1); return g? g[0] : ''; }
@@ -4769,6 +4769,151 @@ async function aplicarCatalogoRestaurado(f,modo,btn){
   }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
   finally{ tareaFin(tarea); busy(btn,false); }
 }
+/* ---- Respaldo de la bitácora ----
+   Va aparte del respaldo de cada cliente a propósito: la bitácora es control interno
+   del sistema —quién hizo qué en toda la plataforma— y no información del cliente.
+   Mezclarla en el respaldo de BBVA significaría entregarle, en un solo archivo, la
+   actividad de todos los demás. */
+const P_BIT_BK='Sistema/RespaldosBitacora';
+const rutaBackupBit=cuando=>P_BIT_BK+'/Bitacora_'+
+  String(cuando||new Date().toISOString()).replace(/[:.]/g,'-')+'.json';
+async function respaldoBitacora(avisar){
+  const h=await H();
+  const meses=[], archivos=[];
+  let carpetas=[];
+  try{ carpetas=(await gList(h,P_BIT)).filter(f=>f.folder).map(f=>f.name); }
+  catch(e){ throw new Error('no se pudo listar '+P_BIT+': '+e.message); }
+  carpetas.sort();
+  for(const mes of carpetas){
+    if(avisar) avisar('leyendo '+mes);
+    let hijos=[];
+    try{ hijos=await gList(h,P_BIT+'/'+mes); }catch(e){ continue; }
+    let n=0;
+    for(const f of hijos){
+      if(!/\.json$/i.test(f.name||'')) continue;
+      try{
+        const a=await gGetJson(h,P_BIT+'/'+mes+'/'+f.name);
+        if(Array.isArray(a)){ archivos.push({mes:mes,archivo:f.name,registros:a}); n+=a.length; }
+      }catch(e){}
+    }
+    meses.push(mes+' ('+n+')');
+  }
+  const total=archivos.reduce((x,f)=>x+f.registros.length,0);
+  return {formato:'respaldo-bitacora-sipnology', version:1,
+    generado:{por:S.me.mail,cuando:new Date().toISOString(),app:APP_VER},
+    meses:meses, archivos:archivos, registros:total};
+}
+async function descargarRespaldoBitacora(btn){
+  if(!isAdmin()){ toast('Solo el administrador puede respaldar la bitácora.','err'); return; }
+  busy(btn,true);
+  try{
+    const r=await conTarea('respaldando la bitácora',avisar=>respaldoBitacora(avisar));
+    const blob=new Blob([JSON.stringify(r)],{type:'application/json'});
+    bajar(blob,'Bitacora_'+todayISO(new Date())+'.json');
+    let enSP='';
+    try{
+      const h=await H();
+      const ruta=rutaBackupBit((r.generado||{}).cuando);
+      await gPutJson(h,ruta,r);
+      const ver=await gGetJson(h,ruta);
+      if(!ver||ver.formato!=='respaldo-bitacora-sipnology') throw new Error('no se pudo verificar');
+      enSP=ruta;
+    }catch(e){ toast('Se descargó, pero no se pudo guardar en SharePoint: '+e.message,'warn',12000); }
+    logEvent('RESPALDO_BITACORA',r.registros+' registro(s) · '+r.archivos.length+' archivo(s) · '+
+      (enSP||'solo descarga'));
+    toast('Bitácora respaldada: '+r.registros+' registro(s) de '+r.meses.length+' mes(es)'+
+      (enSP? ', guardada en '+enSP : '')+'.',null,11000);
+    renderCat();
+  }catch(e){ toast('No se pudo respaldar la bitácora: '+e.message,'err',12000); }
+  finally{ busy(btn,false); }
+}
+/* Restaurar la bitácora FUSIONA: nunca borra lo que ya hay. Una auditoría que se puede
+   sobrescribir reponiendo una copia vieja deja de ser una auditoría. */
+async function restaurarBitacora(origen,btn,etiqueta){
+  if(!esDueno()){ toast('Restaurar la bitácora está reservado a '+DUENO+'.','err',9000); return; }
+  let r=origen;
+  if(origen && typeof origen.text==='function'){
+    try{ r=JSON.parse(await origen.text()); }catch(e){ toast('El archivo no es válido.','err'); return; }
+  }
+  if(!r || r.formato!=='respaldo-bitacora-sipnology'){
+    toast('Ese archivo no es un respaldo de bitácora.','err',8000); return; }
+  if(!confirm('Se añadirán a la bitácora los registros que falten de «'+(etiqueta||'el archivo')+'».\n\n'+
+    r.registros+' registro(s) de '+(r.meses||[]).length+' mes(es).\n\n'+
+    'No se borra nada: lo que ya existe se conserva.')) return;
+  busy(btn,true);
+  try{
+    let anadidos=0;
+    await conTarea('restaurando la bitácora',async avisar=>{
+      const h=await H();
+      let i=0;
+      for(const f of (r.archivos||[])){
+        i++; avisar('fusionando '+f.mes+'/'+f.archivo+' ('+i+' de '+(r.archivos||[]).length+')');
+        const ruta=P_BIT+'/'+f.mes+'/'+f.archivo;
+        let actual=[];
+        try{ const a=await gGetJson(h,ruta); if(Array.isArray(a)) actual=a; }catch(e){}
+        const llave=x=>[x.fecha,x.hora,x.evento,x.usuario,x.detalle].join('|');
+        const vistos=new Set(actual.map(llave));
+        const nuevos=(f.registros||[]).filter(x=>!vistos.has(llave(x)));
+        if(!nuevos.length) continue;
+        const union=actual.concat(nuevos).sort((a,b)=>
+          String(b.fecha+b.hora).localeCompare(String(a.fecha+a.hora)));
+        await gPutJson(h,ruta,union);
+        anadidos+=nuevos.length;
+      }
+    });
+    logEvent('BITACORA_RESTAURADA',(etiqueta||'archivo local')+' · '+anadidos+' registro(s) añadidos');
+    toast(anadidos+' registro(s) añadidos a la bitácora. No se borró ninguno.',null,11000);
+    bitPull();
+  }catch(e){ toast('No se pudo restaurar: '+e.message,'err',12000); }
+  finally{ busy(btn,false); }
+}
+async function listarBackupsBitacora(){
+  try{
+    const h=await H();
+    return (await gList(h,P_BIT_BK)).filter(x=>/\.json$/i.test(x.name||''))
+      .map(x=>({nombre:x.name, ruta:P_BIT_BK+'/'+x.name, tam:x.size||0, cuando:x.lastModifiedDateTime||''}))
+      .sort((a,b)=>String(b.cuando).localeCompare(String(a.cuando)));
+  }catch(e){ return []; }
+}
+function renderRespaldoBitacora(box){
+  if(!isAdmin()){ box.innerHTML=''; return; }
+  box.innerHTML='<div class="note">La bitácora es el registro de quién hizo qué en toda la plataforma. '+
+    'Se respalda <b>aparte</b> de los clientes: es control interno del sistema, no información de un '+
+    'cliente, y meterla en el respaldo de uno significaría entregarle la actividad de todos los demás.</div>'+
+    '<div class="note" style="border-left-color:var(--ok)">Restaurarla <b>solo añade</b> los registros que '+
+    'falten; nunca borra los que ya están. Una auditoría que se puede sobrescribir con una copia vieja '+
+    'deja de servir como auditoría.</div>'+
+    '<div class="row" style="gap:8px;margin-bottom:10px">'+
+      '<button class="btn" id="bitBk">💾 Respaldar la bitácora</button>'+
+      '<label class="btn sec" style="cursor:'+(esDueno()?'pointer':'not-allowed')+';opacity:'+(esDueno()?'1':'.45')+'">'+
+        '⬆ Restaurar desde un archivo'+
+        '<input type="file" id="bitFile" accept=".json" class="hide"'+(esDueno()?'':' disabled')+'></label>'+
+    '</div>'+
+    '<div id="bitBkLista"><div class="note"><span class="spin"></span> Leyendo respaldos…</div></div>';
+  const b=box.querySelector('#bitBk'); if(b) b.onclick=function(){ descargarRespaldoBitacora(this); };
+  const f=box.querySelector('#bitFile');
+  if(f) f.onchange=function(){ const a=f.files[0]; f.value=''; if(a) restaurarBitacora(a,this,a.name); };
+  listarBackupsBitacora().then(bs=>{
+    const c=box.querySelector('#bitBkLista'); if(!c) return;
+    c.innerHTML = bs.length
+      ? '<div class="tw" style="max-height:220px"><table><thead><tr><th>Archivo</th><th>Guardado</th>'+
+        '<th>Tamaño</th><th></th></tr></thead><tbody>'+
+        bs.map(x=>'<tr><td class="mono">'+esc(x.nombre)+'</td>'+
+          '<td class="mono">'+esc(fechaHumana(String(x.cuando).slice(0,10)))+'</td>'+
+          '<td class="mono">'+esc(pesoLegible(x.tam))+'</td>'+
+          '<td><button class="btn sec" data-bitr="'+esc(x.ruta)+'" style="padding:4px 11px;font-size:12px"'+
+            (esDueno()?'':' disabled')+'>↺ Restaurar</button></td></tr>').join('')+
+        '</tbody></table></div>'
+      : '<div class="note">Todavía no hay respaldos de bitácora en <code>'+P_BIT_BK+'/</code>.</div>';
+    c.querySelectorAll('[data-bitr]').forEach(b=>b.onclick=async function(){
+      try{
+        const h=await H();
+        const r=await gGetJson(h,b.dataset.bitr);
+        await restaurarBitacora(r,this,b.dataset.bitr);
+      }catch(e){ toast('No se pudo abrir: '+e.message,'err',9000); }
+    });
+  });
+}
 function renderRespaldo(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   const ids=Object.keys(S.catCli).sort();
@@ -4787,9 +4932,10 @@ function renderRespaldo(box){
           '>🗑 Baja definitiva</button>'+
       '</td></tr>';
   };
-  box.innerHTML='<div class="note">Un respaldo incluye el catálogo del cliente, su inventario, sus CRQs, '+
-    'SITs, plantillas de reporte y el <b>expediente completo de cada ticket</b> con su historial y sus pausas. '+
-    'Se descarga como un solo archivo <code>.json</code> que este mismo módulo puede volver a cargar.</div>'+
+  box.innerHTML='<div class="note"><b>El respaldo de un cliente lo incluye todo:</b> su catálogo completo '+
+    '(sedes, pisos, alias, categorías, SLA, usuarios invitados y logo), su inventario, sus CRQs, sus SITs, '+
+    'sus plantillas de reporte y el <b>expediente de cada ticket</b> con su historial, sus pausas y sus '+
+    'evidencias. Restaurarlo repone exactamente eso. Es un solo archivo <code>.json</code>.</div>'+
     '<div class="note">Incluye también <b>los archivos adjuntos</b> de cada ticket, incrustados en el respaldo, '+
     'así que puede pesar. Un archivo suelto de más de 25 MB se referencia sin incrustar y se avisa al terminar.</div>'+
     '<div class="note" style="border-left-color:var(--p1)"><b>Archivar</b> (desde Clientes) oculta al cliente y '+
@@ -4814,10 +4960,13 @@ function renderRespaldo(box){
     /* Restaurar el catálogo y comparar rutas viven aquí: son la misma tarea —recuperar
        algo que se perdió o quedó tapado— y tenerlas en tres sitios distintos solo hacía
        que nadie supiera dónde buscar. */
-    '<h2 style="margin-top:22px">Restaurar el catálogo de un cliente</h2>'+
+    '<h2 style="margin-top:22px">Bitácora del sistema</h2>'+
+    '<div id="cajaBit"></div>'+
+    '<h2 style="margin-top:22px">Recuperar solo el catálogo</h2>'+
     '<div id="cajaRestCat"></div>'+
     '<h2 style="margin-top:22px">Qué hay en cada ruta</h2>'+
     '<div id="cajaRutas"></div>';
+  const cajaB=box.querySelector('#cajaBit'); if(cajaB) renderRespaldoBitacora(cajaB);
   const cajaR=box.querySelector('#cajaRestCat'); if(cajaR) renderRestaurarCat(cajaR);
   const cajaRu=box.querySelector('#cajaRutas'); if(cajaRu) renderComparadorRutas(cajaRu);
   box.querySelectorAll('[data-bk]').forEach(b=>b.onclick=async function(){
@@ -5307,7 +5456,7 @@ async function borrarExpedientesCliente(cli,avisar){
 function renderMantenimiento(box){
   if(!isAdmin()){ box.innerHTML='<div class="note">Solo el administrador.</div>'; return; }
   if(!S.cliente){ box.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
-    'Selecciona un cliente concreto en el encabezado para poder vaciar sus datos.</div>'; return; }
+    'Selecciona un cliente concreto en el encabezado para poder eliminar sus datos.</div>'; return; }
   const cli=nombreCliente();
   const mods=[
     {k:'tickets',   t:'Tickets',    n:S.idx.length, aviso:'Elimina también las carpetas de expediente con sus evidencias.'},
@@ -5315,13 +5464,12 @@ function renderMantenimiento(box){
     {k:'sit',       t:'SITs',       n:(S.sit||[]).length, aviso:'Se pueden volver a importar del archivo del cliente.'}
   ].filter(m=>m.k==='tickets'||moduloActivo(m.k));
   box.innerHTML='<div class="note" style="border-left-color:var(--p1)"><b>Zona de riesgo.</b> '+
-    'Esto borra datos de <b>'+esc(cli)+'</b> de forma definitiva y sin deshacer. '+
-    'Está pensado para dejar limpio el ambiente antes de entrar en producción. '+
+    'Esto elimina datos de <b>'+esc(cli)+'</b> de forma definitiva y sin deshacer. '+
     'Todo lo que se elimine queda registrado en la bitácora con tu usuario.</div>'+
     mods.map(m=>'<div class="panel" style="margin:0 0 12px"><div class="row">'+
       '<div><b>'+esc(m.t)+'</b> · <span style="color:var(--muted)">'+m.n+' registro(s) de '+esc(cli)+'</span>'+
       '<div style="font-size:12px;color:var(--muted);margin-top:4px">'+esc(m.aviso)+'</div></div>'+
-      '<button class="btn dan right" data-purgar="'+m.k+'"'+(m.n?'':' disabled')+'>Vaciar '+esc(m.t)+'</button>'+
+      '<button class="btn dan right" data-purgar="'+m.k+'"'+(m.n?'':' disabled')+'>Eliminar '+esc(m.t)+'</button>'+
       '</div></div>').join('')+
     '<div class="panel" style="margin:0 0 12px"><div class="row">'+
       '<div><b>Expedientes sueltos</b>'+
@@ -5368,7 +5516,7 @@ async function purgar(mod,cli,btn){
   if(escrito===null) return;
   if(String(escrito).trim()!==frase){ toast('El texto no coincide. No se borró nada.','warn',7000); return; }
   busy(btn,true);
-  const tarea=tareaIniciar('vaciando '+mod+' de '+cli);
+  const tarea=tareaIniciar('eliminando '+mod+' de '+cli);
   try{
     const h=await H();
     if(mod==='tickets'){
@@ -5557,7 +5705,10 @@ function renderAlias(box,ro){
 }
 function renderPisos(box,ro){
   const locs=S.cat.localidades||[];
-  box.innerHTML='<div class="row"><select id="pLoc" style="width:300px">'+locs.map(l=>'<option value="'+esc(l.id)+'">'+esc(l.nombre)+' ['+esc(l.id)+']</option>').join('')+'</select></div>'+
+  /* De mayor a menor: las sedes que más se consultan son las de ID alto, y tenerlas
+     al final de una lista de diez obligaba a bajar cada vez. */
+  const orden=locs.slice().sort((a,b)=>String(b.id).localeCompare(String(a.id),'es',{numeric:true}));
+  box.innerHTML='<div class="row"><select id="pLoc" style="width:300px">'+orden.map(l=>'<option value="'+esc(l.id)+'">'+esc(l.nombre)+' ['+esc(l.id)+']</option>').join('')+'</select></div>'+
     '<div class="f" style="margin-top:10px"><label>Pisos (uno por línea)</label><textarea id="pTxt" style="min-height:240px"'+(ro?' disabled':'')+'></textarea></div>';
   const sel=box.querySelector('#pLoc'), txt=box.querySelector('#pTxt');
   const pinta=()=>{ const l=locs.find(x=>x.id===sel.value)||{}; txt.value=(l.pisos||[]).join('\n'); };
@@ -5567,6 +5718,56 @@ function renderPisos(box,ro){
 /* Mapa de dos niveles (categoría → subcategorías, subcategoría → tipos).
    El nivel de arriba se lista como filas para poder renombrarlo y borrarlo,
    no solo elegirlo: antes solo se editaba el contenido, no la clave. */
+/* ---- Los tipos cuelgan de un nombre, y los nombres se renombran ----
+   Las subcategorías son valores dentro de «categorias», y sus tipos viven en un mapa
+   aparte cuya clave es ese mismo nombre. Al renombrar una subcategoría, sus tipos se
+   quedan bajo el nombre viejo y el desplegable de Tipo de incidente sale vacío al
+   abrir un ticket, sin que nada avise. Esto lo detecta y lo dice. */
+function tiposDesajustados(){
+  const subs=[...new Set(Object.keys(S.cat.categorias||{})
+    .reduce((a,k)=>a.concat(S.cat.categorias[k]||[]),[]))];
+  const tipos=S.cat.tipos||{};
+  const porNombre={}; subs.forEach(s=>{ porNombre[normEnc(s)]=s; });
+  const huerfanas=[], vacias=[];
+  Object.keys(tipos).forEach(k=>{
+    if(subs.indexOf(k)!==-1) return;
+    const eq=porNombre[normEnc(k)];
+    huerfanas.push({clave:k, n:(tipos[k]||[]).length,
+      destino:(eq && !((tipos[eq]||[]).length))? eq : ''});
+  });
+  subs.forEach(s=>{ if(!((tipos[s]||[]).length)) vacias.push(s); });
+  return {huerfanas:huerfanas, vacias:vacias};
+}
+function avisoTipos(box,ro){
+  const d=tiposDesajustados();
+  if(!d.huerfanas.length && !d.vacias.length) return;
+  const caja=document.createElement('div');
+  caja.innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+    (d.huerfanas.length? '<b>'+d.huerfanas.length+' lista(s) de tipos colgando de un nombre que ya no '+
+      'existe.</b> Suele pasar al renombrar una subcategoría: los tipos se quedan con el nombre viejo y '+
+      'el desplegable de <b>Tipo de incidente</b> sale vacío al abrir el ticket.<div style="margin-top:8px">'+
+      d.huerfanas.map((h,i)=>'<div style="margin:4px 0">· <span class="mono">'+esc(h.clave)+'</span> ('+h.n+
+        ' tipo(s)) '+(h.destino
+          ? '<button class="btn sec" data-mov="'+i+'" style="padding:3px 10px;font-size:11.5px;margin-left:6px"'+
+            (ro?' disabled':'')+'>Pasarlos a «'+esc(h.destino)+'»</button>'
+          : '<span style="color:var(--muted)">sin subcategoría equivalente; revísalo a mano</span>')+
+        '</div>').join('')+'</div>' : '')+
+    (d.vacias.length? '<div style="margin-top:'+(d.huerfanas.length?'10px':'0')+'">'+
+      '<b>Sin ningún tipo:</b> '+d.vacias.map(esc).join(', ')+
+      '. Un ticket de esas subcategorías no podrá elegir tipo de incidente.</div>' : '')+
+    '</div>';
+  box.insertBefore(caja,box.firstChild);
+  caja.querySelectorAll('[data-mov]').forEach(b=>b.onclick=()=>{
+    const h=d.huerfanas[+b.dataset.mov];
+    if(!confirm('Los '+h.n+' tipo(s) de «'+h.clave+'» pasarán a «'+h.destino+'».\n\n'+
+      'Acuérdate de pulsar «Guardar cambios» después.')) return;
+    S.cat.tipos[h.destino]=(S.cat.tipos[h.clave]||[]).slice();
+    delete S.cat.tipos[h.clave];
+    logEvent('TIPOS_REASIGNADOS',h.clave+' → '+h.destino+' ('+h.n+' tipo(s))');
+    toast('Tipos movidos a «'+h.destino+'». Pulsa «Guardar cambios» para que quede.','warn',11000);
+    renderCat();
+  });
+}
 function renderMapa(box,ro,key,lblK,lblV){
   const m=S.cat[key]||(S.cat[key]={}); const ks=Object.keys(m);
   /* Cada mapa recuerda lo suyo: categorías y tipos son listas distintas y compartir
@@ -5626,6 +5827,7 @@ function renderMapa(box,ro,key,lblK,lblV){
     }
     est.sel=n; renderCat();
   });
+  if(key==='tipos') avisoTipos(box,ro);
   box.querySelectorAll('[data-quit]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.quit;
     const usados=(S.idx||[]).filter(t=>key==='categorias'? t.categoria===k : t.subcategoria===k).length;
@@ -7990,7 +8192,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pUsr:pUsr,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
   archivosCli:archivosCli,cuentaDe:cuentaDe,compararRutas:compararRutas,resolverRuta:resolverRuta,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
-  CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,
+  CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
+  respaldoBitacora:respaldoBitacora,restaurarBitacora:restaurarBitacora,P_BIT_BK:P_BIT_BK,
+  rutaBackupBit:rutaBackupBit,listarBackupsBitacora:listarBackupsBitacora,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
   guardarColaBit:guardarColaBit,vaciarColaBit:vaciarColaBit,BIT_COLA:BIT_COLA,
   catSucio:catSucio,capturarEdiciones:capturarEdiciones,pendientesCatalogo:pendientesCatalogo,
