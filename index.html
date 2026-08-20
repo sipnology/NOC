@@ -820,10 +820,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <option value="sede">Sede / Edificio</option>
       <option value="tickets">Tickets</option>
       <option value="inventario">Inventario</option>
-      <option value="crq">CRQs</option>
-      <option value="sit">SITs</option>
-      <option value="fab">Casos Fabricante</option>
-      <option value="rma">RMA</option>
+      <option value="extra">Módulos Extra</option>
       <option value="admin">Administración</option>
     </select>
       <button class="btn" id="btnCatSave" class="right">Guardar cambios</button>
@@ -1102,7 +1099,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-17 · r91';
+const APP_VER = '2026-08-17 · r92';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4696,17 +4693,18 @@ const CAT_AREAS=[
   {id:'inventario', nombre:'Inventario', icono:'💻', secciones:[
     ['equipos','Equipos y dispositivos','Alta, edición y baja del inventario'],
     ['tiposDispositivo','Tipos de dispositivo','Switch, router, punto de acceso…']]},
-  {id:'crq', nombre:'CRQs', icono:'🔁', secciones:[
+  /* Los cuatro módulos que no son tickets ni inventario comparten mecánica —se importan
+     en bloque o se documentan a mano— así que comparten también un solo acceso, con
+     sus apartados como subpestañas. Cuatro renglones en el desplegable para siete
+     apartados era desproporcionado. */
+  {id:'extra', nombre:'Módulos Extra', icono:'🧩', secciones:[
     ['estadosCRQ','Estados de CRQ','Situaciones por las que pasa un cambio'],
-    ['impCrq','Importar CRQs','Carga masiva desde un archivo de Excel']]},
-  {id:'sit', nombre:'SITs', icono:'📄', secciones:[
-    ['impSit','Importar SITs','Carga masiva desde un archivo de Excel']]},
-  {id:'fab', nombre:'Casos Fabricante', icono:'🏭', secciones:[
+    ['impCrq','Importar CRQs','Carga masiva desde un archivo de Excel'],
+    ['impSit','Importar SITs','Carga masiva desde un archivo de Excel'],
     ['estadosFab','Status de los casos','Situaciones por las que pasa un caso con el fabricante'],
-    ['impFab','Importar casos','Carga masiva desde un archivo de Excel']]},
-  {id:'rma', nombre:'RMA', icono:'📦', secciones:[
+    ['impFab','Importar casos','Carga masiva de casos de fabricante'],
     ['estadosRMA','Status de los RMA','Situaciones por las que pasa una sustitución'],
-    ['impRma','Importar RMA','Carga masiva desde un archivo de Excel']]},
+    ['impRma','Importar RMA','Carga masiva de sustituciones en garantía']]},
   {id:'admin', nombre:'Administración', icono:'⚙️', secciones:[
     ['clientes','Clientes','Alta, módulos visibles y logo'],
     ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
@@ -7597,7 +7595,8 @@ function abrirFormEq(ds,reg){
   $('#eqTit').textContent=(reg? 'Editar ':'Documentar ')+(esRma?'RMA':'caso de fabricante')+(reg? ' '+reg.id:'');
   $('#eqBody').innerHTML=
     '<div class="note">'+(esRma
-      ? 'Al marcarlo como cerrado se ofrece sustituir el número de serie en el inventario.'
+      ? 'Un RMA puede abarcar varios equipos. Cada uno lleva su propia serie de reemplazo, y al '+
+        'cerrarlo se ofrece sustituirlas todas en el inventario.'
       : 'Si el caso nació de una falla ya reportada, anota su ticket: así se puede medir cuántas acaban en el fabricante.')+
     '</div>'+
     '<div class="grid">'+
@@ -7610,29 +7609,22 @@ function abrirFormEq(ds,reg){
     '</div>'+
     '<div class="f" style="margin-top:12px"><label>Sede <span class="req">*</span></label>'+
       '<div class="ms" id="eqSedes"></div></div>'+
-    /* El equipo se elige del inventario de esa sede, igual que en la apertura de un
-       ticket: al escogerlo se rellenan hostname, serie, IP y tipo de una vez. Un caso
-       de fabricante suele abrirse por algo que aún no está dado de alta, así que hay
-       una salida para capturarlo a mano. */
-    '<div class="f" style="margin-top:12px"><label>Equipo afectado</label>'+
-      '<select id="eqEquipo"></select>'+
+    /* Los equipos se eligen con casillas, igual que la sede: un caso de fabricante puede
+       abarcar el stack entero y obligarlo a uno solo forzaba a abrir tres casos iguales. */
+    '<div class="f" style="margin-top:12px"><label>Equipo(s) afectado(s)</label>'+
+      '<div class="ms" id="eqEquipoMS"></div>'+
       '<div class="note" style="margin:6px 0 0" id="eqEqNota">Elige la sede para ver sus equipos.</div></div>'+
-    '<div id="eqManual" class="panel hide" style="margin:10px 0 0;background:var(--panel2)">'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Datos del equipo, capturados a mano</div>'+
-      '<div class="grid">'+
-        '<div class="f"><label>Hostname</label><input id="eqHost" placeholder="SW-P16-IDF2-TF-9407"></div>'+
-        '<div class="f"><label>'+(esRma?'No. de serie original':'No. de serie')+'</label>'+
-          '<input id="eqSerie" placeholder="FOX2624PETA"></div>'+
-        '<div class="f"><label>IP Address</label><input id="eqIp" placeholder="150.218.1.28"></div>'+
-        '<div class="f"><label>Tipo <span class="req">*</span></label>'+
-          '<input id="eqTipo" placeholder="Switch, Access Point, ISE Node…"></div>'+
-      '</div>'+
+    '<div id="eqTabla" style="margin-top:10px"></div>'+
+    '<div class="row" style="gap:6px;margin-top:8px">'+
+      '<input id="eqHostLibre" placeholder="Hostname (si no está en el inventario)" style="flex:1">'+
+      '<input id="eqSerieLibre" placeholder="No. de serie" style="flex:1">'+
+      '<input id="eqIpLibre" placeholder="IP Address" style="width:150px">'+
+      '<button class="btn sec" id="eqAddLibre" type="button">Agregar</button>'+
     '</div>'+
     '<div class="grid" style="margin-top:12px">'+
-      (esRma
-        ? '<div class="f"><label>No. de serie de reemplazo</label>'+
-          '<input id="eqSerieNueva" placeholder="el que entró en su lugar"></div>'
-        : '<div class="f"><label>Versión</label><input id="eqVersion" placeholder="17.12.5"></div>')+
+      '<div class="f"><label>Tipo <span class="req">*</span></label>'+
+        '<input id="eqTipo" placeholder="Switch, Access Point, ISE Node…"></div>'+
+      (esRma? '' : '<div class="f"><label>Versión</label><input id="eqVersion" placeholder="17.12.5"></div>')+
       '<div class="f"><label>Ticket relacionado</label>'+
         '<input id="eqTicket" list="dlTicket" placeholder="folio del ticket, opcional">'+
         '<datalist id="dlTicket">'+(S.idx||[]).slice(0,400).map(t=>'<option value="'+esc(t.id)+'">').join('')+
@@ -7646,80 +7638,116 @@ function abrirFormEq(ds,reg){
   const el=$('#eqSedes');
   if(!el._ms) msInit(el,'— selecciona sede —',()=>{ refrescarEquipoEq(); });
   const locs=(S.cat.localidades||[]).filter(l=>!l.clienteId||l.clienteId===S.cliente);
-  const items=locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'}));
-  msSet(el,items,reg?(reg.sip.sedes||[]):[]);
+  msSet(el,locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),
+        reg?(reg.sip.sedes||[]):[]);
+  const ems=$('#eqEquipoMS');
+  if(!ems._ms) msInit(ems,'— selecciona equipo(s) —',()=>sincronizarEquiposEq());
   $('#eqId').value=reg?reg.id:'';
   $('#eqFAp').value=o.fechaAp||todayISO();
   $('#eqFCie').value=o.fechaCie||'';
-  $('#eqHost').value=o.hostname||'';
-  $('#eqSerie').value=o.serie||'';
-  $('#eqIp').value=o.ip||'';
   $('#eqTipo').value=o.tipo||'';
-  if(esRma) $('#eqSerieNueva').value=o.serieNueva||''; else $('#eqVersion').value=o.version||'';
+  if(!esRma) $('#eqVersion').value=o.version||'';
   $('#eqTicket').value=o.ticket||'';
   $('#eqNota').value=reg?(reg.sip.nota||''):'';
   $('#eqNotas').value=o.notas||'';
-  $('#eqEquipo').onchange=()=>aplicarEquipoEq(ds);
+  /* Los equipos ya guardados se recuperan del propio registro: el inventario puede
+     haber cambiado, pero el caso debe seguir diciendo a qué se abrió. */
+  _eqEquipos=(o.equipos||[]).map(e=>({hostname:e.hostname||'',serie:e.serie||'',ip:e.ip||'',
+                                      serieNueva:e.serieNueva||'',manual:!!e.manual}));
+  if(!_eqEquipos.length && (o.hostname||o.serie)){
+    /* Registros antiguos o importados, que traen un solo equipo en campos sueltos. */
+    _eqEquipos=[{hostname:o.hostname||'',serie:o.serie||'',ip:o.ip||'',
+                 serieNueva:o.serieNueva||'',manual:true}];
+  }
+  $('#eqAddLibre').onclick=()=>{
+    const h=$('#eqHostLibre').value.trim(), se=$('#eqSerieLibre').value.trim(), ip=$('#eqIpLibre').value.trim();
+    if(!h&&!se){ toast('Escribe al menos el hostname o el número de serie.','err',7000); return; }
+    if(_eqEquipos.some(e=>(se&&e.serie===se)||(!se&&h&&e.hostname===h))){
+      toast('Ese equipo ya está en la lista.','warn',7000); return; }
+    _eqEquipos.push({hostname:h,serie:se,ip:ip,serieNueva:'',manual:true});
+    $('#eqHostLibre').value=$('#eqSerieLibre').value=$('#eqIpLibre').value='';
+    pintarEquiposEq();
+  };
   refrescarEquipoEq(reg);
   $('#mEq').classList.add('on');
   setTimeout(()=>{ const f=$('#eqId'); if(f&&!f.disabled) f.focus(); },40);
 }
-/* Rellena el menú de equipos con los de la sede elegida. Se llama al abrir y cada vez
-   que cambia la sede: un equipo de otra sede en la lista solo induce a error. */
+/* Equipos elegidos en el formulario. Los del inventario se sincronizan con el menú;
+   los capturados a mano se conservan aparte, como en la apertura de un ticket. */
+let _eqEquipos=[];
+const claveEq=e=>(e.serie? 'S:'+String(e.serie).toUpperCase() : 'H:'+String(e.hostname||'').toUpperCase());
 function refrescarEquipoEq(reg){
-  const sel=$('#eqEquipo'); if(!sel) return;
+  const ems=$('#eqEquipoMS'); if(!ems||!ems._ms) return;
   const sedes=msVal('#eqSedes');
-  const lista=sedes.length? equiposDe(sedes[0],[]) : [];
-  const o=reg? reg.origen : null;
-  const yaTiene=o && (o.hostname||o.serie);
-  let opciones='<option value="">— sin equipo —</option>';
-  opciones+=lista.map(e=>'<option value="'+esc(eqClave(e))+'">'+
-    esc(e.hostname||'(sin hostname)')+(e.piso?' · '+esc(e.piso):'')+
-    (e.serie?'  ·  S/N '+esc(e.serie):'')+(e.ip?'  ·  '+esc(e.ip):'')+'</option>').join('');
-  opciones+='<option value="__manual__">✎ No está en el inventario: capturarlo a mano</option>';
-  sel.innerHTML=opciones;
-  /* Al editar, se marca el equipo del registro si todavía existe en el inventario. */
-  let marcado='';
-  if(yaTiene){
-    const eq=lista.find(e=>(o.serie&&String(e.serie||'')===o.serie)||
-                           (!o.serie&&o.hostname&&String(e.hostname||'')===o.hostname));
-    marcado=eq? eqClave(eq) : '__manual__';
-  }
-  sel.value=marcado;
+  const lista=sedes.length? sedes.reduce((a,id)=>a.concat(equiposDe(id,[])),[]) : [];
+  const items=lista.map(e=>({v:eqClave(e),
+    l1:(e.hostname||'(sin hostname)')+(e.piso?'  ·  '+e.piso:''),
+    l2:(e.serie?'S/N '+e.serie:'sin número de serie')+(e.ip?'  ·  IP '+e.ip:'')+
+       (e.tipo?'  ·  '+e.tipo:'')}));
+  /* Se marcan los que el registro ya tenía y siguen existiendo en el inventario. */
+  const marcar=_eqEquipos.filter(e=>!e.manual).map(claveEq)
+    .filter(v=>items.some(i=>i.v===v));
+  msSet(ems,items,marcar);
+  msDisabled(ems,!sedes.length);
   const nota=$('#eqEqNota');
   if(nota) nota.textContent=!sedes.length
     ? 'Elige la sede para ver sus equipos.'
-    : (lista.length? lista.length+' equipo(s) en esta sede. Si el tuyo no está, elige la última opción.'
-                   : 'Esta sede no tiene equipos en el inventario: captúralo a mano.');
-  if(!sedes.length || !lista.length) sel.value=yaTiene?'__manual__':(sedes.length?'__manual__':'');
-  aplicarEquipoEq(_eqDs,true);
+    : (lista.length? lista.length+' equipo(s) en la(s) sede(s) elegida(s). Si el tuyo no está, agrégalo abajo a mano.'
+                   : 'Esa sede no tiene equipos en el inventario: agrégalo abajo a mano.');
+  sincronizarEquiposEq();
 }
-/* Un equipo del inventario rellena hostname, serie, IP y tipo; «capturar a mano» abre
-   los campos para escribirlos. Los datos viajan siempre en el registro, no como una
-   referencia: si mañana el equipo se da de baja, el caso sigue diciendo a qué se abrió. */
-function aplicarEquipoEq(ds,conservar){
-  const sel=$('#eqEquipo'), caja=$('#eqManual'); if(!sel||!caja) return;
-  const v=sel.value;
-  const manual=v==='__manual__';
-  /* Los datos se muestran siempre que haya algo que mostrar: en modo manual para
-     escribirlos, y con un equipo elegido para ver qué se está guardando. */
-  caja.classList.toggle('hide',!v);
-  const titulo=caja.querySelector('div');
-  if(titulo) titulo.textContent=manual
-    ? 'Datos del equipo, capturados a mano'
-    : 'Datos tomados del inventario';
-  ['eqHost','eqSerie','eqIp'].forEach(id=>{ const f=$('#'+id); if(f) f.readOnly=!manual; });
-  if(manual||!v) return;
+/* El menú manda sobre los equipos de inventario; los manuales sobreviven aparte. */
+function sincronizarEquiposEq(){
   const sedes=msVal('#eqSedes');
-  const eq=equiposDe(sedes[0]||'',[]).find(e=>eqClave(e)===v);
-  if(!eq) return;
-  $('#eqHost').value=eq.hostname||'';
-  $('#eqSerie').value=eq.serie||'';
-  $('#eqIp').value=eq.ip||'';
-  if(!conservar || !$('#eqTipo').value.trim()) $('#eqTipo').value=eq.tipo||'';
-  const ver=$('#eqVersion');
-  if(ver && (!conservar || !ver.value.trim())) ver.value=eq.firmware||'';
-  caja.classList.remove('hide');
+  const cat=sedes.reduce((a,id)=>a.concat(equiposDe(id,[])),[]);
+  const sel=msVal('#eqEquipoMS');
+  const previos={};
+  _eqEquipos.forEach(e=>{ previos[claveEq(e)]=e; });
+  const delCat=sel.map(v=>{
+    const e=cat.find(x=>eqClave(x)===v); if(!e) return null;
+    const antes=previos['S:'+String(e.serie||'').toUpperCase()]||previos['H:'+String(e.hostname||'').toUpperCase()];
+    return {hostname:e.hostname||'',serie:e.serie||'',ip:e.ip||'',
+            serieNueva:(antes&&antes.serieNueva)||'',manual:false};
+  }).filter(Boolean);
+  _eqEquipos=_eqEquipos.filter(e=>e.manual).concat(delCat);
+  pintarEquiposEq();
+}
+/* Tabla de los equipos elegidos. En un RMA, cada renglón lleva su serie de reemplazo:
+   si cambiaron tres equipos, son tres series distintas y una sola dejaría el inventario
+   diciendo lo que no es. */
+function pintarEquiposEq(){
+  const caja=$('#eqTabla'); if(!caja) return;
+  const esRma=_eqDs && _eqDs.k==='rma';
+  if(!_eqEquipos.length){
+    caja.innerHTML='<div class="note" style="border-left-color:var(--warn)">Ningún equipo elegido todavía.</div>';
+    return;
+  }
+  caja.innerHTML='<div class="tw"><table><thead><tr><th>Hostname</th><th>No. de serie</th><th>IP</th>'+
+    (esRma?'<th>Serie de reemplazo</th>':'')+'<th>Origen</th><th></th></tr></thead><tbody>'+
+    _eqEquipos.map((e,i)=>'<tr>'+
+      '<td class="mono">'+esc(e.hostname||'—')+'</td>'+
+      '<td class="mono">'+esc(e.serie||'—')+'</td>'+
+      '<td class="mono">'+esc(e.ip||'—')+'</td>'+
+      (esRma? '<td><input data-sn="'+i+'" value="'+esc(e.serieNueva||'')+'" placeholder="serie nueva" '+
+              'style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px"></td>' : '')+
+      '<td>'+(e.manual
+        ? '<span class="pill" style="background:var(--panel2);color:var(--warn)">a mano</span>'
+        : '<span class="pill" style="background:var(--panel2);color:var(--txt)">inventario</span>')+'</td>'+
+      '<td><button class="btn dan" type="button" data-qeq="'+i+'" style="padding:3px 9px;font-size:11px">×</button></td>'+
+    '</tr>').join('')+'</tbody></table></div>';
+  caja.querySelectorAll('[data-sn]').forEach(inp=>inp.onchange=()=>{
+    _eqEquipos[+inp.dataset.sn].serieNueva=inp.value.trim();
+  });
+  caja.querySelectorAll('[data-qeq]').forEach(b=>b.onclick=()=>{
+    const e=_eqEquipos[+b.dataset.qeq];
+    _eqEquipos.splice(+b.dataset.qeq,1);
+    /* Si venía del inventario, hay que desmarcarlo también en el menú. */
+    if(e&&!e.manual){
+      const ems=$('#eqEquipoMS');
+      if(ems&&ems._ms){ ems._ms.sel=ems._ms.sel.filter(v=>v!==claveEq(e)); msPintar(ems); }
+    }
+    pintarEquiposEq();
+  });
 }
 const esCerrado=e=>/^cerrad/i.test(String(e||'').trim());
 async function guardarFormEq(btn){
@@ -7742,18 +7770,30 @@ async function guardarFormEq(btn){
   if(!esCerrado(estado)&&fCie){ toast('Hay fecha de cierre pero el status no es cerrado.','warn',9000); }
   const repetido=(S[ds.st]||[]).some(r=>r.id===id&&r!==_eqEdit);
   if(repetido){ toast('Ya existe un registro con el número '+id+'.','err',8000); return; }
-  const serieNueva=esRma? $('#eqSerieNueva').value.trim() : '';
-  if(esRma&&esCerrado(estado)&&!serieNueva){
-    toast('Un RMA cerrado necesita el número de serie de reemplazo.','err',9000); return; }
+  const equipos=_eqEquipos.map(e=>({hostname:e.hostname,serie:e.serie,ip:e.ip,
+                                    serieNueva:esRma?(e.serieNueva||''):'',manual:!!e.manual}));
+  /* Un RMA cerrado tiene que decir por qué serie se cambió cada equipo: si no, el
+     inventario se queda diciendo lo que ya no está en sitio. */
+  if(esRma&&esCerrado(estado)){
+    if(!equipos.length){ toast('Un RMA cerrado necesita al menos un equipo.','err',9000); return; }
+    const sin=equipos.filter(e=>!e.serieNueva);
+    if(sin.length){ toast('Falta la serie de reemplazo de: '+
+      sin.map(e=>e.hostname||e.serie||'(sin identificar)').join(', ')+'.','err',10000); return; }
+  }
   busy(btn,true);
   try{
+    /* Además de la lista, se guardan los campos unidos por coma: son los que leen la
+       tabla, los reportes y la plantilla de importación, que trabajan con una columna. */
     const origen={id:id,fechaAp:fAp,fechaCie:fCie,
       sedeTexto:sedes.map(x=>nombreLoc(x)).join(', '),
-      hostname:$('#eqHost').value.trim(), serie:$('#eqSerie').value.trim(),
-      ip:$('#eqIp').value.trim(),
+      equipos:equipos,
+      hostname:equipos.map(e=>e.hostname).filter(Boolean).join(', '),
+      serie:equipos.map(e=>e.serie).filter(Boolean).join(', '),
+      ip:equipos.map(e=>e.ip).filter(Boolean).join(', '),
       tipo:tipo, estado:estado, notas:$('#eqNotas').value.trim(),
       ticket:$('#eqTicket').value.trim(), archivo:''};
-    if(esRma) origen.serieNueva=serieNueva; else origen.version=$('#eqVersion').value.trim();
+    if(esRma) origen.serieNueva=equipos.map(e=>e.serieNueva).filter(Boolean).join(', ');
+    else origen.version=$('#eqVersion').value.trim();
     const nota=$('#eqNota').value.trim();
     let reg=_eqEdit;
     if(reg){
@@ -7766,34 +7806,51 @@ async function guardarFormEq(btn){
     }
     if(await dsPush(ds,(_eqEdit?'edición de ':'alta manual de ')+id)){
       logEvent(ds.k.toUpperCase()+(_eqEdit?'_EDITADO':'_DOCUMENTADO'),
-        id+' · '+tipo+' · '+estado+(origen.ticket?' · ticket '+origen.ticket:''));
+        id+' · '+tipo+' · '+estado+' · '+equipos.length+' equipo(s)'+
+        (origen.ticket?' · ticket '+origen.ticket:''));
       toast((esRma?'RMA ':'Caso ')+id+(_eqEdit?' actualizado.':' documentado.'));
     }
     $('#mEq').classList.remove('on'); _eqEdit=null;
     dsRender(ds); renderDash();
-    if(esRma&&esCerrado(estado)&&serieNueva&&!reg.sip.invActualizado) await ofrecerCambioSerie(reg);
+    if(esRma&&esCerrado(estado)&&!reg.sip.invActualizado) await ofrecerCambioSerie(reg);
   }catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
   finally{ busy(btn,false); }
 }
-/* Al cerrar un RMA, el equipo que está en sitio ya no es el que dice el inventario.
+/* Al cerrar un RMA, los equipos que están en sitio ya no son los que dice el inventario.
    Se ofrece corregirlo, pero no se hace solo: un RMA mal capturado corrompería el
    inventario sin que nadie lo notara. */
 async function ofrecerCambioSerie(reg){
-  const vieja=String(reg.origen.serie||'').trim(), nueva=String(reg.origen.serieNueva||'').trim();
-  if(!vieja||!nueva) return;
-  const eq=equipoPorSerie(vieja);
-  if(!eq){ toast('El RMA quedó registrado. La serie '+vieja+' no está en el inventario, '+
-    'así que no hay nada que sustituir.','warn',11000); return; }
-  if(!confirm('El equipo '+(eq.hostname||vieja)+' figura en el inventario con la serie '+vieja+'.\n\n'+
-    '¿Sustituirla por la de reemplazo, '+nueva+'?\n\n'+
-    'Queda registrado en la bitácora y hay que guardar el inventario después.')) return;
-  eq.serie=nueva;
-  invMarcar('RMA '+reg.id+' · serie '+vieja+' → '+nueva,'RMA');
+  const pares=(reg.origen.equipos||[])
+    .map(e=>({vieja:String(e.serie||'').trim(),nueva:String(e.serieNueva||'').trim(),
+              host:e.hostname||''}))
+    .filter(p=>p.vieja&&p.nueva&&p.vieja!==p.nueva);
+  if(!pares.length) return;
+  const encontrados=[], ausentes=[];
+  pares.forEach(p=>{
+    const eq=equipoPorSerie(p.vieja);
+    if(eq) encontrados.push({p:p,eq:eq}); else ausentes.push(p);
+  });
+  if(!encontrados.length){
+    toast('El RMA quedó registrado. Ninguna de las series originales está en el inventario, '+
+      'así que no hay nada que sustituir.','warn',11000);
+    return;
+  }
+  if(!confirm('En el inventario figuran '+encontrados.length+' equipo(s) con la serie anterior:\n\n'+
+    encontrados.map(x=>'  · '+(x.eq.hostname||x.p.vieja)+': '+x.p.vieja+' → '+x.p.nueva).join('\n')+
+    (ausentes.length? '\n\nNo están en el inventario y se omiten: '+
+      ausentes.map(p=>p.vieja).join(', ') : '')+
+    '\n\n¿Sustituirlas? Queda en la bitácora y hay que guardar el inventario después.')) return;
+  encontrados.forEach(x=>{
+    x.eq.serie=x.p.nueva;
+    invMarcar('RMA '+reg.id+' · serie '+x.p.vieja+' → '+x.p.nueva,'RMA');
+  });
   reg.sip.invActualizado=true;
   try{ await dsPush(DATASETS.rma,'inventario actualizado por '+reg.id); }catch(e){}
-  logEvent('RMA_SERIE_SUSTITUIDA',reg.id+' · '+(eq.hostname||'')+' · '+vieja+' → '+nueva);
+  logEvent('RMA_SERIE_SUSTITUIDA',reg.id+' · '+encontrados.length+' equipo(s) · '+
+    encontrados.map(x=>x.p.vieja+'→'+x.p.nueva).join(', '));
   renderInv(); dsRender(DATASETS.rma);
-  toast('Serie sustituida en el inventario. Pulsa «Guardar cambios» en Inventario para que quede.','warn',13000);
+  toast(encontrados.length+' serie(s) sustituida(s). Pulsa «Guardar cambios» en Inventario para que quede.',
+    'warn',13000);
 }
 
 /* ---- Filtros, tabla y paginación genéricos ---- */
@@ -7804,18 +7861,25 @@ function dsValor(ds,r,k){
   if(!c) return '';
   return String(c.v(r)).replace(/<[^>]*>/g,'').trim();
 }
+/* Los filtros de lista guardan un arreglo, no un valor suelto: elegir «Programado» y
+   «En ejecución» a la vez es lo normal cuando se revisa una ventana de cambios, y
+   obligar a mirarlos de uno en uno solo hacía perder tiempo. */
+const filtroLista=v=>Array.isArray(v)? v.filter(Boolean) : (v? [v] : []);
 function dsFiltrar(ds){
   const e=dsEst(ds), f=e.f;
   return dsLista(ds).filter(r=>{
     for(const [k,,tipo] of ds.filtrosDef){
+      if(tipo==='select'||tipo==='sede'){
+        const vs=filtroLista(f[k]); if(!vs.length) continue;
+        /* Varias opciones marcadas se leen como «o»: cualquiera de ellas vale. */
+        if(tipo==='select'){ if(vs.indexOf(dsValor(ds,r,k))===-1) return false; }
+        else { if(!(r.sip.sedes||[]).some(x=>vs.indexOf(x)!==-1)) return false; }
+        continue;
+      }
       const v=String(f[k]||'').trim(); if(!v) continue;
       if(tipo==='texto'){
         const campo=(k==='id')?r.id:dsValor(ds,r,k);
         if(textoPlano(campo).indexOf(textoPlano(v))===-1) return false;
-      } else if(tipo==='select'){
-        if(dsValor(ds,r,k)!==v) return false;
-      } else if(tipo==='sede'){
-        if((r.sip.sedes||[]).indexOf(v)===-1) return false;
       } else if(tipo==='fecha'){
         const base=fechaEjeDs(ds,r);
         if(k==='f1'&&(!base||base<v)) return false;
@@ -7829,17 +7893,29 @@ function dsPintarFiltros(ds,sel){
   const cont=$(sel||ds.filtros); if(!cont) return;
   const e=dsEst(ds);
   const opciones=k=>[...new Set(dsLista(ds).map(r=>dsValor(ds,r,k)).filter(Boolean))].sort();
+  /* Cada filtro de lista se dibuja con el mismo componente de casillas que la sede,
+     con buscador y con «Todos / Ninguno». El identificador lleva el módulo dentro
+     porque el tablero y la vista del módulo pintan filtros a la vez. */
+  const idMs=k=>'msF_'+ds.k+'_'+k+'_'+(sel?'d':'v');
   cont.innerHTML='<div class="frow c4">'+ds.filtrosDef.map(([k,t,tipo])=>{
-    if(tipo==='select') return '<div class="f"><label>'+esc(t)+'</label><select data-df="'+k+'"><option value="">Todos</option>'+
-      opciones(k).map(o=>'<option value="'+esc(o)+'"'+(e.f[k]===o?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select></div>';
-    if(tipo==='sede') return '<div class="f"><label>'+esc(t)+'</label><select data-df="'+k+'"><option value="">Todas</option>'+
-      (S.cat.localidades||[]).map(l=>'<option value="'+esc(l.id)+'"'+(e.f[k]===l.id?' selected':'')+'>'+esc(locLabel(l.id))+'</option>').join('')+'</select></div>';
+    if(tipo==='select'||tipo==='sede')
+      return '<div class="f"><label>'+esc(t)+'</label><div class="ms" id="'+idMs(k)+'" data-df="'+k+'"></div></div>';
     if(tipo==='fecha') return '<div class="f"><label>'+esc(t)+'</label><input type="date" data-df="'+k+'" value="'+esc(e.f[k]||'')+'"></div>';
     return '<div class="f"><label>'+esc(t)+'</label><input data-df="'+k+'" placeholder="contiene…" value="'+esc(e.f[k]||'')+'"></div>';
   }).join('')+'</div>';
-  cont.querySelectorAll('[data-df]').forEach(el=>{
-    const ev=el.tagName==='SELECT'?'onchange':'oninput';
-    el[ev]=()=>{ e.f[el.dataset.df]=el.value; e.page=1; dsRender(ds);
+  ds.filtrosDef.forEach(([k,t,tipo])=>{
+    if(tipo!=='select'&&tipo!=='sede') return;
+    const el=$('#'+idMs(k)); if(!el) return;
+    const todas=tipo==='sede'? 'Todas' : 'Todos';
+    msInit(el,todas,vals=>{ e.f[k]=vals; e.page=1; dsRender(ds);
+      if(S.dashMod===ds.k) renderDash(); });
+    const items=tipo==='sede'
+      ? (S.cat.localidades||[]).map(l=>({v:l.id,l1:locLabel(l.id)}))
+      : opciones(k).map(o=>({v:o,l1:o}));
+    msSet(el,items,filtroLista(e.f[k]));
+  });
+  cont.querySelectorAll('input[data-df]').forEach(el=>{
+    el.oninput=()=>{ e.f[el.dataset.df]=el.value; e.page=1; dsRender(ds);
       if(S.dashMod===ds.k) renderDash(); };
   });
 }
@@ -8826,6 +8902,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   soloGlobal:soloGlobal,sobrantesGlobales:sobrantesGlobales,marcarRepartido:marcarRepartido,
   pUsr:pUsr,pFab:pFab,pRma:pRma,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
   diasDs:diasDs,fechaEjeDs:fechaEjeDs,esCerrado:esCerrado,MODS_REP:MODS_REP,
+  filtroLista:filtroLista,
   abrirFormEq:abrirFormEq,ofrecerCambioSerie:ofrecerCambioSerie,equipoPorSerie:equipoPorSerie,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
