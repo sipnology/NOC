@@ -76,6 +76,14 @@ nav.subtabs button:hover{color:var(--txt);background:rgba(59,130,246,.12)}
 nav.subtabs button.on{background:var(--brand2);border-color:var(--brand2);
  border-bottom:2px solid var(--brand2);color:#fff;font-weight:700}
 nav.subtabs button.on:hover{background:var(--brand2);color:#fff}
+/* Segunda tira: los apartados de dentro de un módulo. Va sin relleno de color para
+   que se lea como subordinada de la de arriba y no compita con ella. */
+nav.subtabs2{border-bottom:1px solid var(--line);margin-top:0;padding-left:4px}
+nav.subtabs2 button{font-size:12px;padding:6px 12px;border-radius:0;border:0;
+ border-bottom:2px solid transparent;margin-bottom:-1px}
+nav.subtabs2 button.on{background:transparent;color:var(--brand2);font-weight:700;
+ border-bottom:2px solid var(--brand2)}
+nav.subtabs2 button.on:hover{background:transparent;color:var(--brand2)}
 /* Sub-pestañas del tablero, mismo lenguaje visual */
 #dashTabs{padding:0;border-bottom:2px solid var(--brand)}
 #dashTabs button.on{background:var(--brand);border-color:var(--brand);border-bottom-color:var(--brand);
@@ -828,6 +836,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <button class="btn sec" id="btnCatDescartar">Descartar cambios</button>
     </div>
     <nav class="subtabs" id="catTabs"></nav>
+    <nav class="subtabs subtabs2 hide" id="catTabs2"></nav>
     <div id="catPend"></div>
     <div id="catBody" style="margin-top:14px"></div>
   </div>
@@ -1099,7 +1108,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-17 · r92';
+const APP_VER = '2026-08-17 · r93';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4697,14 +4706,21 @@ const CAT_AREAS=[
      en bloque o se documentan a mano— así que comparten también un solo acceso, con
      sus apartados como subpestañas. Cuatro renglones en el desplegable para siete
      apartados era desproporcionado. */
-  {id:'extra', nombre:'Módulos Extra', icono:'🧩', secciones:[
-    ['estadosCRQ','Estados de CRQ','Situaciones por las que pasa un cambio'],
-    ['impCrq','Importar CRQs','Carga masiva desde un archivo de Excel'],
-    ['impSit','Importar SITs','Carga masiva desde un archivo de Excel'],
-    ['estadosFab','Status de los casos','Situaciones por las que pasa un caso con el fabricante'],
-    ['impFab','Importar casos','Carga masiva de casos de fabricante'],
-    ['estadosRMA','Status de los RMA','Situaciones por las que pasa una sustitución'],
-    ['impRma','Importar RMA','Carga masiva de sustituciones en garantía']]},
+  /* Esta área tiene un nivel más: primero se elige el módulo y después su apartado.
+     Siete apartados seguidos no dejaban ver a cuál de los cuatro pertenecía cada uno. */
+  {id:'extra', nombre:'Módulos Extra', icono:'🧩', modulos:[
+    {id:'crq', nombre:'CRQs', secciones:[
+      ['estadosCRQ','Estados de CRQ','Situaciones por las que pasa un cambio'],
+      ['impCrq','Importar CRQs','Carga masiva desde un archivo de Excel']]},
+    {id:'sit', nombre:'SITs', secciones:[
+      ['impSit','Importar SITs','Carga masiva desde un archivo de Excel']]},
+    {id:'fab', nombre:'Casos Fabricante', secciones:[
+      ['estadosFab','Status de los casos','Situaciones por las que pasa un caso con el fabricante'],
+      ['impFab','Importar casos','Carga masiva de casos de fabricante']]},
+    {id:'rma', nombre:'RMA', secciones:[
+      ['estadosRMA','Status de los RMA','Situaciones por las que pasa una sustitución'],
+      ['impRma','Importar RMA','Carga masiva de sustituciones en garantía']]}
+  ]},
   {id:'admin', nombre:'Administración', icono:'⚙️', secciones:[
     ['clientes','Clientes','Alta, módulos visibles y logo'],
     ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
@@ -4712,6 +4728,17 @@ const CAT_AREAS=[
     ['respaldo','Respaldo y Restauración','Generar respaldos, restaurarlos y dar de baja'],
     ['mantenimiento','Eliminar datos','Borrar en bloque tickets, CRQs, SITs y expedientes']]}
 ];
+/* Un área con módulos dentro expone igualmente su lista plana de apartados: todo lo
+   demás —el grupo al que pertenece cada uno, las pruebas, la validación— sigue
+   funcionando sin enterarse de que hay un nivel intermedio. */
+CAT_AREAS.forEach(a=>{
+  if(a.modulos && !a.secciones)
+    a.secciones=a.modulos.reduce((acc,m)=>acc.concat(m.secciones),[]);
+});
+function moduloDeSeccion(area,k){
+  if(!area.modulos) return null;
+  return area.modulos.find(m=>m.secciones.some(s=>s[0]===k))||null;
+}
 const CAT_GRUPOS=CAT_AREAS.map(a=>[a.nombre,a.secciones.map(s=>s[0])]);
 function grupoDe(k){ const g=CAT_GRUPOS.find(x=>x[1].indexOf(k)!==-1); return g? g[0] : ''; }
 function areaDe(k){ return CAT_AREAS.find(a=>a.secciones.some(s=>s[0]===k))||null; }
@@ -5350,13 +5377,38 @@ function renderRespaldo(box){
 /* Tira de apartados del área elegida. Se navega de uno a otro con un clic, sin pasar
    por ninguna pantalla intermedia ni botones de avance y retroceso. */
 function renderSubtabs(area){
-  const nav=$('#catTabs'); if(!nav) return;
-  nav.innerHTML=area.secciones.map(([k,titulo,desc])=>
-    '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
-    ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
-  nav.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{
-    if(b.dataset.sec===S._catSec) return;
-    S._catSec=b.dataset.sec; renderCat();
+  const nav=$('#catTabs'), nav2=$('#catTabs2'); if(!nav) return;
+  /* Sin módulos intermedios, una sola tira con los apartados del área. */
+  if(!area.modulos){
+    if(nav2){ nav2.innerHTML=''; nav2.classList.add('hide'); }
+    nav.innerHTML=area.secciones.map(([k,titulo,desc])=>
+      '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
+      ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
+  }else{
+    /* Con módulos: arriba el módulo, debajo sus apartados. */
+    const mod=moduloDeSeccion(area,S._catSec)||area.modulos[0];
+    nav.innerHTML=area.modulos.map(m=>
+      '<button data-mod="'+esc(m.id)+'"'+(m.id===mod.id?' class="on"':'')+
+      ' title="'+esc(m.secciones.length)+' apartado(s)">'+esc(m.nombre)+'</button>').join('');
+    if(nav2){
+      /* Un módulo con un solo apartado no necesita una tira para elegirlo. */
+      const unico=mod.secciones.length<2;
+      nav2.classList.toggle('hide',unico);
+      nav2.innerHTML=unico? '' : mod.secciones.map(([k,titulo,desc])=>
+        '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
+        ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
+    }
+    nav.querySelectorAll('[data-mod]').forEach(b=>b.onclick=()=>{
+      const m=area.modulos.find(x=>x.id===b.dataset.mod);
+      if(!m||moduloDeSeccion(area,S._catSec)===m) return;
+      S._catSec=m.secciones[0][0]; renderCat();
+    });
+  }
+  [nav,nav2].forEach(n=>{ if(!n) return;
+    n.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{
+      if(b.dataset.sec===S._catSec) return;
+      S._catSec=b.dataset.sec; renderCat();
+    });
   });
 }
 function renderCat(){
@@ -5368,7 +5420,9 @@ function renderCat(){
   const sec=seccionDe(k);
   renderSubtabs(area);
   const marca=$('#catCliente');
+  const mod=moduloDeSeccion(area,k);
   if(marca) marca.innerHTML='<b style="color:var(--brand2)">'+esc(area.nombre)+'</b> '+
+    (mod? '<span style="color:var(--muted)">›</span> <b style="color:var(--brand2)">'+esc(mod.nombre)+'</b> ' : '')+
     '<span style="color:var(--muted)">·</span> '+esc(sec?sec[2]:'')+' '+
     (CAT_DE_CLIENTE.indexOf(k)!==-1
       ? (S.cliente? '<span style="color:var(--muted)">· catálogo de</span> <b style="color:var(--brand)">'+esc(nombreCliente())+'</b>'
@@ -8906,6 +8960,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   abrirFormEq:abrirFormEq,ofrecerCambioSerie:ofrecerCambioSerie,equipoPorSerie:equipoPorSerie,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
+  moduloDeSeccion:moduloDeSeccion,
   LISTAS:LISTAS,ESQUEMAS:ESQUEMAS,
   respaldoBitacora:respaldoBitacora,restaurarBitacora:restaurarBitacora,P_BIT_BK:P_BIT_BK,
   rutaBackupBit:rutaBackupBit,listarBackupsBitacora:listarBackupsBitacora,
