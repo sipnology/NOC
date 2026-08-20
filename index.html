@@ -1102,7 +1102,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-17 · r90';
+const APP_VER = '2026-08-17 · r91';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4667,13 +4667,15 @@ const ESQUEMAS={
 const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
   admins:'Administradores (correo por línea)',
   catsConTiempos:'Categorías que sí llevan tiempo de falla y afectación (una por línea)',
-  estadosCRQ:'Estados de un CRQ documentado en la plataforma (uno por línea)'};
+  estadosCRQ:'Estados de un CRQ documentado en la plataforma (uno por línea)',
+  estadosFab:'Status de un caso de fabricante (uno por línea). El que empiece por «Cerrado» cierra el caso',
+  estadosRMA:'Status de un RMA (uno por línea). El que empiece por «Cerrado» dispara el cambio de serie'};
 
 /* Secciones que pertenecen a un cliente concreto: sin cliente activo no se pueden
    editar, porque no habría dónde guardarlas. */
 const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
   'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
-  'estadosCRQ','mantenimiento','historico','impCrq','impSit'];
+  'estadosCRQ','estadosFab','estadosRMA','mantenimiento','historico','impCrq','impSit','impFab','impRma'];
 /* A qué menú pertenece cada apartado. Sirve para el título de la pantalla y para las
    pruebas: ningún apartado puede quedar huérfano de grupo. */
 /* Cada área con sus apartados. El título es corto a propósito: lo que hay que saber
@@ -5391,6 +5393,8 @@ function renderCat(){
   if(k==='respaldo') return renderRespaldo(box);
   if(k==='impCrq') return renderImportDS(box,DATASETS.crq);
   if(k==='impSit') return renderImportDS(box,DATASETS.sit);
+  if(k==='impFab') return renderImportDS(box,DATASETS.fab);
+  if(k==='impRma') return renderImportDS(box,DATASETS.rma);
   if(k==='mantenimiento') return renderMantenimiento(box);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
@@ -5604,28 +5608,29 @@ const PLANTILLA_DS={
                   sedeTexto:'Parques Polanco',fechaIni:'2026-09-11',horaIni:'23:00',
                   fechaFin:'2026-09-12',horaFin:'03:00',estado:'En revisión'}]},
   fab:{ cols:[['id','No. de caso',20],['fechaAp','Fecha de apertura',20],['sedeTexto','Sede',26],
-              ['hostname','Hostname',30],['serie','No. de serie',20],['version','Versión',16],
-              ['tipo','Tipo',20],['notas','Comentarios',46],['estado','Status',16],
+              ['hostname','Hostname',30],['serie','No. de serie',20],['ip','IP Address',18],
+              ['version','Versión',16],['tipo','Tipo',20],['notas','Comentarios',46],['estado','Status',16],
               ['fechaCie','Fecha de cierre',20],['ticket','Ticket',18]],
         ejemplo:[{id:'695123456',fechaAp:'2026-08-03',sedeTexto:'91 - Torre Reforma',
-                  hostname:'SW-P16-IDF2-TF-9407',serie:'FOX2624PETA',version:'17.12.5',
+                  hostname:'SW-P16-IDF2-TF-9407',serie:'FOX2624PETA',ip:'150.218.1.28',version:'17.12.5',
                   tipo:'Switch',notas:'Fallo de fuente redundante. TAC pide logs de la fuente 2.',
                   estado:'En curso',fechaCie:'',ticket:'91140826-01'},
                  {id:'695123457',fechaAp:'2026-07-21',sedeTexto:'92 - Parques Polanco',
-                  hostname:'AP-29-A1-TP-MR56-05',serie:'Q3AB-A94A-C46V',version:'29.7.1',
+                  hostname:'AP-29-A1-TP-MR56-05',serie:'Q3AB-A94A-C46V',ip:'10.248.64.25',version:'29.7.1',
                   tipo:'Access Point',notas:'Reinicios espontáneos. Caso cerrado con cambio de firmware.',
                   estado:'Cerrado',fechaCie:'2026-08-05',ticket:''}]},
   rma:{ cols:[['id','No. de caso',20],['fechaAp','Fecha de apertura',20],['sedeTexto','Sede',26],
               ['hostname','Hostname',30],['serie','No. de serie original',24],
-              ['serieNueva','No. de serie por el que se cambio',30],['tipo','Tipo',20],
+              ['serieNueva','No. de serie por el que se cambio',30],['ip','IP Address',18],
+              ['tipo','Tipo',20],
               ['notas','Comentarios',46],['estado','Status',16],['fechaCie','Fecha de cierre',20],
               ['ticket','Ticket',18]],
         ejemplo:[{id:'RMA-2026-0148',fechaAp:'2026-08-04',sedeTexto:'94 - Tecno Parque',
-                  hostname:'SW94071-IDF3-Tecno',serie:'FXS2247Q2TH',serieNueva:'',
+                  hostname:'SW94071-IDF3-Tecno',serie:'FXS2247Q2TH',serieNueva:'',ip:'150.232.0.72',
                   tipo:'Switch',notas:'Equipo sin arranque. En espera del reemplazo.',
                   estado:'En curso',fechaCie:'',ticket:'94110826-01'},
                  {id:'RMA-2026-0139',fechaAp:'2026-07-14',sedeTexto:'90 - Murano',
-                  hostname:'SW-P12-MDF-TMURANO-9300',serie:'FJC26151LXS',serieNueva:'FJC27412K9P',
+                  hostname:'SW-P12-MDF-TMURANO-9300',serie:'FJC26151LXS',serieNueva:'FJC27412K9P',ip:'150.231.6.2',
                   tipo:'Switch',notas:'Sustituido en sitio. Inventario actualizado.',
                   estado:'Cerrado',fechaCie:'2026-07-29',ticket:''}]},
   sit:{ cols:[['id','ID del servicio',20],['nombre','Nombre',30],['vence','Fecha de vencimiento',20],
@@ -7297,6 +7302,7 @@ const DATASETS={
         : '<span style="color:var(--warn)">sin asignar</span>'},
       {k:'hostname',t:'Hostname',a:230,cls:'mono',v:r=>esc(r.origen.hostname)},
       {k:'serie',t:'No. de serie',a:170,cls:'mono',v:r=>esc(r.origen.serie)},
+      {k:'ip',t:'IP Address',a:150,cls:'mono',v:r=>esc(r.origen.ip)},
       {k:'version',t:'Versión',a:130,cls:'mono',v:r=>esc(r.origen.version)},
       {k:'tipo',t:'Tipo',a:150,v:r=>esc(r.origen.tipo)},
       {k:'estado',t:'Status',a:120,v:r=>esc(r.origen.estado)},
@@ -7310,6 +7316,7 @@ const DATASETS={
         : '<span class="pill" style="background:var(--panel2);color:var(--muted)">Importado</span>'}
     ],
     filtrosDef:[['id','No. de caso','texto'],['hostname','Hostname','texto'],['serie','Serie','texto'],
+                ['ip','IP','texto'],
                 ['sede','Sede','sede'],['estado','Status','select'],['tipo','Tipo','select'],
                 ['fuente','Origen','select'],['f1','Apertura desde','fecha'],['f2','Apertura hasta','fecha']],
     dims:[
@@ -7324,6 +7331,7 @@ const DATASETS={
       sedeTexto:['sede','localidad','sedeid','idsede'],
       hostname:['hostname','equipo','nombredeequipo'],
       serie:['nodeserie','numerodeserie','serie','serial'],
+      ip:['ipaddress','ip','direccionip'],
       version:['version','versionfirmware','firmware'],
       tipo:['tipo','tipodeequipo','tipodedispositivo'],
       notas:['comentarios','notas','comentariosnotas','descripcion'],
@@ -7351,6 +7359,7 @@ const DATASETS={
       {k:'serie',t:'Serie original',a:170,cls:'mono',v:r=>esc(r.origen.serie)},
       {k:'serieNueva',t:'Serie de reemplazo',a:180,cls:'mono',v:r=>r.origen.serieNueva
         ? esc(r.origen.serieNueva) : '<span style="color:var(--muted)">pendiente</span>'},
+      {k:'ip',t:'IP Address',a:150,cls:'mono',v:r=>esc(r.origen.ip)},
       {k:'tipo',t:'Tipo',a:150,v:r=>esc(r.origen.tipo)},
       {k:'estado',t:'Status',a:120,v:r=>esc(r.origen.estado)},
       {k:'fechaCie',t:'Cierre',a:130,cls:'mono',v:r=>esc(fechaHumana(r.origen.fechaCie))},
@@ -7383,6 +7392,7 @@ const DATASETS={
       hostname:['hostname','equipo','nombredeequipo'],
       serie:['nodeserieoriginal','numerodeserieoriginal','serieoriginal','nodeserie','serie'],
       serieNueva:['nodeserieporelquesecambio','seriedereemplazo','serienueva','serienuevo'],
+      ip:['ipaddress','ip','direccionip'],
       tipo:['tipo','tipodeequipo','tipodedispositivo'],
       notas:['comentarios','notas','comentariosnotas','descripcion'],
       estado:['status','estado','estatus'],
@@ -7574,18 +7584,9 @@ async function guardarFormCRQ(btn){
    como desplegable cerrado: un caso de fabricante suele abrirse por un equipo que
    todavía no está dado de alta, y no poder capturarlo por eso sería absurdo. */
 let _eqEdit=null, _eqDs=null;
-function opcionesInventario(){
-  const inv=(S.inv||[]).filter(e=>!S.cliente||clienteDeEquipo(e)===S.cliente);
-  const uniq=a=>[...new Set(a.filter(Boolean))].sort();
-  return {host:uniq(inv.map(e=>e.hostname)), serie:uniq(inv.map(e=>e.serie)),
-          version:uniq(inv.map(e=>e.firmware)), inv:inv};
-}
 /* Un equipo del inventario rellena de golpe lo que ya sabemos de él. */
 function equipoPorSerie(serie){
   return (S.inv||[]).find(e=>String(e.serie||'').trim()===String(serie||'').trim())||null;
-}
-function equipoPorHost(host){
-  return (S.inv||[]).find(e=>String(e.hostname||'').trim()===String(host||'').trim())||null;
 }
 function abrirFormEq(ds,reg){
   if(S.role==='cliente'){ toast('Tu perfil es de solo lectura.','err'); return; }
@@ -7594,8 +7595,6 @@ function abrirFormEq(ds,reg){
   const esRma=ds.k==='rma';
   const o=reg? reg.origen : {};
   $('#eqTit').textContent=(reg? 'Editar ':'Documentar ')+(esRma?'RMA':'caso de fabricante')+(reg? ' '+reg.id:'');
-  const op=opcionesInventario();
-  const lista=(id,vals)=>'<datalist id="'+id+'">'+vals.map(v=>'<option value="'+esc(v)+'">').join('')+'</datalist>';
   $('#eqBody').innerHTML=
     '<div class="note">'+(esRma
       ? 'Al marcarlo como cerrado se ofrece sustituir el número de serie en el inventario.'
@@ -7603,7 +7602,7 @@ function abrirFormEq(ds,reg){
     '</div>'+
     '<div class="grid">'+
       '<div class="f"><label>No. de caso <span class="req">*</span></label>'+
-        '<input id="eqId" placeholder="'+(esRma?'RMA-2026-0148':'6912345678')+'"'+(reg?' disabled':'')+'></div>'+
+        '<input id="eqId" placeholder="'+(esRma?'RMA-2026-0148':'695123456')+'"'+(reg?' disabled':'')+'></div>'+
       '<div class="f"><label>Fecha de apertura <span class="req">*</span></label>'+
         '<input type="date" id="eqFAp"></div>'+
       '<div class="f"><label>Status <span class="req">*</span></label><select id="eqEstado"></select></div>'+
@@ -7611,23 +7610,33 @@ function abrirFormEq(ds,reg){
     '</div>'+
     '<div class="f" style="margin-top:12px"><label>Sede <span class="req">*</span></label>'+
       '<div class="ms" id="eqSedes"></div></div>'+
+    /* El equipo se elige del inventario de esa sede, igual que en la apertura de un
+       ticket: al escogerlo se rellenan hostname, serie, IP y tipo de una vez. Un caso
+       de fabricante suele abrirse por algo que aún no está dado de alta, así que hay
+       una salida para capturarlo a mano. */
+    '<div class="f" style="margin-top:12px"><label>Equipo afectado</label>'+
+      '<select id="eqEquipo"></select>'+
+      '<div class="note" style="margin:6px 0 0" id="eqEqNota">Elige la sede para ver sus equipos.</div></div>'+
+    '<div id="eqManual" class="panel hide" style="margin:10px 0 0;background:var(--panel2)">'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Datos del equipo, capturados a mano</div>'+
+      '<div class="grid">'+
+        '<div class="f"><label>Hostname</label><input id="eqHost" placeholder="SW-P16-IDF2-TF-9407"></div>'+
+        '<div class="f"><label>'+(esRma?'No. de serie original':'No. de serie')+'</label>'+
+          '<input id="eqSerie" placeholder="FOX2624PETA"></div>'+
+        '<div class="f"><label>IP Address</label><input id="eqIp" placeholder="150.218.1.28"></div>'+
+        '<div class="f"><label>Tipo <span class="req">*</span></label>'+
+          '<input id="eqTipo" placeholder="Switch, Access Point, ISE Node…"></div>'+
+      '</div>'+
+    '</div>'+
     '<div class="grid" style="margin-top:12px">'+
-      '<div class="f"><label>Hostname</label>'+
-        '<input id="eqHost" list="dlHost" placeholder="del inventario, o escríbelo">'+lista('dlHost',op.host)+'</div>'+
-      '<div class="f"><label>'+(esRma?'No. de serie original':'No. de serie')+'</label>'+
-        '<input id="eqSerie" list="dlSerie" placeholder="del inventario, o escríbelo">'+lista('dlSerie',op.serie)+'</div>'+
       (esRma
         ? '<div class="f"><label>No. de serie de reemplazo</label>'+
           '<input id="eqSerieNueva" placeholder="el que entró en su lugar"></div>'
-        : '<div class="f"><label>Versión</label>'+
-          '<input id="eqVersion" list="dlVer" placeholder="del inventario, o escríbela">'+lista('dlVer',op.version)+'</div>')+
-      '<div class="f"><label>Tipo <span class="req">*</span></label>'+
-        '<input id="eqTipo" placeholder="Switch, Access Point, ISE Node…"></div>'+
-    '</div>'+
-    '<div class="grid" style="margin-top:12px">'+
+        : '<div class="f"><label>Versión</label><input id="eqVersion" placeholder="17.12.5"></div>')+
       '<div class="f"><label>Ticket relacionado</label>'+
         '<input id="eqTicket" list="dlTicket" placeholder="folio del ticket, opcional">'+
-        lista('dlTicket',(S.idx||[]).slice(0,400).map(t=>t.id))+'</div>'+
+        '<datalist id="dlTicket">'+(S.idx||[]).slice(0,400).map(t=>'<option value="'+esc(t.id)+'">').join('')+
+        '</datalist></div>'+
       '<div class="f"><label>Nota interna</label>'+
         '<input id="eqNota" placeholder="Observaciones del NOC, opcional"></div>'+
     '</div>'+
@@ -7635,33 +7644,82 @@ function abrirFormEq(ds,reg){
       '<textarea id="eqNotas" placeholder="Qué se reportó, qué pidió el fabricante, en qué quedó"></textarea></div>';
   fillSel('#eqEstado',ds.estados(),'— selecciona —',o.estado||'');
   const el=$('#eqSedes');
-  if(!el._ms) msInit(el,'— selecciona sede —',()=>{});
+  if(!el._ms) msInit(el,'— selecciona sede —',()=>{ refrescarEquipoEq(); });
   const locs=(S.cat.localidades||[]).filter(l=>!l.clienteId||l.clienteId===S.cliente);
-  msSet(el,locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),reg?(reg.sip.sedes||[]):[]);
+  const items=locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'}));
+  msSet(el,items,reg?(reg.sip.sedes||[]):[]);
   $('#eqId').value=reg?reg.id:'';
   $('#eqFAp').value=o.fechaAp||todayISO();
   $('#eqFCie').value=o.fechaCie||'';
   $('#eqHost').value=o.hostname||'';
   $('#eqSerie').value=o.serie||'';
-  if(esRma) $('#eqSerieNueva').value=o.serieNueva||''; else $('#eqVersion').value=o.version||'';
+  $('#eqIp').value=o.ip||'';
   $('#eqTipo').value=o.tipo||'';
+  if(esRma) $('#eqSerieNueva').value=o.serieNueva||''; else $('#eqVersion').value=o.version||'';
   $('#eqTicket').value=o.ticket||'';
   $('#eqNota').value=reg?(reg.sip.nota||''):'';
   $('#eqNotas').value=o.notas||'';
-  /* Elegir un equipo conocido rellena lo demás: teclearlo tres veces solo introduce erratas. */
-  const desdeEquipo=e=>{
-    if(!e) return;
-    if(!$('#eqHost').value.trim()) $('#eqHost').value=e.hostname||'';
-    if(!$('#eqSerie').value.trim()) $('#eqSerie').value=e.serie||'';
-    if(!esRma && !$('#eqVersion').value.trim()) $('#eqVersion').value=e.firmware||'';
-    if(!$('#eqTipo').value.trim()) $('#eqTipo').value=e.tipo||'';
-    if(e.localidadId && !msVal('#eqSedes').length) msSet(el,
-      locs.map(l=>({v:l.id,l1:locLabel(l.id),l2:(l.pisos||[]).length+' piso(s)'})),[e.localidadId]);
-  };
-  $('#eqSerie').onchange=()=>desdeEquipo(equipoPorSerie($('#eqSerie').value));
-  $('#eqHost').onchange=()=>desdeEquipo(equipoPorHost($('#eqHost').value));
+  $('#eqEquipo').onchange=()=>aplicarEquipoEq(ds);
+  refrescarEquipoEq(reg);
   $('#mEq').classList.add('on');
   setTimeout(()=>{ const f=$('#eqId'); if(f&&!f.disabled) f.focus(); },40);
+}
+/* Rellena el menú de equipos con los de la sede elegida. Se llama al abrir y cada vez
+   que cambia la sede: un equipo de otra sede en la lista solo induce a error. */
+function refrescarEquipoEq(reg){
+  const sel=$('#eqEquipo'); if(!sel) return;
+  const sedes=msVal('#eqSedes');
+  const lista=sedes.length? equiposDe(sedes[0],[]) : [];
+  const o=reg? reg.origen : null;
+  const yaTiene=o && (o.hostname||o.serie);
+  let opciones='<option value="">— sin equipo —</option>';
+  opciones+=lista.map(e=>'<option value="'+esc(eqClave(e))+'">'+
+    esc(e.hostname||'(sin hostname)')+(e.piso?' · '+esc(e.piso):'')+
+    (e.serie?'  ·  S/N '+esc(e.serie):'')+(e.ip?'  ·  '+esc(e.ip):'')+'</option>').join('');
+  opciones+='<option value="__manual__">✎ No está en el inventario: capturarlo a mano</option>';
+  sel.innerHTML=opciones;
+  /* Al editar, se marca el equipo del registro si todavía existe en el inventario. */
+  let marcado='';
+  if(yaTiene){
+    const eq=lista.find(e=>(o.serie&&String(e.serie||'')===o.serie)||
+                           (!o.serie&&o.hostname&&String(e.hostname||'')===o.hostname));
+    marcado=eq? eqClave(eq) : '__manual__';
+  }
+  sel.value=marcado;
+  const nota=$('#eqEqNota');
+  if(nota) nota.textContent=!sedes.length
+    ? 'Elige la sede para ver sus equipos.'
+    : (lista.length? lista.length+' equipo(s) en esta sede. Si el tuyo no está, elige la última opción.'
+                   : 'Esta sede no tiene equipos en el inventario: captúralo a mano.');
+  if(!sedes.length || !lista.length) sel.value=yaTiene?'__manual__':(sedes.length?'__manual__':'');
+  aplicarEquipoEq(_eqDs,true);
+}
+/* Un equipo del inventario rellena hostname, serie, IP y tipo; «capturar a mano» abre
+   los campos para escribirlos. Los datos viajan siempre en el registro, no como una
+   referencia: si mañana el equipo se da de baja, el caso sigue diciendo a qué se abrió. */
+function aplicarEquipoEq(ds,conservar){
+  const sel=$('#eqEquipo'), caja=$('#eqManual'); if(!sel||!caja) return;
+  const v=sel.value;
+  const manual=v==='__manual__';
+  /* Los datos se muestran siempre que haya algo que mostrar: en modo manual para
+     escribirlos, y con un equipo elegido para ver qué se está guardando. */
+  caja.classList.toggle('hide',!v);
+  const titulo=caja.querySelector('div');
+  if(titulo) titulo.textContent=manual
+    ? 'Datos del equipo, capturados a mano'
+    : 'Datos tomados del inventario';
+  ['eqHost','eqSerie','eqIp'].forEach(id=>{ const f=$('#'+id); if(f) f.readOnly=!manual; });
+  if(manual||!v) return;
+  const sedes=msVal('#eqSedes');
+  const eq=equiposDe(sedes[0]||'',[]).find(e=>eqClave(e)===v);
+  if(!eq) return;
+  $('#eqHost').value=eq.hostname||'';
+  $('#eqSerie').value=eq.serie||'';
+  $('#eqIp').value=eq.ip||'';
+  if(!conservar || !$('#eqTipo').value.trim()) $('#eqTipo').value=eq.tipo||'';
+  const ver=$('#eqVersion');
+  if(ver && (!conservar || !ver.value.trim())) ver.value=eq.firmware||'';
+  caja.classList.remove('hide');
 }
 const esCerrado=e=>/^cerrad/i.test(String(e||'').trim());
 async function guardarFormEq(btn){
@@ -7692,6 +7750,7 @@ async function guardarFormEq(btn){
     const origen={id:id,fechaAp:fAp,fechaCie:fCie,
       sedeTexto:sedes.map(x=>nombreLoc(x)).join(', '),
       hostname:$('#eqHost').value.trim(), serie:$('#eqSerie').value.trim(),
+      ip:$('#eqIp').value.trim(),
       tipo:tipo, estado:estado, notas:$('#eqNotas').value.trim(),
       ticket:$('#eqTicket').value.trim(), archivo:''};
     if(esRma) origen.serieNueva=serieNueva; else origen.version=$('#eqVersion').value.trim();
@@ -8770,6 +8829,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   abrirFormEq:abrirFormEq,ofrecerCambioSerie:ofrecerCambioSerie,equipoPorSerie:equipoPorSerie,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
+  LISTAS:LISTAS,ESQUEMAS:ESQUEMAS,
   respaldoBitacora:respaldoBitacora,restaurarBitacora:restaurarBitacora,P_BIT_BK:P_BIT_BK,
   rutaBackupBit:rutaBackupBit,listarBackupsBitacora:listarBackupsBitacora,
   esFalloDeRed:esFalloDeRed,esFalloDePermiso:esFalloDePermiso,colaBit:colaBit,encolarBit:encolarBit,
