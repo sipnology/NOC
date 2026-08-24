@@ -753,6 +753,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div class="hrow"><h2>Plantillas del NOC</h2>
       <span class="right row" style="gap:8px">
         <select id="repPlantilla" style="width:260px"></select>
+        <button class="btn sec" id="repCargar" title="Vuelve a aplicar la plantilla elegida">Cargar</button>
         <button class="btn sec" id="repGuardar">Guardar</button>
         <button class="btn sec" id="repGuardarComo">Guardar como…</button>
         <button class="btn dan" id="repBorrar" style="padding:6px 12px">Eliminar</button>
@@ -1108,7 +1109,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-23 · r95';
+const APP_VER = '2026-08-23 · r96';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2359,7 +2360,7 @@ async function cargarDatos(silent,saltarInv){
   if(moduloActivo('rma')) await rmaPull(true); else { S.rma=[]; }
   await repPull(true);
   poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT(); renderFAB(); renderRMA();
-  renderRepModulos(null); pintarLocsReporte([]); renderReportes();
+  renderReportes();   /* repinta conservando lo elegido; ya no lo tira a la basura */
   if(!silent) toast('Datos actualizados.');
 }
 /* Migración desde las rutas anteriores. Los expedientes NO se mueven: cada ticket guarda
@@ -8286,6 +8287,22 @@ function repDefUI(){
     formato:$('#repFormato').value, archivos:$('#repArchivos').value,
     destino:$('#repDestino').value, para:$('#repPara').value, mods:mods};
 }
+/* Aplica la plantilla elegida en el desplegable. Se usa tanto al seleccionarla como
+   desde el botón «Cargar», por si el usuario quiere volver al estado guardado después
+   de haber tocado los filtros a mano. */
+function cargarPlantillaElegida(aviso){
+  const sel=$('#repPlantilla'); if(!sel) return false;
+  const nom=sel.value;
+  const r=(S.reportes||[]).find(x=>x.nombre===nom);
+  if(!r||!r.def){
+    renderRepModulos(null); pintarLocsReporte([]);
+    if(aviso&&nom) toast('La plantilla «'+nom+'» no tiene nada guardado.','warn',7000);
+    return false;
+  }
+  repAplicarUI(r.def);
+  if(aviso) toast('Plantilla «'+nom+'» cargada.');
+  return true;
+}
 function repAplicarUI(d){
   if(!d) return;
   $('#repTitulo').value=d.titulo||''; $('#repNota').value=d.nota||'';
@@ -8307,7 +8324,9 @@ function renderRepModulos(sel){
   const cont=$('#repModulos'); if(!cont) return;
   const disp=modsDisponibles();
   cont.innerHTML=disp.map(m=>{
-    const activo=!sel||Object.keys(sel).length===0||!!sel[m.k];
+    /* sel===null es «primera pintada, marca todo»; un objeto es la lista exacta, aunque
+       venga vacía: si el usuario desmarcó todo, se respeta. */
+    const activo=!sel||!!sel[m.k];
     return '<div class="panel" style="margin:0"><label class="row" style="gap:8px;font-size:13.5px;font-weight:600">'+
       '<input type="checkbox" data-rm="'+m.k+'"'+(activo?' checked':'')+' style="width:auto"> '+esc(m.t)+'</label>'+
       '<div class="f" style="margin-top:8px"><label>Columnas</label><div class="ms" id="repCols_'+m.k+'"></div></div></div>';
@@ -8570,8 +8589,13 @@ function renderReportes(){
   if(!S.cat||!$('#repModulos')) return;
   const puede=S.role!=='cliente';
   ['repGuardar','repGuardarComo','repBorrar'].forEach(id=>{ const b=$('#'+id); if(b) b.disabled=!puede||!S.cliente; });
-  if(!$('#repModulos').innerHTML) renderRepModulos(null);
-  pintarLocsReporte();
+  /* Esta pantalla se repinta cada vez que entran datos nuevos, y antes lo hacía en blanco:
+     los módulos volvían a marcarse todos y las localidades se vaciaban. Así, al cargar una
+     plantilla, la siguiente actualización se la llevaba por delante y parecía que nunca se
+     había cargado. Ahora se fotografía lo que hay en pantalla y se vuelve a poner. */
+  const vivo = $('#repModulos').innerHTML ? repDefUI() : null;
+  renderRepModulos(vivo ? vivo.mods : null);
+  pintarLocsReporte(vivo ? (vivo.locs||[]) : undefined);
   pintarPlantillas();
 }
 async function generarReporte(){
@@ -8844,10 +8868,8 @@ function enlazarEventos(){
   });
 
   // Reportes
-  $('#repPlantilla').onchange=function(){
-    const r=(S.reportes||[]).find(x=>x.nombre===this.value);
-    if(r) repAplicarUI(r.def); else renderRepModulos(null);
-  };
+  $('#repPlantilla').onchange=()=>cargarPlantillaElegida(true);
+  $('#repCargar').onclick=()=>cargarPlantillaElegida(true);
   $('#repGuardar').onclick=async function(){
     const nom=$('#repPlantilla').value;
     if(!nom){ toast('Elige «Guardar como…» para nombrarla.','warn'); return; }
@@ -9043,6 +9065,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
   pintarLocsReporte:pintarLocsReporte,renderReportes:()=>renderReportes(),
+  repDefUI:repDefUI,repAplicarUI:repAplicarUI,renderRepModulos:renderRepModulos,
+  cargarPlantillaElegida:cargarPlantillaElegida,pintarPlantillas:pintarPlantillas,
   idDesdeNombre:idDesdeNombre,cliBloqueado:cliBloqueado,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
   dsFiltrar:dsFiltrar,dsEst:dsEst,dsNormRegistro:dsNormRegistro,textoPlano:textoPlano,
   horaCorta:horaCorta,abrirFormCRQ:abrirFormCRQ};
