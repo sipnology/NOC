@@ -1108,7 +1108,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-17 · r93';
+const APP_VER = '2026-08-23 · r94';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -7516,7 +7516,12 @@ function dsNormRegistro(ds,origen,archivo){
   Object.assign(o,ds.normaliza(o)||{});
   const id=String(o[ds.idOrigen]||o.id||'').trim();
   return {id:id, clienteId:S.cliente||(clientesEnAlcance()[0]||''), fuente:'importado', origen:o,
-          sip:{sedes:sugerirSedes(ds.sedeDesde(o)),nota:''},
+          /* Un RMA que llega en un archivo describe algo que YA ocurrió: el equipo se
+             cambió hace semanas y el inventario debería reflejarlo desde entonces.
+             Ofrecerse a reescribirlo al importarlo sería reescribir el presente con un
+             histórico. Se marca como aplicado para que el sistema no lo proponga nunca. */
+          sip:{sedes:sugerirSedes(ds.sedeDesde(o)),nota:'',
+               invActualizado: ds.k==='rma' ? true : undefined},
           importado:{cuando:new Date().toISOString(),por:S.me.mail,archivo:archivo||''}};
 }
 async function dsPull(ds,silent){
@@ -7866,7 +7871,11 @@ async function guardarFormEq(btn){
     }
     $('#mEq').classList.remove('on'); _eqEdit=null;
     dsRender(ds); renderDash();
-    if(esRma&&esCerrado(estado)&&!reg.sip.invActualizado) await ofrecerCambioSerie(reg);
+    /* Solo se ofrece tocar el inventario si el RMA se cerró AQUÍ, a mano. Lo importado
+       ya viene marcado como aplicado, así que un archivo histórico —o el de la demo—
+       nunca puede alterar el inventario real. */
+    if(esRma&&esCerrado(estado)&&reg.fuente==='manual'&&!reg.sip.invActualizado)
+      await ofrecerCambioSerie(reg);
   }catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
   finally{ busy(btn,false); }
 }
@@ -7874,6 +7883,13 @@ async function guardarFormEq(btn){
    Se ofrece corregirlo, pero no se hace solo: un RMA mal capturado corrompería el
    inventario sin que nadie lo notara. */
 async function ofrecerCambioSerie(reg){
+  /* Doble cerrojo: aunque alguien llame a esta función con un registro importado, no
+     toca nada. El inventario es el estado real de la red y no se cambia de rebote. */
+  if(reg.fuente!=='manual'){
+    toast('Este RMA vino de un archivo. El inventario no se modifica desde un histórico '+
+      'importado; si hay que corregirlo, hazlo en el módulo de Inventario.','warn',12000);
+    return;
+  }
   const pares=(reg.origen.equipos||[])
     .map(e=>({vieja:String(e.serie||'').trim(),nueva:String(e.serieNueva||'').trim(),
               host:e.hostname||''}))
@@ -8957,6 +8973,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pUsr:pUsr,pFab:pFab,pRma:pRma,rutaVieja:rutaVieja,CARPETAS_CLI:CARPETAS_CLI,RUTAS_VIEJAS:RUTAS_VIEJAS,
   diasDs:diasDs,fechaEjeDs:fechaEjeDs,esCerrado:esCerrado,MODS_REP:MODS_REP,
   filtroLista:filtroLista,
+  dsNormRegistro:dsNormRegistro,
   abrirFormEq:abrirFormEq,ofrecerCambioSerie:ofrecerCambioSerie,equipoPorSerie:equipoPorSerie,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
