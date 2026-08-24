@@ -776,13 +776,14 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     </div>
     <div class="row" style="margin-top:4px">
       <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
-        <input type="checkbox" id="repGraficas" checked style="width:auto"> Incluir gráficas en el PDF</label>
+        <input type="checkbox" id="repGraficas" checked style="width:auto"> Incluir gráficas en el PDF y en el Excel</label>
       <label class="row" style="gap:6px;font-size:12.5px;color:var(--muted)">
         <input type="checkbox" id="repResumen" checked style="width:auto"> Incluir hoja de resumen en el Excel</label>
     </div>
     <div class="note">Sin localidades seleccionadas se incluyen todas. El periodo filtra por fecha de apertura
       en tickets, fecha de inicio en CRQs y vencimiento en SITs; el inventario no tiene fecha, así que va completo.
-      <b>Ojo:</b> al filtrar por localidad, los CRQs y SITs que no tengan sede asignada quedan fuera.</div>
+      <b>Ojo:</b> al filtrar por localidad, los CRQs y SITs que no tengan sede asignada quedan fuera.
+      En el Excel, cada módulo lleva su propia hoja de gráficas junto a la de datos.</div>
   </div>
 
   <div class="panel">
@@ -1109,7 +1110,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-23 · r96';
+const APP_VER = '2026-08-23 · r97';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -6227,10 +6228,50 @@ async function leerXlsx(file){
   return filas;
 }
 /* Escribe un libro con hojas [{nombre,cols:[[clave,titulo,ancho]],filas:[obj],nota}] */
+/* Excel no admite nombres de hoja de más de 31 caracteres ni los signos \ / ? * [ ] :
+   y tampoco dos hojas con el mismo nombre. Un reporte con «Gráficas · Casos de
+   fabricante» se pasa de largo, así que se recorta y se numera si hace falta. */
+function nombreHoja(txt,usados){
+  let n=String(txt||'Hoja').replace(/[\\\/\?\*\[\]:]/g,'-').trim().slice(0,31)||'Hoja';
+  if(!usados) return n;
+  let base=n, i=2;
+  while(usados.indexOf(n)!==-1){ const suf=' ('+i+')'; n=base.slice(0,31-suf.length)+suf; i++; }
+  usados.push(n); return n;
+}
+/* Una hoja hecha solo de gráficas: cada una con su título encima, dos por franja.
+   Las imágenes flotan sobre la cuadrícula, así que las columnas se estrechan para que
+   la hoja no muestre una rejilla enorme y vacía por debajo. */
+async function hojaDeGraficas(wb,ws,titulo,graficas){
+  const ANCHO=460, COLS=12, ANCHO_COL=10, ALTO_FILA=20;
+  /* La banda ancla el logo del cliente midiendo los anchos reales, así que hay que
+     darle los de esta hoja y no los de por defecto: con 20 el logo caía fuera. */
+  const rejilla=Array.from({length:COLS},(_,i)=>['c'+i,'',ANCHO_COL]);
+  await bandaMarcaXlsx(wb,ws,titulo,rejilla);
+  for(let c=1;c<=COLS;c++) ws.getColumn(c).width=ANCHO_COL;
+  ws.views=[{showGridLines:false}];
+  let fila=5;
+  graficas.forEach((g,i)=>{
+    const alto=Math.round(ANCHO*(g.h||380)/(g.w||680));
+    const filasAlto=Math.ceil(alto/ALTO_FILA)+1;
+    const izq=(i%2)===0;
+    if(izq&&i) fila+=filasAlto+2;
+    const cel=ws.getCell(fila,izq?1:7);
+    cel.value=g.titulo;
+    cel.font={bold:true,size:10,color:{argb:'FF12263A'}};
+    try{
+      const id=wb.addImage({base64:String(g.img).split(',')[1],extension:'jpeg'});
+      ws.addImage(id,{tl:{col:izq?0.1:6.1,row:fila},ext:{width:ANCHO,height:alto}});
+    }catch(e){ console.warn('no se pudo incrustar la gráfica «'+g.titulo+'»:',e.message); }
+  });
+  if(graficas.length%2===1) fila+=2;
+  return ws;
+}
 async function escribirXlsx(nombre,hojas,devolver){
   const wb=new ExcelJS.Workbook(); wb.creator='Sipnology · Sistema de Tickets NOC'; wb.created=new Date();
+  const usados=[];
   for(const h of hojas){
-    const ws=wb.addWorksheet(h.nombre);
+    const ws=wb.addWorksheet(nombreHoja(h.nombre,usados));
+    if(h.graficas){ await hojaDeGraficas(wb,ws,h.titulo||nombre.replace(/_/g,' '),h.graficas); continue; }
     const hr=h.sinMarca? 1 : await bandaMarcaXlsx(wb,ws,nombre.replace(/_/g,' '),h.cols);
     if(hr>1) ws.addRow(h.cols.map(c=>c[1])); else ws.addRow(h.cols.map(c=>c[1]));
     h.cols.forEach((c,i)=>{ ws.getColumn(i+1).width=c[2]||20; });
@@ -8378,7 +8419,9 @@ async function graficasReporte(modKey,filas){
     out.push({titulo:dim.t,canvas:cv});
   });
   await new Promise(r=>setTimeout(r,120));   // deja que Chart.js pinte
-  const imgs=out.map(o=>({titulo:o.titulo,img:grafParaPdf(o.canvas,680)}));
+  /* Se devuelven las medidas además de la imagen: el PDF las escala a su rejilla, pero
+     Excel necesita el tamaño real en píxeles para anclarlas sin deformarlas. */
+  const imgs=out.map(o=>({titulo:o.titulo,img:grafParaPdf(o.canvas,680),w:680,h:380}));
   vivos.forEach(c=>{try{c.destroy();}catch(e){}});
   stage.innerHTML='';
   return imgs;
@@ -8386,8 +8429,20 @@ async function graficasReporte(modKey,filas){
 
 /* ---- Generación ---- */
 async function repExcel(d,bloques,nombre){
-  const hojas=bloques.map(b=>({nombre:b.m.t,cols:b.cols.map(c=>[c[0],c[1],Math.max(12,Math.min(46,c[1].length+8))]),
-    filas:b.filas.map(r=>{ const f=repFilaPlana(b.m,r), o={}; b.cols.forEach(c=>o[c[0]]=f(c)); return o; })}));
+  const hojas=[];
+  for(const b of bloques){
+    hojas.push({nombre:b.m.t,cols:b.cols.map(c=>[c[0],c[1],Math.max(12,Math.min(46,c[1].length+8))]),
+      filas:b.filas.map(r=>{ const f=repFilaPlana(b.m,r), o={}; b.cols.forEach(c=>o[c[0]]=f(c)); return o; })});
+    /* Las mismas gráficas que lleva el PDF, cada módulo con las suyas y en su propia
+       hoja: si se pusieran encima de la tabla taparían los datos y estorbarían al
+       filtrar, que es para lo que la gente abre el Excel. */
+    if(d.graficas){
+      try{
+        const gr=await graficasReporte(b.m.k,b.filas);
+        if(gr.length) hojas.push({nombre:'Gráficas · '+b.m.t,titulo:'Gráficas · '+b.m.t,graficas:gr});
+      }catch(e){ console.warn('sin gráficas para '+b.m.t+':',e.message); }
+    }
+  }
   if(d.resumen){
     const res=[];
     bloques.forEach(b=>{
@@ -9065,6 +9120,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
   pintarLocsReporte:pintarLocsReporte,renderReportes:()=>renderReportes(),
+  nombreHoja:nombreHoja,hojaDeGraficas:hojaDeGraficas,repExcel:repExcel,graficasReporte:graficasReporte,
   repDefUI:repDefUI,repAplicarUI:repAplicarUI,renderRepModulos:renderRepModulos,
   cargarPlantillaElegida:cargarPlantillaElegida,pintarPlantillas:pintarPlantillas,
   idDesdeNombre:idDesdeNombre,cliBloqueado:cliBloqueado,sugerirSedes:sugerirSedes,parseDescripcionSIT:parseDescripcionSIT,
