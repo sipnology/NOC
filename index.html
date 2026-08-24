@@ -411,15 +411,15 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <button class="btn sec" id="btnLogout">Salir</button>
   </div>
   <nav class="tabs" id="tabs">
-    <button data-v="vApertura" class="on">Apertura de ticket</button>
+    <button data-v="vEstado" class="on">Estado / Dashboard</button>
+    <button data-v="vApertura">Apertura de ticket</button>
     <button data-v="vSeguimiento">Seguimiento</button>
-    <button data-v="vEstado">Estado / Dashboard</button>
-    <button data-v="vInventario">Inventario</button>
     <button data-v="vCRQ">CRQs</button>
     <button data-v="vSIT">SITs</button>
     <button data-v="vFAB">Casos Fabricante</button>
     <button data-v="vRMA">RMA</button>
     <button data-v="vReportes">Reportes</button>
+    <button data-v="vInventario">Inventario</button>
     <button data-v="vCatalogos" id="tabCat">Catálogos</button>
     <button data-v="vBitacora" id="tabBit">Bitácora</button>
   </nav>
@@ -428,7 +428,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 <main class="hide" id="app">
 
 <!-- ============ VISTA 1: APERTURA ============ -->
-<section class="view on" id="vApertura">
+<section class="view" id="vApertura">
   <div class="panel hide" id="tSinCliente">
     <div class="note" style="border-left-color:var(--warn)">Selecciona un cliente concreto en el encabezado
       para abrir un ticket. Con «Todos los clientes» no se puede: el folio y el expediente dependen del cliente.</div>
@@ -558,7 +558,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 </section>
 
 <!-- ============ VISTA 3: ESTADO / DASHBOARD ============ -->
-<section class="view" id="vEstado">
+<section class="view on" id="vEstado">
   <div class="panel" style="padding-bottom:10px">
     <nav class="tabs" id="dashTabs" style="flex:none">
       <button data-d="tickets" class="on">Tickets</button>
@@ -1108,7 +1108,7 @@ const cfg = {
 };
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-08-23 · r94';
+const APP_VER = '2026-08-23 · r95';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -4058,7 +4058,24 @@ function renderKPIs(d){
     (k[3]?'<i class="i" data-tip="'+esc(k[3])+'">i</i>':'')+
     '<div class="n" style="'+k[2]+'">'+esc(k[1])+'</div><div class="l">'+esc(k[0])+'</div></div>').join('');
 }
-const _dashDefs={crq:['estado','sede','mes'],sit:['estado','sede','elemento','config']};
+/* Qué gráficas trae de fábrica el tablero de cada módulo. Antes esto era una lista
+   escrita a mano con solo dos entradas, así que un módulo nuevo abría el tablero vacío
+   y «Agregar gráfica» reventaba al empujar sobre un arreglo inexistente. Ahora cada
+   dataset declara las suyas y, si no lo hace, se toman sus tres primeras dimensiones:
+   ningún módulo puede volver a nacer sin tablero. */
+const _dashPorDefecto={crq:['estado','sede','mes'],sit:['estado','sede','elemento','config'],
+  fab:['estado','tipo','sede','mes'],rma:['estado','tipo','sede','mes']};
+const _dashDefs={};
+/* DATASETS se declara más abajo en el archivo, así que esto no puede resolverse aquí:
+   se llama una vez al arrancar, cuando ya existe. */
+function sembrarDashDefs(){
+  Object.keys(DATASETS).forEach(k=>{
+    if(_dashDefs[k]&&_dashDefs[k].length) return;
+    const dims=DATASETS[k].dims.map(d=>d.k);
+    const propuesta=(_dashPorDefecto[k]||dims.slice(0,3)).filter(x=>dims.indexOf(x)!==-1);
+    _dashDefs[k]=propuesta.length? propuesta : dims.slice(0,3);
+  });
+}
 /* El orden de las gráficas es una preferencia del usuario: se guarda en el navegador
    para que el tablero se vea igual la próxima vez que entre. */
 const PREF_ORDEN='sip_tkt_orden_graficas';
@@ -4068,16 +4085,19 @@ function setDefs(mod,arr){
   guardarOrdenGraficas();
 }
 function guardarOrdenGraficas(){
-  try{ localStorage.setItem(PREF_ORDEN,JSON.stringify(
-    {tickets:S.chartDefs,crq:_dashDefs.crq,sit:_dashDefs.sit})); }catch(e){}
+  /* Se guardan todos los módulos que existan, no una lista fija. */
+  const g={tickets:S.chartDefs};
+  Object.keys(_dashDefs).forEach(k=>{ g[k]=_dashDefs[k]; });
+  try{ localStorage.setItem(PREF_ORDEN,JSON.stringify(g)); }catch(e){}
 }
 function cargarOrdenGraficas(){
+  sembrarDashDefs();
   let g=null; try{ g=JSON.parse(localStorage.getItem(PREF_ORDEN)||'null'); }catch(e){}
   if(!g) return;
   const validas=(arr,ok)=>Array.isArray(arr)? arr.filter(k=>ok.indexOf(k)!==-1) : null;
   const dt=validas(g.tickets,DIMENSIONES.map(d=>d.k));
   if(dt&&dt.length) S.chartDefs=dt;
-  ['crq','sit'].forEach(k=>{
+  Object.keys(DATASETS).forEach(k=>{
     const v=validas(g[k],DATASETS[k].dims.map(d=>d.k));
     if(v&&v.length) _dashDefs[k]=v;
   });
@@ -4128,6 +4148,7 @@ function cabGrafica(mod,i,total,titulo,sel){
       '<h3 title="'+esc(titulo)+'">'+esc(titulo)+'</h3>'+sel+'</div><canvas></canvas>';
 }
 function renderDashDs(ds){
+  sembrarDashDefs();
   dsPintarFiltros(ds,'#dashFiltrosDs');
   const filas=dsFiltrar(ds);
   const sedes=new Set(); filas.forEach(r=>(r.sip.sedes||[]).forEach(x=>sedes.add(x)));
@@ -4141,6 +4162,10 @@ function renderDashDs(ds){
   S.charts.forEach(c=>{try{c.destroy();}catch(e){}}); S.charts=[];
   $('#charts').innerHTML='';
   const defs=(_dashDefs[ds.k]||[]).slice();
+  if(!defs.length){
+    $('#charts').innerHTML='<div class="note" style="border-left-color:var(--warn)">'+
+      'Este tablero no tiene ninguna gráfica. Elige una arriba y pulsa «+ Agregar gráfica».</div>';
+  }
   defs.forEach((k,i)=>{
     const dim=ds.dims.find(x=>x.k===k); if(!dim) return;
     const tipo=tipoGraf(ds.k,k,dim.tipo);
@@ -8745,7 +8770,14 @@ function enlazarEventos(){
   $('#dashDsLimpiar').onclick=()=>{ const ds=DATASETS[S.dashMod]; if(!ds) return;
     dsEst(ds).f={}; dsRender(ds); renderDash(); };
   $('#dashDsAdd').onclick=()=>{ const ds=DATASETS[S.dashMod]; if(!ds) return;
-    const k=$('#dashDsNuevo').value; if(k&&(_dashDefs[ds.k]||[]).indexOf(k)===-1){ _dashDefs[ds.k].push(k); guardarOrdenGraficas(); renderDash(); } };
+    const k=$('#dashDsNuevo').value; if(!k) return;
+    /* El arreglo se crea si falta: antes se empujaba sobre undefined y el clic moría
+       en silencio, que es justo lo que se veía como «no hace nada». */
+    sembrarDashDefs();
+    _dashDefs[ds.k]=_dashDefs[ds.k]||[];
+    if(_dashDefs[ds.k].indexOf(k)!==-1){ toast('Esa gráfica ya está en el tablero.',null,6000); return; }
+    _dashDefs[ds.k].push(k); guardarOrdenGraficas(); renderDash();
+  };
   $('#dashDsExport').onchange=async function(){
     const v=this.value; this.selectedIndex=0; if(!v) return;
     const ds=DATASETS[S.dashMod]; if(!ds) return;
@@ -8954,6 +8986,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   borrarTicketsLote:borrarTicketsLote,borrarDsLote:borrarDsLote,confirmarBorrado:confirmarBorrado,
   selSeg:()=>[..._segSel],selDs:k=>[...(_dsSel[k]||[])],limpiarSelSeg:limpiarSelSeg,
   guardarOrdenGraficas:guardarOrdenGraficas,PREF_ORDEN:PREF_ORDEN,_dashDefs:_dashDefs,
+  sembrarDashDefs:sembrarDashDefs,_dashPorDefecto:_dashPorDefecto,
   pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
