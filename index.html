@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-01 · r101';
+const APP_VER = '2026-09-02 · r102';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -9496,7 +9496,11 @@ function enlazarEventos(){
       const esInv=S._catSec==='equipos';
       const okGuardado = esInv? await guardarInventario('edición manual desde Catálogos') : await catalogoPush();
       if(okGuardado){ toast(esInv?'Inventario guardado.':'Catálogo guardado.');
-        poblarCatalogosUI(); pintarSelectorCliente(); aplicarModulosUI(); renderInv(); } }
+        poblarCatalogosUI(); pintarSelectorCliente(); aplicarModulosUI(); renderInv();
+        /* El aviso de «cambios sin guardar» se pintó cuando los había. Tras guardar hay
+           que borrarlo: dejarlo puesto le dice al usuario que su trabajo sigue en el aire
+           cuando ya está en SharePoint, y le hace pulsar Guardar una y otra vez. */
+        renderPendCat(); } }
     catch(e){ toast('No se pudo guardar: '+e.message,'err',9000); }
     finally{ busy(this,false); } };
 
