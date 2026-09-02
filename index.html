@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r102';
+const APP_VER = '2026-09-02 · r103';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1204,6 +1204,30 @@ function sanitizeName(s){
     .trim().slice(0,120) || 'sin_nombre';
 }
 function graphEncPath(rel){ return String(rel).split('/').map(encodeURIComponent).join('/'); }
+
+/* ---- A qué cliente pertenece un invitado ----
+   Viene de la liga con la que entró (?cliente=BBVA) y se recuerda en este navegador
+   para las siguientes visitas. Es una pista para saber qué carpeta leer, no un permiso:
+   quien no tenga acceso a esa carpeta seguirá sin poder leerla, escriba lo que escriba
+   en la dirección. */
+const PREF_INVITADO='sip_tkt_cliente_invitado';
+function pistaCliente(){
+  let v='';
+  try{
+    const q=new URLSearchParams(location.search||'');
+    v=String(q.get('cliente')||'').trim();
+    if(!v){
+      const h=String(location.hash||'').replace(/^#/,'');
+      if(h) v=String(new URLSearchParams(h).get('cliente')||'').trim();
+    }
+  }catch(e){}
+  if(v){
+    /* Solo lo que puede nombrar una carpeta: nada de rutas ni caracteres raros. */
+    v=v.replace(/[^A-Za-z0-9_\-]/g,'').slice(0,60);
+    if(v){ try{ localStorage.setItem(PREF_INVITADO,v); }catch(e){} return v; }
+  }
+  try{ return String(localStorage.getItem(PREF_INVITADO)||'').trim(); }catch(e){ return ''; }
+}
 
 /* ---- fechas y horas ----
    El NOC opera en México y los tickets guardan la hora de pared de México. Si el
@@ -1749,6 +1773,16 @@ async function catalogoPull(silent){
     /* Listar la carpeta devuelve solo los clientes que este usuario puede ver. */
     let ids=[];
     try{ ids=(await gList(h,'Clientes')).filter(f=>f.folder).map(f=>f.name); }catch(e){}
+    /* Un invitado del cliente tiene permiso sobre SU carpeta, no sobre la que las
+       contiene: listar «Clientes/» le devuelve vacío y se quedaba sin nada que ver.
+       Darle lectura sobre «Clientes/» lo arreglaría y de paso le enseñaría la de todos
+       los demás, que es justo lo que no puede pasar. Así que cuando no hay nada que
+       enumerar se prueba con la pista del cliente y se lee su carpeta directamente.
+       La pista no concede nada: si no tiene permiso, la lectura falla igual. */
+    if(!ids.length){
+      const pista=pistaCliente();
+      if(pista) ids=[pista];
+    }
     /* Lo que se esté escribiendo se pone a salvo ANTES de tocar la capa de disco. */
     capturarEdiciones();
     /* Lo que ya estaba en memoria es la última defensa: si una lectura vuelve vacía
@@ -9696,6 +9730,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
   moduloDeSeccion:moduloDeSeccion,
+  pistaCliente:pistaCliente,PREF_INVITADO:PREF_INVITADO,
   cfgAlertas:cfgAlertas,alertasActivas:alertasActivas,correoBloqueado:correoBloqueado,
   logNavegacion:logNavegacion,NAV_REPETIDA_MS:NAV_REPETIDA_MS,tituloDim:tituloDim,
   avisarReporteAdmin:avisarReporteAdmin,
