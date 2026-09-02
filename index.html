@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r103';
+const APP_VER = '2026-09-02 · r104';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2327,6 +2327,14 @@ function logEvent(evento,detalle){
     rol:(S.role||'')+(_simRol?' (simulado por '+(S.me.mail||'')+')':''),
     cliente:S.cliente||''};
   S.bit.unshift(entry); renderBit();
+  /* Un invitado del cliente tiene SOLO LECTURA, y eso es deliberado: la bitácora es el
+     registro interno de lo que Sipnology hace para todos sus clientes, y darle escritura
+     a uno sería dejarle tocar la auditoría de los demás. Así que ni se intenta subir: el
+     PUT devolvería 403 y lo único que conseguiría es enseñarle al cliente un mensaje
+     técnico sobre permisos de SharePoint que no le corresponde resolver.
+     Se comprueba la cuenta real, no el perfil en pantalla: un administrador que esté
+     mirando con la vista de cliente sigue siendo interno y su actividad sí se registra. */
+  if(!esInterno()){ S.bitEscribe='local (invitado)'; return; }
   const ruta=rutaBit(mesDe(d),entry.usuario);
   /* Se guarda en el navegador ANTES de intentar subirlo. Si la pestaña se cierra a
      mitad de la petición, la entrada ya está a salvo y se sube en la próxima sesión. */
