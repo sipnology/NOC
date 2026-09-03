@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r107';
+const APP_VER = '2026-09-02 · r108';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2305,6 +2305,62 @@ async function idxPull(silent){
     if(!silent) toast('Tickets actualizados ('+S.idx.length+').');
   }catch(e){ if(!silent) toast('No se pudo leer el índice: '+e.message,'err',7000); }
 }
+/* ---- Reparto del índice que ya existe ----
+   Leer el archivo antiguo funciona desde el primer día, pero mientras siga entero no se
+   gana nada: cada escritura seguiría moviendo la historia completa. Esto lo parte una
+   sola vez, por cliente, y solo cuando hay algo que partir.
+   El orden importa: primero se escriben los años, después se comprueba que están, y solo
+   entonces se vacía el antiguo. Al revés, un fallo a media faena dejaría al cliente sin
+   índice. */
+async function repartirIndicePorAnio(h,cli){
+  const viejo=await gGetJsonCompat(h,pIdx(cli));
+  if(!Array.isArray(viejo)||!viejo.length) return {hecho:false,motivo:'no hay nada que repartir'};
+  const porAnio={};
+  viejo.forEach(t=>{ if(t&&t.id) (porAnio[anioDe(t)]=porAnio[anioDe(t)]||[]).push(t); });
+  const anios=Object.keys(porAnio).sort();
+  /* Se fusiona con lo que ya hubiera en cada año: puede haber tickets nuevos escritos
+     después de publicar la versión, y no pueden perderse. */
+  for(const a of anios){
+    await gActualizarJson(h,pIdxAnio(cli,a),disco=>{
+      const arr=Array.isArray(disco)?disco:[];
+      porAnio[a].forEach(t=>{ if(!arr.some(x=>x.id===t.id)) arr.push(t); });
+      return arr;
+    });
+  }
+  /* Comprobación antes de tocar el original: se cuenta lo que quedó escrito. */
+  let escritos=0;
+  for(const a of anios){
+    const v=await gGetJson(h,pIdxAnio(cli,a));
+    escritos+=Array.isArray(v)? v.filter(t=>porAnio[a].some(x=>x.id===t.id)).length : 0;
+  }
+  if(escritos<viejo.length){
+    return {hecho:false,motivo:'se escribieron '+escritos+' de '+viejo.length+
+      ' tickets; el archivo anterior se deja intacto'};
+  }
+  await gPutJson(h,pIdx(cli),[]);
+  return {hecho:true,anios:anios,tickets:viejo.length};
+}
+/* Se intenta una vez por sesión y por cliente, y solo para quien puede escribir. */
+const _repartidos=new Set();
+async function repartirIndicesSiHaceFalta(h){
+  if(!esInterno()) return;
+  for(const cli of clientesEnAlcance()){
+    if(_repartidos.has(cli)) continue;
+    _repartidos.add(cli);
+    try{
+      if((await aniosDe(h,cli)).length && !(await gGetJsonCompat(h,pIdx(cli)) || []).length) continue;
+      const r=await repartirIndicePorAnio(h,cli);
+      if(r.hecho){
+        logEvent('INDICE_REPARTIDO',cli+' · '+r.tickets+' ticket(s) en '+r.anios.join(', '));
+        toast('Índice de '+cli+' repartido por año ('+r.anios.join(', ')+').',null,7000);
+      }else if(r.motivo && r.motivo.indexOf('se escribieron')===0){
+        logEvent('INDICE_REPARTO_INCOMPLETO',cli+' · '+r.motivo);
+        toast('El índice de '+cli+' no se pudo repartir: '+r.motivo,'warn',12000);
+      }
+    }catch(e){ console.warn('reparto del índice de '+cli+':',e.message); }
+  }
+}
+
 /* Deja el índice de un cliente en cero, en todos sus años y en el archivo antiguo.
    Vaciar solo uno dejaba tickets fantasma que reaparecían en la siguiente lectura. */
 async function idxVaciar(h,cli){
@@ -2895,6 +2951,7 @@ async function unlockApp(){
   componerCat();
   pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
   await migrarSiHaceFalta();
+  try{ await repartirIndicesSiHaceFalta(await H()); }catch(e){}
   await cargarDatos(true);
   if(isAdmin()) bitPull();
   /* Lo que quedó pendiente de la sesión anterior (o de un cierre a media escritura)
@@ -10021,6 +10078,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
   moduloDeSeccion:moduloDeSeccion,
   pIdxAnio:pIdxAnio,anioDe:anioDe,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,
+  repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
   idxEnTodos:idxEnTodos,idxVaciar:idxVaciar,RX_IDX_ANIO:RX_IDX_ANIO,
   actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,idListaActividad:idListaActividad,
   leerActividadInvitados:leerActividadInvitados,
