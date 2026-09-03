@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r111';
+const APP_VER = '2026-09-03 · r112';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1330,26 +1330,58 @@ function diagActivo(){
     return sessionStorage.getItem(PREF_DIAG)==='1';
   }catch(e){ return false; }
 }
+/* El panel tiene que hablar TAMBIÉN cuando no pasa nada. La primera versión solo
+   pintaba fallos, así que el caso «la función ni se llamó» era indistinguible de «todo
+   bien»: exactamente el caso que teníamos. Ahora lleva un marcador de estado que se ve
+   siempre que ?diag=1, con quién eres, si te considera interno y cuántos eventos ha
+   generado, intentado y conseguido escribir. */
+const diagCuenta={eventos:0,intentos:0,ok:0,fallos:0,ultimo:''};
+function diagPanel(){
+  if(!diagActivo()) return null;
+  let c=$('#diagPanel');
+  if(!c){
+    c=document.createElement('div'); c.id='diagPanel';
+    c.style.cssText='position:fixed;left:8px;bottom:8px;z-index:9999;max-width:560px;max-height:60vh;'+
+      'overflow:auto;background:#101a26;border:1px solid #37506b;color:#cfe3ff;'+
+      'font:12px/1.5 ui-monospace,monospace;padding:10px 12px;border-radius:8px;'+
+      'box-shadow:0 6px 20px rgba(0,0,0,.5)';
+    c.innerHTML='<div style="font-weight:700;margin-bottom:6px">Modo diagnóstico'+
+      ' <span style="opacity:.65;font-weight:400">· ?diag=0 para apagarlo</span></div>'+
+      '<div id="diagEstado"></div><div id="diagLineas"></div>';
+    document.body.appendChild(c);
+  }
+  return c;
+}
+function diagRefrescar(){
+  if(!diagPanel()) return;
+  const e=$('#diagEstado'); if(!e) return;
+  let correos=[]; try{ correos=currentUserEmails(); }catch(x){}
+  let interno=null; try{ interno=esInterno(); }catch(x){}
+  e.innerHTML=[
+    ['versión', (typeof APP_VER!=='undefined'?APP_VER:'?')],
+    ['cuenta', (S.me&&S.me.mail)||'(sin sesión)'],
+    ['correos del token', correos.join(' , ')||'(ninguno)'],
+    ['¿interno?', interno===null?'?':(interno?'SÍ → escribe en Bitácora':'NO → escribe en la lista')],
+    ['destino', S.bitEscribe||'(sin definir)'],
+    ['cliente', S.cliente||S.clienteScope||'(ninguno)'],
+    ['eventos / intentos / ok / fallos',
+      diagCuenta.eventos+' / '+diagCuenta.intentos+' / '+diagCuenta.ok+' / '+diagCuenta.fallos],
+    ['último', diagCuenta.ultimo||'—']
+  ].map(r=>'<div><span style="opacity:.6">'+esc(r[0])+':</span> '+esc(String(r[1]))+'</div>').join('');
+}
 /* Un fallo que normalmente se traga. Siempre a la consola; en pantalla solo con ?diag=1. */
 function diagFallo(donde,detalle){
   const txt=donde+': '+detalle;
   console.warn('[diag] '+txt);
+  diagCuenta.fallos++;
   if(!diagActivo()) return false;
   try{
-    let c=$('#diagPanel');
-    if(!c){
-      c=document.createElement('div'); c.id='diagPanel';
-      c.style.cssText='position:fixed;left:8px;bottom:8px;z-index:9999;max-width:520px;'+
-        'background:#2a1414;border:1px solid #a33;color:#ffd9d9;font:12px/1.45 ui-monospace,monospace;'+
-        'padding:10px 12px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.5)';
-      c.innerHTML='<div style="font-weight:700;margin-bottom:6px">Modo diagnóstico'+
-        ' <span style="opacity:.7;font-weight:400">· añade ?diag=0 para apagarlo</span></div>';
-      document.body.appendChild(c);
-    }
+    const c=diagPanel(); if(!c) return false;
     const l=document.createElement('div');
-    l.style.cssText='margin-top:4px;word-break:break-word';
+    l.style.cssText='margin-top:4px;word-break:break-word;color:#ffbdbd';
     l.textContent='• '+txt;
-    c.appendChild(l);
+    ($('#diagLineas')||c).appendChild(l);
+    diagCuenta.ultimo=txt; diagRefrescar();
   }catch(e){}
   return true;
 }
@@ -2577,7 +2609,8 @@ async function siteId(h){
 /* Escribe un renglón. Si algo falla se calla: el invitado no puede arreglar nada de
    esto y un aviso técnico solo le estorbaría. Queda en la consola para diagnóstico. */
 async function actividadInvitado(evento,detalle){
-  if(_listaActFalla) return false;
+  if(_listaActFalla){ diagFallo('actividad del invitado','ya falló antes, no se reintenta'); return false; }
+  diagCuenta.intentos++; diagRefrescar();
   try{
     const h=await H();
     /* Sin resolver nada antes: identificadores fijos, POST directo. */
@@ -2595,6 +2628,7 @@ async function actividadInvitado(evento,detalle){
       diagFallo('actividad del invitado', r.status+' · '+(await r.text()).slice(0,300));
       return false;
     }
+    diagCuenta.ok++; diagCuenta.ultimo='escrito: '+evento; diagRefrescar();
     return true;
   }catch(e){ _listaActFalla=true; diagFallo('actividad del invitado', e.message); return false; }
 }
@@ -2622,6 +2656,7 @@ function logEvent(evento,detalle){
     rol:(S.role||'')+(_simRol?' (simulado por '+(S.me.mail||'')+')':''),
     cliente:S.cliente||''};
   S.bit.unshift(entry); renderBit();
+  diagCuenta.eventos++; diagRefrescar();
   /* Un invitado del cliente tiene SOLO LECTURA, y eso es deliberado: la bitácora es el
      registro interno de lo que Sipnology hace para todos sus clientes, y darle escritura
      a uno sería dejarle tocar la auditoría de los demás. Así que ni se intenta subir: el
@@ -10120,7 +10155,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pIdxAnio:pIdxAnio,anioDe:anioDe,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,
   repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
   idxEnTodos:idxEnTodos,idxVaciar:idxVaciar,RX_IDX_ANIO:RX_IDX_ANIO,
-  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,diagActivo:diagActivo,diagFallo:diagFallo,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
+  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,diagActivo:diagActivo,diagFallo:diagFallo,diagCuenta:diagCuenta,diagRefrescar:diagRefrescar,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
   leerActividadInvitados:leerActividadInvitados,
   listaPropietarios:listaPropietarios,esDueno:esDueno,esDuenoReal:esDuenoReal,isAdmin:isAdmin,
   renderPropietarios:renderPropietarios,listaAdmins:listaAdmins,
