@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r108';
+const APP_VER = '2026-09-02 · r110';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2489,9 +2489,8 @@ async function vaciarColaBit(){
 /* Lee la lista de actividad de invitados y la traduce al formato de la bitácora, para
    que la pantalla no tenga que saber que hay dos orígenes. */
 async function leerActividadInvitados(h,meses){
-  const id=await idListaActividad(h);
   const desde=new Date(); desde.setMonth(desde.getMonth()-(meses||3));
-  const url='https://graph.microsoft.com/v1.0/sites/'+(await siteId(h))+'/lists/'+id+
+  const url='https://graph.microsoft.com/v1.0/sites/'+SITE_ID_NOC+'/lists/'+LISTA_ACT_ID+
     '/items?expand=fields&$top=500&$orderby=createdDateTime desc';
   const r=await fetch(url,{headers:h});
   if(!r.ok) throw new Error('Graph '+r.status);
@@ -2519,16 +2518,15 @@ async function leerActividadInvitados(h,meses){
    editarlos ni borrarlos. Ni siquiera puede ver los suyos.
    El autor lo pone SharePoint, no la aplicación: nadie puede firmar como otro. */
 const LISTA_ACT='ActividadClientes';
-let _listaActId=null, _listaActFalla=false;
-async function idListaActividad(h){
-  if(_listaActId) return _listaActId;
-  const r=await fetch('https://graph.microsoft.com/v1.0/sites/'+(await siteId(h))+
-    '/lists?$filter=displayName eq \''+LISTA_ACT+'\'&$select=id,displayName',{headers:h});
-  if(!r.ok) throw new Error('Graph lists '+r.status);
-  const v=((await r.json()).value||[])[0];
-  if(!v) throw new Error('no existe la lista '+LISTA_ACT);
-  _listaActId=v.id; return _listaActId;
-}
+let _listaActFalla=false;
+/* El invitado NO puede enumerar listas: su nivel es «Solo agregar», que da AddListItems
+   y nada de lectura. Resolver la lista con /lists?$filter= era una LECTURA antes de la
+   escritura y devolvía 403 — el mismo error que ya cometí al enumerar Clientes/. Los
+   identificadores van fijos para que el POST sea la primera y única llamada. Si se
+   recrea el sitio o la lista hay que actualizarlos; pruebas_actividad.js los comprueba. */
+const SITE_ID_NOC='sipnologysacv.sharepoint.com,56b130fd-289f-49cc-ac95-9cd80e1411dd,14865151-1c0a-4dc4-9879-a22dc2306f04';
+const LISTA_ACT_ID='94c74b8a-b633-4af6-af5e-293bad8595b5';
+
 async function siteId(h){
   if(S.siteId) return S.siteId;
   const r=await fetch('https://graph.microsoft.com/v1.0/sites/'+cfg.host+':'+cfg.sitePath,{headers:h});
@@ -2542,9 +2540,9 @@ async function actividadInvitado(evento,detalle){
   if(_listaActFalla) return false;
   try{
     const h=await H();
-    const id=await idListaActividad(h);
-    const r=await fetch('https://graph.microsoft.com/v1.0/sites/'+(await siteId(h))+
-      '/lists/'+id+'/items',{method:'POST',
+    /* Sin resolver nada antes: identificadores fijos, POST directo. */
+    const r=await fetch('https://graph.microsoft.com/v1.0/sites/'+SITE_ID_NOC+
+      '/lists/'+LISTA_ACT_ID+'/items',{method:'POST',
       headers:Object.assign({'Content-Type':'application/json'},h),
       body:JSON.stringify({fields:{Title:String(evento||'').slice(0,240),
         Cliente:String(S.clienteScope||S.cliente||'').slice(0,80),
@@ -5505,7 +5503,7 @@ const ESQUEMAS={
   clientesExternos:{titulo:'Usuarios cliente (acceso externo)',cols:[['correo','Correo (invitado B2B)',30],['nombre','Nombre',22],['clienteId','Cliente que puede ver',14]],
     nota:'Estos usuarios deben existir como INVITADOS en Microsoft Entra (B2B). Aquí solo se declara qué cliente puede ver cada uno; el acceso real lo aplican los permisos de SharePoint.'}
 };
-const LISTAS={propietarios:'Propietarios (correo por línea)',tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
+const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
   admins:'Administradores (correo por línea)',
   catsConTiempos:'Categorías que sí llevan tiempo de falla y afectación (una por línea)',
   estadosCRQ:'Estados de un CRQ documentado en la plataforma (uno por línea)',
@@ -6288,8 +6286,10 @@ function renderCat(){
   if(k==='clientes') return renderClientes(box,ro);
   if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
-  if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
+  /* Propietarios va ANTES del dibujo genérico de listas: si cayera ahí, un
+     administrador vería el campo editable y solo descubriría que no puede al guardar. */
   if(k==='propietarios') return renderPropietarios(box);
+  if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='alertas') return renderAlertas(box,ro);
   if(k==='respaldo') return renderRespaldo(box);
   if(k==='impCrq') return renderImportDS(box,DATASETS.crq);
@@ -10080,7 +10080,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pIdxAnio:pIdxAnio,anioDe:anioDe,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,
   repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
   idxEnTodos:idxEnTodos,idxVaciar:idxVaciar,RX_IDX_ANIO:RX_IDX_ANIO,
-  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,idListaActividad:idListaActividad,
+  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
   leerActividadInvitados:leerActividadInvitados,
   listaPropietarios:listaPropietarios,esDueno:esDueno,esDuenoReal:esDuenoReal,isAdmin:isAdmin,
   renderPropietarios:renderPropietarios,listaAdmins:listaAdmins,
