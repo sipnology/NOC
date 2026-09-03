@@ -1112,7 +1112,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-02 · r110';
+const APP_VER = '2026-09-02 · r111';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1313,6 +1313,46 @@ function fechaHumana(iso,h24){
 }
 
 /* ---- UI helpers ---- */
+/* ---- Modo diagnóstico ----
+   El invitado usa otro equipo y su consola no la ve nadie. Cuando algo le falla, la
+   aplicación se calla a propósito —no puede arreglarlo y un mensaje técnico solo le
+   estorbaría—, pero eso me dejó dos veces adivinando por qué no llegaba su actividad.
+   Con ?diag=1 esos fallos silenciosos se pintan en pantalla, con el código y la
+   respuesta del servidor, para poder mandar una captura en vez de conjeturar.
+   Se recuerda durante la sesión (no en localStorage): es para diagnosticar un rato,
+   no para dejarlo puesto. */
+const PREF_DIAG='sipnoc_diag';
+function diagActivo(){
+  try{
+    const q=new URLSearchParams(location.search||'');
+    if(q.get('diag')==='1'){ sessionStorage.setItem(PREF_DIAG,'1'); return true; }
+    if(q.get('diag')==='0'){ sessionStorage.removeItem(PREF_DIAG); return false; }
+    return sessionStorage.getItem(PREF_DIAG)==='1';
+  }catch(e){ return false; }
+}
+/* Un fallo que normalmente se traga. Siempre a la consola; en pantalla solo con ?diag=1. */
+function diagFallo(donde,detalle){
+  const txt=donde+': '+detalle;
+  console.warn('[diag] '+txt);
+  if(!diagActivo()) return false;
+  try{
+    let c=$('#diagPanel');
+    if(!c){
+      c=document.createElement('div'); c.id='diagPanel';
+      c.style.cssText='position:fixed;left:8px;bottom:8px;z-index:9999;max-width:520px;'+
+        'background:#2a1414;border:1px solid #a33;color:#ffd9d9;font:12px/1.45 ui-monospace,monospace;'+
+        'padding:10px 12px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.5)';
+      c.innerHTML='<div style="font-weight:700;margin-bottom:6px">Modo diagnóstico'+
+        ' <span style="opacity:.7;font-weight:400">· añade ?diag=0 para apagarlo</span></div>';
+      document.body.appendChild(c);
+    }
+    const l=document.createElement('div');
+    l.style.cssText='margin-top:4px;word-break:break-word';
+    l.textContent='• '+txt;
+    c.appendChild(l);
+  }catch(e){}
+  return true;
+}
 function toast(msg,kind,ms){
   const d=document.createElement('div'); if(kind) d.className=kind;
   d.textContent=msg; $('#toast').appendChild(d);
@@ -2552,11 +2592,11 @@ async function actividadInvitado(evento,detalle){
       /* Una sola queja por sesión: si no hay permiso, no lo va a haber en el siguiente
          clic tampoco, y reintentar en cada pantalla sería castigar al navegador. */
       _listaActFalla=true;
-      console.warn('actividad del invitado no registrada:',r.status,(await r.text()).slice(0,200));
+      diagFallo('actividad del invitado', r.status+' · '+(await r.text()).slice(0,300));
       return false;
     }
     return true;
-  }catch(e){ _listaActFalla=true; console.warn('actividad del invitado:',e.message); return false; }
+  }catch(e){ _listaActFalla=true; diagFallo('actividad del invitado', e.message); return false; }
 }
 
 /* ---- Registro de navegación ----
@@ -10080,7 +10120,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   pIdxAnio:pIdxAnio,anioDe:anioDe,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,
   repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
   idxEnTodos:idxEnTodos,idxVaciar:idxVaciar,RX_IDX_ANIO:RX_IDX_ANIO,
-  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
+  actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,diagActivo:diagActivo,diagFallo:diagFallo,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
   leerActividadInvitados:leerActividadInvitados,
   listaPropietarios:listaPropietarios,esDueno:esDueno,esDuenoReal:esDuenoReal,isAdmin:isAdmin,
   renderPropietarios:renderPropietarios,listaAdmins:listaAdmins,
