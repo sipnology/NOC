@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-04 · r120';
+const APP_VER = '2026-09-04 · r121';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1712,9 +1712,13 @@ async function leerIndice(h,cli){
   };
   /* Los años y el índice antiguo se piden a la vez; el orden de mezcla se conserva
      después, que es lo que importa para que el del año gane al viejo. */
+  /* El archivo antiguo no depende de saber qué periodos hay, así que se pide desde el
+     principio, a la vez que la lista: esperaba su turno por el orden en que estaba
+     escrito, no porque hiciera falta. */
+  const pViejo=gGetJsonCompat(h,pIdx(cli)).catch(()=>null);
   const anios=await aniosDe(h,cli);
   const porAnio=await Promise.all(anios.map(a=>gGetJson(h,pIdxAnio(cli,a)).catch(()=>null)));
-  const viejo=await gGetJsonCompat(h,pIdx(cli)).catch(()=>null);
+  const viejo=await pViejo;
   porAnio.forEach(arr=>mete(arr,'anio'));
   mete(viejo,'viejo');
   return orden.map(id=>porId[id]);
@@ -3115,16 +3119,20 @@ async function cambiarCliente(id){
    salen a la vez. Se usa allSettled y no all a propósito: si un módulo falla, los demás
    ya están cargados y la pantalla se pinta con lo que hay, en vez de quedarse vacía por
    un archivo. El que falle se dice, no se esconde. */
-async function cargarDatos(silent,saltarInv){
+async function cargarDatos(silent,saltarInv,soloLeer){
   procesando(true,'Cargando información…');
-  try{ return await _cargarDatos(silent,saltarInv); }
+  try{ return await _cargarDatos(silent,saltarInv,soloLeer); }
   finally{ procesando(false); }
 }
-async function _cargarDatos(silent,saltarInv){
+/* «soloLeer» trae los datos pero NO pinta. Existe por el arranque: los datos se piden a
+   la vez que el catálogo, y pintar necesita el catálogo. Si la lectura terminara antes,
+   pintaría sin sedes ni categorías —desplegables vacíos, etiquetas en blanco— y quien
+   estuviera mirando lo vería un instante antes de que se arreglara solo. */
+async function _cargarDatos(silent,saltarInv,soloLeer){
   const tareas=[['índice', idxPull(true)]];
-  if(saltarInv) renderInv();
+  if(saltarInv){ if(!soloLeer) renderInv(); }
   else if(moduloActivo('inventario')) tareas.push(['inventario', invPull(true)]);
-  else { S.inv=[]; renderInv(); }
+  else { S.inv=[]; if(!soloLeer) renderInv(); }
   [['crq','crq',crqPull],['sit','sit',sitPull],['fab','fab',fabPull],['rma','rma',rmaPull]]
     .forEach(([mod,campo,fn])=>{
       if(moduloActivo(mod)) tareas.push([mod, fn(true)]); else S[campo]=[];
@@ -3137,12 +3145,19 @@ async function _cargarDatos(silent,saltarInv){
     diagFallo('carga de datos', fallos.join(' · '));
     toast('No se pudo cargar: '+fallos.join(', '),'warn',9000);
   }
-  poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT(); renderFAB(); renderRMA();
-  renderReportes();   /* repinta conservando lo elegido; ya no lo tira a la basura */
+  if(soloLeer) return true;
+  pintarTodo();
   /* Se ofrece una sola vez por sesión, y con el catálogo ya cargado: recuperar una
      captura necesita las sedes y las categorías para repoblar los desplegables. */
   if(!S._borradorOfrecido){ S._borradorOfrecido=true; try{ ofrecerBorrador(); }catch(e){} }
   if(!silent) toast('Datos actualizados.');
+}
+/* Pintar todo lo que depende de los datos ya cargados. Separado de la lectura para que
+   el arranque pueda leer primero y pintar cuando el catálogo esté listo. */
+function pintarTodo(){
+  poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT(); renderFAB(); renderRMA();
+  renderReportes();   /* repinta conservando lo elegido; ya no lo tira a la basura */
+  renderInv();
 }
 /* Migración desde las rutas anteriores. Los expedientes NO se mueven: cada ticket guarda
    su propia ruta, así que los históricos siguen abriéndose desde donde están. */
@@ -3291,6 +3306,19 @@ async function unlockApp(){
   $('#tRespAp').value=S.me.name||S.me.mail;
   sessionStorage.setItem(AUTH_CLAVE,String(Date.now()));
   $('#authGate').classList.add('hide'); $('#topBar').classList.remove('hide'); $('#app').classList.remove('hide');
+  /* El catálogo y los datos no dependen uno del otro para LEERSE: los datos solo
+     necesitan saber de qué cliente son, y el catálogo hace falta para PINTARLOS. Iban
+     en fila —0,9 s y luego 1,5 s— y se pueden solapar.
+     Solo para cuentas internas. Un operador o un administrador tienen el cliente activo
+     guardado en su navegador, así que se sabe al instante; el de un cliente externo sale
+     del catálogo, y empezar a leer antes sería arriesgarse a pedir los datos del cliente
+     equivocado. Para él, el arranque sigue siendo el de siempre: primero el catálogo. */
+  let cliPrevio='';
+  try{ cliPrevio=localStorage.getItem(PREF_CLI)||''; }catch(e){}
+  const pareceInterno=/@sipnology\.com\.mx$/i.test(S.me.mail||'');
+  const pDatos=(pareceInterno && cliPrevio)
+    ? (S.cliente=cliPrevio, cargarDatos(true,false,true).catch(e=>{ diagFallo('precarga de datos', e.message); }))
+    : null;
   await catalogoPull(true);
   /* Siempre se entra con el perfil real; el cambio de vista se hace después
      desde la insignia del encabezado. */
@@ -3310,7 +3338,18 @@ async function unlockApp(){
      venido a ver. Se hacen después, con la pantalla ya pintada.
      Van encadenadas entre sí, no sueltas: las dos tocan los mismos archivos y lanzarlas
      a la vez sería pelearse consigo mismo por el eTag. */
-  await cargarDatos(true);
+  /* Si la precarga salió, se espera a que termine. Si el catálogo reveló que el cliente
+     activo es otro —le cambiaron el alcance, o el guardado ya no existe— se vuelve a
+     cargar con el correcto: leer de más una vez es preferible a enseñar datos de quien
+     no toca. */
+  if(pDatos){
+    await pDatos;
+    /* Si el catálogo reveló que el cliente activo es otro, lo leído no sirve. */
+    if(S.cliente!==cliPrevio) await cargarDatos(true);
+    else pintarTodo();
+  }else{
+    await cargarDatos(true);
+  }
   S._q = S._q.then(async()=>{
     try{ await migrarSiHaceFalta(); }catch(e){ console.warn('migración:',e.message); }
     try{ await repartirIndicesSiHaceFalta(await H()); }catch(e){ console.warn('reparto:',e.message); }
@@ -10724,7 +10763,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
   CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
-  respaldoDe:respaldoDe,enParalelo:enParalelo,marcarMigracionResuelta:marcarMigracionResuelta,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
+  respaldoDe:respaldoDe,enParalelo:enParalelo,pintarTodo:pintarTodo,marcarMigracionResuelta:marcarMigracionResuelta,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
   tablaBackups:tablaBackups,selloLocal:selloLocal,selloArchivo:selloArchivo,
