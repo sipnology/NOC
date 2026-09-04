@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-04 · r116';
+const APP_VER = '2026-09-04 · r119';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1662,21 +1662,39 @@ const CARPETAS_CLI=[D_TICKETS,D_INV,D_CAT,D_USR,D_CRQ,D_SIT,D_FAB,D_RMA,D_BK];
    El archivo antiguo se sigue leyendo mientras exista, para no depender de que la
    migración haya corrido. */
 const pIdx     =c=>pCli(c)+D_TICKETS+'/indice.json';            // el de antes, solo lectura
+/* El nombre habla de «año» por historia: la función solo concatena, así que sirve
+   igual para «2026» que para «2026-08». */
 const pIdxAnio =(c,a)=>pCli(c)+D_TICKETS+'/indice-'+a+'.json';
-const RX_IDX_ANIO=/^indice-(\d{4})\.json$/i;
-/* A qué ejercicio pertenece un ticket: al de su fecha de apertura. No cambia porque se
-   cierre en enero del año siguiente, y así el expediente y el índice van a la par. */
+/* Se reconocen los dos formatos: el anual, que fue el primer reparto, y el mensual, que
+   es el que se escribe ahora. Un sistema con historia tendrá de los dos hasta que cada
+   ticket pase por su primer guardado. */
+const RX_IDX_ANIO=/^indice-(\d{4}(?:-\d{2})?)\.json$/i;
+
+/* En qué archivo del índice vive un ticket: en el de su mes de apertura.
+   Antes era el año, y guardar CUALQUIER ticket reescribía el ejercicio entero: medido,
+   952 KB por guardado con 2000 tickets, creciendo en proporción directa. Por mes, el
+   archivo se mantiene pequeño por muy grande que sea el año.
+   El periodo lo fija la fecha de APERTURA y no cambia porque el ticket se cierre en otro
+   mes: así el expediente y el índice viven siempre en el mismo sitio. */
 function anioDe(t){
-  const f=String((t&&(t.fechaAp||t.fecha))||'').slice(0,4);
-  return /^\d{4}$/.test(f)? f : String(ahoraMx().getFullYear());
+  const f=String((t&&(t.fechaAp||t.fecha))||'').slice(0,7);
+  if(/^\d{4}-\d{2}$/.test(f)) return f;
+  const d=ahoraMx();
+  return d.getFullYear()+'-'+pad2(d.getMonth()+1);
 }
+/* Solo el año, para lo que necesite hablar de ejercicios. */
+function anioSolo(t){ return String(anioDe(t)).slice(0,4); }
 /* Qué años tiene ese cliente en disco. Si no se puede listar la carpeta se devuelve
    vacío y la lectura cae en el archivo antiguo, que es lo que había antes. */
 async function aniosDe(h,cli){
   try{
     return (await gList(h,pCli(cli)+D_TICKETS))
       .map(f=>String(f.name||'').match(RX_IDX_ANIO))
-      .filter(Boolean).map(m=>m[1]).sort();
+      /* Ordenados de menos a más específico: «2026» antes que «2026-08». leerIndice
+         aplica lo que va leyendo, así que el archivo mensual pisa al anual si el mismo
+         ticket estuviera en los dos por una migración a medias. */
+      .filter(Boolean).map(m=>m[1])
+      .sort((a,b)=> a.length!==b.length? a.length-b.length : (a<b?-1:1));
   }catch(e){ return []; }
 }
 /* Lee el índice completo de un cliente: todos sus años más el archivo antiguo.
@@ -2528,9 +2546,17 @@ async function idxVaciar(h,cli){
 /* Aplica el mismo cambio a todos los índices de un cliente: sus años y el archivo
    antiguo. Se usa para borrar y para reetiquetar, que son operaciones que no saben de
    antemano en qué ejercicio cayó cada ticket. Solo se escribe donde algo cambió. */
-async function idxEnTodos(h,cli,mutar){
+async function idxEnTodos(h,cli,mutar,periodos){
   let tocados=0;
-  const rutas=(await aniosDe(h,cli)).map(a=>pIdxAnio(cli,a));
+  /* Si quien llama sabe en qué periodos están los tickets afectados —y al borrar SÍ se
+     sabe, porque cada uno lleva su fecha—, se tocan solo esos. Desde que el índice se
+     parte por mes, recorrerlos todos son doce archivos por año en vez de uno, y eso
+     convertía un borrado de veinticinco tickets del mismo mes en veintiocho viajes.
+     Sin la lista se recorre todo, que es lo que necesita renombrar un cliente. */
+  const todos=(await aniosDe(h,cli));
+  const rutas=(Array.isArray(periodos)&&periodos.length
+      ? todos.filter(a=>periodos.indexOf(a)!==-1 || periodos.some(p=>String(p).slice(0,4)===a))
+      : todos).map(a=>pIdxAnio(cli,a));
   for(const ruta of rutas){
     const r=await gActualizarJson(h,ruta,disco=>mutar(Array.isArray(disco)?disco:[]));
     if(r.escrito) tocados++;
@@ -2541,36 +2567,106 @@ async function idxEnTodos(h,cli,mutar){
 }
 
 /* Escritura serializada leer-modificar-escribir (last-write-wins, volumen bajo) */
+/* Guardar un ticket en el índice.
+   Cada escritura reescribe el archivo del año COMPLETO, que es la única forma de
+   modificar un JSON en SharePoint. Uno a uno eso costaba, medido con 2000 tickets,
+   casi un megabyte por ticket: cerrar treinta de golpe movía 30 MB y tardaba cuarenta
+   segundos. Así que las entradas se acumulan y se aplican TODAS en una sola pasada.
+   La memoria se actualiza al instante —la pantalla no espera a la red— y la promesa
+   que se devuelve se cumple cuando el archivo quedó escrito, para que quien haga
+   «await idxUpsert(...)» siga teniendo la garantía que tenía. */
+let _idxPend=[], _idxTimer=null, _idxProm=null, _idxAvisar=null, _idxRetenido=0;
+/* Una operación por lotes retiene el volcado mientras dura. Sin esto no serviría de
+   nada agrupar: el bucle del cierre masivo espera a la red en cada vuelta, y entre una
+   y otra el temporizador saltaría, escribiendo el índice una vez por ticket igual que
+   antes. Se suelta en un «finally», para que un fallo a mitad no deje el índice
+   retenido y las entradas sin subir. */
+function idxRetener(){ _idxRetenido++; }
+function idxSoltar(){
+  _idxRetenido=Math.max(0,_idxRetenido-1);
+  if(_idxRetenido===0) return volcarIdx();
+  return S._q;
+}
 function idxUpsert(t){
   const e=idxEntry(t);
   const i=S.idx.findIndex(x=>x.id===e.id);
+  /* De qué periodo venía. Solo hace falta barrer el archivo anterior si el ticket se ha
+     movido de mes —cosa que únicamente pasa al corregir la fecha de apertura—, y así se
+     evita leer los doce meses en cada guardado para comprobar algo que casi nunca ocurre. */
+  const previo=(i>=0)? anioDe(S.idx[i]) : null;
   if(i>=0) S.idx[i]=e; else S.idx.unshift(e);
+  _idxPend.push({e:e,previo:previo});
+  if(!_idxProm) _idxProm=new Promise(r=>{ _idxAvisar=r; });
+  /* Un tick de margen: un bucle que guarda treinta seguidos entra entero en el mismo
+     grupo, y un guardado suelto sale casi al instante. */
+  if(!_idxRetenido){
+    if(_idxTimer) clearTimeout(_idxTimer);
+    _idxTimer=setTimeout(volcarIdx,0);
+  }
+  return _idxProm;
+}
+function volcarIdx(){
+  if(_idxTimer){ clearTimeout(_idxTimer); _idxTimer=null; }
+  if(!_idxPend.length) return S._q;
+  const lote=_idxPend; _idxPend=[];
+  const avisar=_idxAvisar; _idxProm=null; _idxAvisar=null;
+  /* La última versión de cada ticket es la que vale: si en el mismo grupo se guardó dos
+     veces el mismo folio, no tiene sentido escribir la primera. */
+  const ultima={};
+  lote.forEach(x=>{
+    /* Si el mismo folio se guardó dos veces en la tanda, vale la última versión, pero el
+       periodo del que venía es el de la PRIMERA: es el archivo donde sigue estando. */
+    const antes=ultima[x.e.id];
+    ultima[x.e.id]={e:x.e, previo: antes? antes.previo : x.previo};
+  });
+  const entradas=Object.keys(ultima).map(k=>ultima[k]);
+  /* Un grupo por cliente y periodo: cada archivo se toca una sola vez. */
+  const porArchivo={};
+  entradas.forEach(x=>{
+    const clave=x.e.clienteId+'|'+anioDe(x.e);
+    (porArchivo[clave]=porArchivo[clave]||[]).push(x);
+  });
   S._q = S._q.then(async()=>{
     const h=await H();
-    const anio=anioDe(e), ruta=pIdxAnio(e.clienteId,anio);
-    /* La cola serializa lo de ESTA pestaña; el eTag protege de las demás. Si un
-       compañero grabó otro ticket entre la lectura y la escritura, se relee y se vuelve
-       a aplicar: acaban los dos en el índice, que es lo que tiene que pasar. */
-    await gActualizarJson(h,ruta,disco=>{
-      const a=Array.isArray(disco)?disco:[];
-      const j=a.findIndex(x=>x.id===e.id); if(j>=0) a[j]=e; else a.unshift(e);
-      return a;
-    });
-    /* Editar la apertura puede mover el ticket de ejercicio. Si no se limpiara el año
-       anterior, quedaría en los dos y el conteo saldría inflado. Se barre también el
-       archivo antiguo, para que un ticket migrado no reviva desde allí. */
-    const otros=(await aniosDe(h,e.clienteId)).filter(a=>a!==anio);
-    for(const a of otros){
-      await gActualizarJson(h,pIdxAnio(e.clienteId,a),disco=>{
-        const arr=Array.isArray(disco)?disco:[];
-        return arr.some(x=>x.id===e.id)? arr.filter(x=>x.id!==e.id) : undefined;
+    for(const clave of Object.keys(porArchivo)){
+      const grupo=porArchivo[clave];
+      const cli=clave.split('|')[0], anio=clave.split('|')[1];
+      /* La cola serializa lo de ESTA pestaña; el eTag protege de las demás. Si un
+         compañero grabó otro ticket entre la lectura y la escritura, se relee y se
+         vuelve a aplicar: acaban los dos en el índice, que es lo que tiene que pasar. */
+      await gActualizarJson(h,pIdxAnio(cli,anio),disco=>{
+        const a=Array.isArray(disco)?disco:[];
+        grupo.forEach(x=>{
+          const j=a.findIndex(y=>y.id===x.e.id); if(j>=0) a[j]=x.e; else a.unshift(x.e);
+        });
+        return a;
       });
+      const ids=grupo.map(x=>x.e.id);
+      const quitar=async ruta=>{
+        await gActualizarJson(h,ruta,disco=>{
+          const arr=Array.isArray(disco)?disco:[];
+          return arr.some(x=>ids.indexOf(x.id)!==-1)? arr.filter(x=>ids.indexOf(x.id)===-1) : undefined;
+        },ruta===pIdx(cli)? {compat:true} : undefined);
+      };
+      /* Qué archivos hay que limpiar para que el ticket no quede en dos sitios:
+         1. El índice ANUAL de su año, que es donde vivía antes de partir por meses. Cada
+            guardado migra su propio ticket, sin necesidad de una conversión masiva.
+         2. El mes del que venga, si alguien corrigió la fecha de apertura.
+         3. El archivo antiguo de todos, anterior a cualquier reparto.
+         Y solo esos: barrer los doce meses en cada guardado costaría más que el propio
+         guardado, que es justo lo que se estaba arreglando. */
+      const limpiar={};
+      limpiar[pIdxAnio(cli,String(anio).slice(0,4))]=true;
+      grupo.forEach(x=>{ if(x.previo && x.previo!==anio) limpiar[pIdxAnio(cli,x.previo)]=true; });
+      delete limpiar[pIdxAnio(cli,anio)];
+      limpiar[pIdx(cli)]=true;
+      for(const ruta of Object.keys(limpiar)) await quitar(ruta);
     }
-    await gActualizarJson(h,pIdx(e.clienteId),disco=>{
-      const arr=Array.isArray(disco)?disco:[];
-      return arr.some(x=>x.id===e.id)? arr.filter(x=>x.id!==e.id) : undefined;
-    },{compat:true});
-  }).catch(err=>toast('Índice no sincronizado: '+err.message,'err',8000));
+  }).then(()=>{ if(avisar) avisar(true); })
+    .catch(err=>{
+      toast('Índice no sincronizado: '+err.message,'err',8000);
+      if(avisar) avisar(false);
+    });
   return S._q;
 }
 /* Si el usuario es cliente externo, solo ve los tickets de su cliente */
@@ -4202,6 +4298,12 @@ async function cerrarTicketsLote(lista,btn){
   if(!confirm('Se van a cerrar '+lista.length+' ticket(s) con la misma nota y la misma hora.\n\n'+
     'Folios: '+lista.slice(0,10).map(t=>t.id).join(', ')+(lista.length>10?' …':'')+'\n\n¿Continuar?')) return;
   if(btn) busy(btn,true);
+  idxRetener();
+  /* Soltar una sola vez, pase lo que pase. Si un fallo a mitad se llevara por delante el
+     «soltar», el índice quedaría retenido para el resto de la sesión y los guardados
+     siguientes no subirían nunca. */
+  let _soltado=false;
+  const soltarIdx=async()=>{ if(_soltado) return; _soltado=true; await idxSoltar(); };
   const prog=$('#loteEstado');
   const notaHtml='<p>'+esc(nota).replace(/\n+/g,'</p><p>')+'</p>';
   const hechos=[], fallos=[];
@@ -4230,10 +4332,12 @@ async function cerrarTicketsLote(lista,btn){
         t.historial.push({cuando:ahoraISO,usuario:S.me.mail,accion:'CIERRE EN LOTE',
           status:'CERRADO',nota:notaPausa+notaHtml,observaciones:'',archivos:[]});
         await gPutJson(h,ruta+'/ticket.json',t);
-        await idxUpsert(t);
+        /* Sin await: las entradas se acumulan y se escriben todas juntas al final. */
+        idxUpsert(t);
         hechos.push(t.id);
       }catch(err){ fallos.push(e.id+' ('+err.message+')'); }
     }
+    await soltarIdx();
     limpiarSelSeg();
     if(hechos.length) logEvent('TICKETS_CERRADOS_LOTE',hechos.length+' ticket(s) · '+fecha+' '+hora+
       ' · folios: '+hechos.slice(0,20).join(', ')+(hechos.length>20?' …':'')+' · '+nota.slice(0,140));
@@ -4242,7 +4346,7 @@ async function cerrarTicketsLote(lista,btn){
       fallos.slice(0,2).join('; ') : '')+'.',fallos.length?'warn':null,fallos.length?14000:7000);
     renderSeg(); renderDash();
   }catch(e){ toast('Error al cerrar en lote: '+e.message,'err',9000); }
-  finally{ if(btn) busy(btn,false); if(prog) prog.textContent=''; }
+  finally{ soltarIdx(); if(btn) busy(btn,false); if(prog) prog.textContent=''; }
 }
 
 /* Barra de acciones de borrado: aparece bajo la tabla, no como menú flotante,
@@ -4748,7 +4852,10 @@ async function borrarTicketsLote(lista,btn){
     const ids=new Set(lista.map(t=>t.id));
     const porCli={}; lista.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(t); });
     for(const cli of Object.keys(porCli)){
-      await idxEnTodos(h,cli,a=>a.some(x=>ids.has(x.id))? a.filter(x=>!ids.has(x.id)) : undefined);
+      /* Los periodos donde pueden estar: el mes de cada ticket y el ejercicio anual del
+         que quizá no se hayan mudado todavía. No hace falta abrir los demás. */
+      const periodos=[...new Set(porCli[cli].map(t=>anioDe(t)))];
+      await idxEnTodos(h,cli,a=>a.some(x=>ids.has(x.id))? a.filter(x=>!ids.has(x.id)) : undefined,periodos);
     }
     S.idx=S.idx.filter(x=>!ids.has(x.id));
     limpiarSelSeg();
@@ -5995,6 +6102,32 @@ const rutaBackup=(cli,cuando)=>pCli(cli)+D_BK+'/Respaldo_'+sanitizeName(cli)+'_'
   selloArchivo(cuando)+'.json';
 /* Un archivo suelto por encima de este tamaño se referencia pero no se incrusta. */
 const RESP_MAX_ARCHIVO=25*1024*1024;
+/* Ejecuta una lista de tareas con varias en vuelo a la vez, pero no todas.
+   El navegador solo abre unas seis conexiones por servidor: lanzar dos mil peticiones de
+   golpe no las hace más rápidas, solo llena una cola invisible y deja el aviso de
+   progreso mintiendo. Con un tope de seis se aprovecha todo el ancho disponible y el
+   contador sigue significando algo.
+   Los resultados vuelven EN EL ORDEN de la lista, no en el orden en que terminaron: un
+   respaldo cuyos tickets salieran barajados sería un respaldo distinto cada vez. */
+const EN_VUELO=6;
+async function enParalelo(lista,fn,avisar){
+  const salida=new Array(lista.length);
+  let siguiente=0, hechos=0;
+  const obrero=async()=>{
+    while(true){
+      const i=siguiente++;
+      if(i>=lista.length) return;
+      try{ salida[i]=await fn(lista[i],i); }
+      catch(e){ salida[i]=undefined; }
+      hechos++;
+      if(avisar) avisar(hechos,lista.length,lista[i]);
+    }
+  };
+  const obreros=[];
+  for(let k=0;k<Math.min(EN_VUELO,lista.length);k++) obreros.push(obrero());
+  await Promise.all(obreros);
+  return salida;
+}
 async function respaldoDe(cli,avisar){
   const h=await H();
   const leer=async r=>{ try{ return await gGetJsonCompat(h,r); }catch(e){ return null; } };
@@ -6008,20 +6141,20 @@ async function respaldoDe(cli,avisar){
   const fab=(await leer(pFab(cli)))||[];
   const rma=(await leer(pRma(cli)))||[];
   const rep=(await leer(pRep(cli)))||[];
-  const tickets=[]; let n=0;
-  for(const e of idx){
-    n++; if(avisar) avisar('leyendo expediente '+n+' de '+idx.length);
+  /* Los expedientes se leían de uno en uno: con 2400 tickets eran 4800 viajes en fila y
+     diez minutos de espera. Se leen de seis en seis, que es lo que el navegador permite. */
+  const tickets=(await enParalelo(idx, async e=>{
     const ruta=e.ruta||(pCasos(cli)+'/'+String(e.fechaAp).slice(0,7)+'/'+sanitizeName(e.id));
     const t=await leer(ruta+'/ticket.json');
-    if(t) tickets.push(t); else tickets.push(Object.assign({},e,{_soloIndice:true}));
-  }
+    return t || Object.assign({},e,{_soloIndice:true});
+  }, (n,tot)=>{ if(avisar) avisar('leyendo expediente '+n+' de '+tot); })).filter(Boolean);
   /* Las evidencias viajan dentro del respaldo, en base64: un respaldo al que le faltan
      los archivos no sirve para reconstruir el expediente ante una auditoría. */
-  const adj=[]; let pesados=[], total=0, i=0;
+  let pesados=[], total=0;
   const lista=[];
   tickets.forEach(t=>(t.adjuntos||[]).forEach(a=>lista.push({t:t,a:a})));
-  for(const {t,a} of lista){
-    i++; if(avisar) avisar('descargando evidencia '+i+' de '+lista.length+': '+a.nombre);
+  /* Las evidencias, igual: de seis en seis y conservando el orden. */
+  const adj=(await enParalelo(lista, async ({t,a})=>{
     const ruta=(t.ruta||'')+'/'+a.nombre;
     const reg={ticket:t.id, archivo:a.nombre, tam:a.tam||0, ruta:ruta, tipo:a.tipo||'', datos:''};
     try{
@@ -6038,8 +6171,9 @@ async function respaldoDe(cli,avisar){
         }
       } else reg.falta=true;
     }catch(e){ reg.error=e.message; }
-    adj.push(reg);
-  }
+    return reg;
+  }, (n,tot,x)=>{ if(avisar) avisar('descargando evidencia '+n+' de '+tot+': '+x.a.nombre); }))
+    .filter(Boolean);
   return {formato:'respaldo-noc-sipnology', version:RESP_VER, cliente:cli,
     generado:{por:S.me.mail,cuando:new Date().toISOString(),app:APP_VER},
     catalogo:cat, inventario:inv, indice:idx, tickets:tickets, crq:crq, sit:sit,
@@ -10461,6 +10595,7 @@ function enlazarEventos(){
   /* Lo que estuviera esperando a agruparse se manda ya. Si no llega, sigue en la cola
      del navegador y se sube en la próxima sesión: agrupar no puede costar registros. */
   try{ volcarBit(); }catch(e){}
+  try{ volcarIdx(); }catch(e){}
 }));
 /* Si el navegador recupera la red, no hay que esperar a la siguiente sesión. */
 window.addEventListener('online',()=>{ vaciarColaBit().catch(e=>{
@@ -10521,7 +10656,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
   CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
   moduloDeSeccion:moduloDeSeccion,
-  pIdxAnio:pIdxAnio,anioDe:anioDe,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,
+  pIdxAnio:pIdxAnio,anioDe:anioDe,anioSolo:anioSolo,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,volcarIdx:volcarIdx,idxRetener:idxRetener,idxSoltar:idxSoltar,
   repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
   idxEnTodos:idxEnTodos,idxVaciar:idxVaciar,RX_IDX_ANIO:RX_IDX_ANIO,
   actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,diagActivo:diagActivo,diagFallo:diagFallo,diagCuenta:diagCuenta,diagRefrescar:diagRefrescar,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
@@ -10555,7 +10690,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
   CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
-  respaldoDe:respaldoDe,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
+  respaldoDe:respaldoDe,enParalelo:enParalelo,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
   tablaBackups:tablaBackups,selloLocal:selloLocal,selloArchivo:selloArchivo,
