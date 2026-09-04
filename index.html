@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-04 · r119';
+const APP_VER = '2026-09-04 · r120';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2005,15 +2005,19 @@ function catSucio(){ return pendientesCatalogo().length>0; }
 async function catalogoPull(silent){
   try{
     const h=await H();
-    const g=await gGetJson(h,P_CAT);
+    /* El catálogo de Sipnology y la lista de clientes no dependen uno del otro, y se
+       pedían en fila: dos viajes de 220 ms encadenados por costumbre, no por necesidad. */
+    const [g, idsCrudos] = await Promise.all([
+      gGetJson(h,P_CAT),
+      gList(h,'Clientes').then(l=>l.filter(f=>f.folder).map(f=>f.name)).catch(()=>[])
+    ]);
     /* En memoria solo entra lo de Sipnology. Si el archivo trae secciones de cliente,
        son restos del catálogo común: dejarlas vivas es lo que rearmaba la migración. */
     S.sobrantesSistema=sobrantesGlobales(g);
     S.catGlobal = g ? soloGlobal(g)
                     : {admins:CAT_DEFAULT.admins.slice(), logoOperador:CAT_DEFAULT.logoOperador, version:0};
     /* Listar la carpeta devuelve solo los clientes que este usuario puede ver. */
-    let ids=[];
-    try{ ids=(await gList(h,'Clientes')).filter(f=>f.folder).map(f=>f.name); }catch(e){}
+    let ids=idsCrudos;
     /* Un invitado del cliente tiene permiso sobre SU carpeta, no sobre la que las
        contiene: listar «Clientes/» le devuelve vacío y se quedaba sin nada que ver.
        Darle lectura sobre «Clientes/» lo arreglaría y de paso le enseñaría la de todos
@@ -2031,10 +2035,16 @@ async function catalogoPull(silent){
        nacido. Nacer vacío es exactamente lo que borra sedes, pisos y alias. */
     const antes=S.catCli||{};
     S.catCli={}; S.catCliOk=new Set(); const fallos=[], mermas=[];
-    for(const id of ids){
+    /* Los catálogos de todos los clientes se piden A LA VEZ. Con uno da igual; con diez
+       eran diez viajes en fila antes de que apareciera nada en pantalla. La DECISIÓN de
+       qué hacer con cada uno sigue en orden y es puro cálculo: lo que se paraleliza es
+       la espera, no el criterio. */
+    const leidos=await enParalelo(ids, id=>gGetJsonCompat(h,pCatCli(id)).catch(()=>null));
+    for(let ci=0; ci<ids.length; ci++){
+      const id=ids[ci];
       const viejo=antes[id], cViejo=censoSedes(viejo);
       try{
-        const c=await gGetJsonCompat(h,pCatCli(id));
+        const c=leidos[ci];
         if(c){
           const cNuevo=censoSedes(c);
           if(viejo && cViejo.sedes>0 && cNuevo.sedes===0){
@@ -3136,6 +3146,21 @@ async function _cargarDatos(silent,saltarInv){
 }
 /* Migración desde las rutas anteriores. Los expedientes NO se mueven: cada ticket guarda
    su propia ruta, así que los históricos siguen abriéndose desde donde están. */
+/* Deja constancia de que la migración desde la estructura anterior ya está resuelta,
+   se haya hecho o se haya comprobado que no hacía falta.
+   Antes solo se marcaba si la migración llegaba a EJECUTARSE. Cuando no había nada que
+   traer —el caso normal en cualquier sistema ya en marcha— la comprobación se repetía en
+   cada arranque de cada administrador: cuatro peticiones y casi un segundo, medido, para
+   volver a descubrir lo mismo. Y es una conclusión permanente: los archivos de la
+   estructura vieja no se van a llenar solos. */
+async function marcarMigracionResuelta(h,motivo){
+  try{
+    if((S.catGlobal||{}).migradoPorCliente) return;
+    S.catGlobal=S.catGlobal||{};
+    S.catGlobal.migradoPorCliente={por:(S.me&&S.me.mail)||'', cuando:new Date().toISOString(), motivo:motivo};
+    await gPutJson(h,P_CAT,soloGlobal(S.catGlobal));
+  }catch(e){ diagFallo('marcar migración resuelta', e.message); }
+}
 async function migrarSiHaceFalta(){
   if(!isAdmin()) return;
   try{
@@ -3146,16 +3171,19 @@ async function migrarSiHaceFalta(){
        encima datos viejos. La pregunta correcta es «¿hay datos del cliente en ALGUNA de
        las rutas que sabemos leer?», y basta con que un solo cliente los tenga. */
     if((S.catGlobal||{}).migradoPorCliente) return;
-    for(const c of clientesVisibles()){
-      const idx=await gGetJsonCompat(h,pIdx(c.id));
-      if(Array.isArray(idx)&&idx.length) return;
-      const inv=await gGetJsonCompat(h,pInv(c.id));
-      if(Array.isArray(inv)&&inv.length) return;
-    }
-    const idxViejo=await gGetJson(h,P_LEGACY_IDX);
-    const invViejo=await gGetJson(h,P_LEGACY_INV);
+    /* Los clientes se comprueban a la vez, no en fila. */
+    const visibles=clientesVisibles();
+    const porCliente=await enParalelo(visibles, async c=>({
+      idx: await gGetJsonCompat(h,pIdx(c.id)).catch(()=>null),
+      inv: await gGetJsonCompat(h,pInv(c.id)).catch(()=>null)
+    }));
+    const yaHayDatos=porCliente.some(r=>r &&
+      ((Array.isArray(r.idx)&&r.idx.length) || (Array.isArray(r.inv)&&r.inv.length)));
+    if(yaHayDatos){ await marcarMigracionResuelta(h,'ya había datos por cliente'); return; }
+    const [idxViejo,invViejo]=await Promise.all([
+      gGetJson(h,P_LEGACY_IDX).catch(()=>null), gGetJson(h,P_LEGACY_INV).catch(()=>null)]);
     const nIdx=Array.isArray(idxViejo)?idxViejo.length:0, nInv=Array.isArray(invViejo)?invViejo.length:0;
-    if(!nIdx&&!nInv) return;
+    if(!nIdx&&!nInv){ await marcarMigracionResuelta(h,'no había nada en la estructura anterior'); return; }
     if(!confirm('Se detectaron datos en la estructura anterior:\n'+
       '  · '+nIdx+' ticket(s) en el índice\n  · '+nInv+' equipo(s) de inventario\n\n'+
       'Se copiarán a la estructura por cliente (Clientes/<ID>/…). Los expedientes y sus evidencias '+
@@ -3172,9 +3200,7 @@ async function migrarSiHaceFalta(){
     for(const c of Object.keys(b)) await gPutJson(h,pInv(c),b[c]);
     /* Se deja constancia en Sistema/ de que esto ya ocurrió: es lo único que impide que
        vuelva a ofrecerse si mañana cambian otra vez las rutas. */
-    try{ S.catGlobal=S.catGlobal||{};
-         S.catGlobal.migradoPorCliente={por:S.me.mail,cuando:new Date().toISOString()};
-         await gPutJson(h,P_CAT,soloGlobal(S.catGlobal)); }catch(e){}
+    await marcarMigracionResuelta(h,'migración ejecutada');
     logEvent('MIGRACION_POR_CLIENTE',nIdx+' tickets · '+nInv+' equipos · clientes: '+
       [...new Set(Object.keys(a).concat(Object.keys(b)))].join(', '));
     toast('Migración completa: '+nIdx+' ticket(s) y '+nInv+' equipo(s) ahora viven por cliente.',null,10000);
@@ -3278,9 +3304,17 @@ async function unlockApp(){
      cliente guardado resulta ser el mismo que ya estaba, no hay cambio que vigilar. */
   componerCat();
   pintarSelectorCliente(); aplicarPermisosUI(); aplicarModulosUI(); aplicarClienteApertura();
-  await migrarSiHaceFalta();
-  try{ await repartirIndicesSiHaceFalta(await H()); }catch(e){}
+  /* Los datos primero. Las dos tareas de MANTENIMIENTO —migrar el catálogo antiguo y
+     repartir índices que quedaran sin repartir— no las está esperando nadie: son cosas
+     que el sistema se hace a sí mismo, y estaban delante de lo único que el usuario ha
+     venido a ver. Se hacen después, con la pantalla ya pintada.
+     Van encadenadas entre sí, no sueltas: las dos tocan los mismos archivos y lanzarlas
+     a la vez sería pelearse consigo mismo por el eTag. */
   await cargarDatos(true);
+  S._q = S._q.then(async()=>{
+    try{ await migrarSiHaceFalta(); }catch(e){ console.warn('migración:',e.message); }
+    try{ await repartirIndicesSiHaceFalta(await H()); }catch(e){ console.warn('reparto:',e.message); }
+  }).catch(e=>{ diagFallo('mantenimiento de arranque', e && e.message || String(e)); });
   if(isAdmin()) bitPull();
   /* Lo que quedó pendiente de la sesión anterior (o de un cierre a media escritura)
      se sube ahora, antes de registrar la entrada de hoy. */
@@ -10690,7 +10724,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
   CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
-  respaldoDe:respaldoDe,enParalelo:enParalelo,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
+  respaldoDe:respaldoDe,enParalelo:enParalelo,marcarMigracionResuelta:marcarMigracionResuelta,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
   tablaBackups:tablaBackups,selloLocal:selloLocal,selloArchivo:selloArchivo,
