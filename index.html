@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-04 · r115';
+const APP_VER = '2026-09-04 · r116';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1624,7 +1624,16 @@ const P_CAT = 'Sistema/_tickets_catalogo.json';
 const P_BIT = 'Bitacora';
 const P_BIT_LEGACY = 'Sistema/_tickets_bitacora.json';
 const mesDe=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1);
-const rutaBit=(mes,mail)=>P_BIT+'/'+mes+'/'+sanitizeName(String(mail||'anonimo').toLowerCase())+'.json';
+/* Un archivo por usuario y por DÍA, no por mes.
+   Cada anexión reescribe el archivo completo: es la única forma de añadir a un JSON en
+   SharePoint. Con un archivo mensual eso significaba mover el mes entero cada vez —con
+   4000 entradas, 1,7 MB por evento; con 12000, más de 5 MB— y una demostración con
+   varias pantallas saturaba la conexión hasta dejar un ticket 45 segundos sin abrir.
+   Partido por día, el archivo se mantiene pequeño por muy largo que sea el mes.
+   La lectura no necesitó cambios: bitPull enumera la carpeta del mes y lee todo lo que
+   encuentre, así que los archivos mensuales de antes se siguen leyendo igual. */
+const rutaBit=(mes,mail,dia)=>P_BIT+'/'+mes+'/'+
+  sanitizeName(String(mail||'anonimo').toLowerCase())+(dia?'__'+dia:'')+'.json';
 /* Cada cliente tiene su carpeta. Cuando se invite a un cliente externo bastará con darle
    permiso sobre LA SUYA: el aislamiento deja de ser un filtro de interfaz y pasa a ser
    una regla que aplica SharePoint. */
@@ -2608,9 +2617,14 @@ async function bitAnexar(h,ruta,entradas){
     if(a.length>20000) a=a.slice(0,20000);
     return a;
   });
-  /* Relectura: un PUT que devuelve 200 pero no persiste dejaría la auditoría incompleta. */
-  const ver=await gGetJson(h,ruta);
-  if(!Array.isArray(ver)||!ver.length) throw new Error('el archivo se escribió pero volvió vacío');
+  /* Antes se releía el archivo ENTERO después de cada escritura, para asegurarse de que
+     un PUT con 200 hubiera persistido de verdad. La intención era buena y la factura
+     enorme: duplicaba el tráfico de cada evento, y con un mes crecido eso son megabytes
+     por pantalla visitada. Ahora se comprueba con una lectura de metadatos —el eTag
+     cambió, luego el archivo se escribió—, que cuesta una petición pequeña en vez de
+     descargar toda la historia. */
+  const meta=await gGet(h,ruta);
+  if(!meta) throw new Error('el archivo se escribió pero no aparece en SharePoint');
 }
 /* Sube lo que quedó pendiente de sesiones o intentos anteriores. Se llama al entrar y
    después de cada escritura buena, así que la cola se vacía sola. */
@@ -2767,16 +2781,46 @@ function logEvent(evento,detalle){
     actividadInvitado(evento,detalle);
     return;
   }
-  const ruta=rutaBit(mesDe(d),entry.usuario);
+  const ruta=rutaBit(mesDe(d),entry.usuario,todayISO(d));
   /* Se guarda en el navegador ANTES de intentar subirlo. Si la pestaña se cierra a
      mitad de la petición, la entrada ya está a salvo y se sube en la próxima sesión. */
   encolarBit(entry,ruta);
+  /* Y se AGRUPA antes de subir. Cada escritura reescribe el archivo del mes entero, así
+     que subir evento por evento costaba, medido con 4000 entradas, 2,6 MB por pantalla.
+     Diez pantallas de una demostración eran 26 MB en fila, y mientras tanto abrir un
+     ticket esperaba turno: eso fueron los 45 segundos que se vieron en vivo.
+     Ahora se espera un momento por si vienen más y se suben todos de una vez. */
+  agruparBit(entry,ruta);
+  return true;
+}
+const BIT_AGRUPA_MS=1200;     // lo que se espera por si llega otro evento
+const BIT_AGRUPA_MAX=25;      // sin dejar que el grupo crezca sin fin
+let _bitPend=[], _bitTimer=null;
+function agruparBit(entry,ruta){
+  _bitPend.push({entry:entry,ruta:ruta});
+  if(_bitPend.length>=BIT_AGRUPA_MAX){ volcarBit(); return; }
+  if(_bitTimer) clearTimeout(_bitTimer);
+  _bitTimer=setTimeout(volcarBit,BIT_AGRUPA_MS);
+}
+/* Sube lo acumulado. Al cerrar la pestaña se llama sin esperar, para no perder nada. */
+function volcarBit(){
+  if(_bitTimer){ clearTimeout(_bitTimer); _bitTimer=null; }
+  if(!_bitPend.length) return S._q;
+  const lote=_bitPend; _bitPend=[];
+  /* Un grupo por archivo: las entradas de dos meses distintos no se mezclan. */
+  const porRuta={};
+  lote.forEach(x=>{ (porRuta[x.ruta]=porRuta[x.ruta]||[]).push(x.entry); });
+  Object.keys(porRuta).forEach(ruta=>{ subirBit(ruta,porRuta[ruta]); });
+  return S._q;
+}
+function subirBit(ruta,entradas){
+  const entry=entradas[entradas.length-1];
   S._q = S._q.then(async()=>{
     const h=await H();
     let ultimo=null;
     /* Dos reintentos con espera: la mayoría de los «Failed to fetch» son un parpadeo. */
     for(let intento=0;intento<3;intento++){
-      try{ await bitAnexar(h,ruta,[entry]); ultimo=null; break; }
+      try{ await bitAnexar(h,ruta,entradas); ultimo=null; break; }
       catch(e){ ultimo=e;
         if(intento<2 && esFalloDeRed(e) && !_cerrando)
           await new Promise(r=>setTimeout(r,intento?4000:1500));
@@ -2784,8 +2828,8 @@ function logEvent(evento,detalle){
     }
     if(ultimo) throw ultimo;
     /* Se subió: la entrada sale de la cola y de paso se sube lo que quedara atrás. */
-    guardarColaBit(colaBit().filter(x=>!(x.ruta===ruta && x.entry.hora===entry.hora &&
-      x.entry.evento===entry.evento && x.entry.detalle===entry.detalle)));
+    guardarColaBit(colaBit().filter(x=> x.ruta!==ruta ||
+      !entradas.some(e=>e.hora===x.entry.hora && e.evento===x.entry.evento && e.detalle===x.entry.detalle)));
     _bitFallo=false; S.bitEscribe='ok';
     await vaciarColaBit();
   }).catch(err=>{
@@ -10162,7 +10206,7 @@ function enlazarEventos(){
     if(bloqueadoPorTarea()) return;
     if(invSucio()&&!confirm('Tienes cambios de inventario sin guardar. Si cierras la sesión se pierden.\n\n¿Salir de todos modos?')) return;
     /* El cierre de sesión se escribe antes de soltar el token: después ya no habría con qué. */
-    try{ await new Promise(r=>{ logEvent('LOGOUT','salida manual'); S._q.then(r).catch(r); }); }catch(e){}
+    try{ await new Promise(r=>{ logEvent('LOGOUT','salida manual'); volcarBit(); S._q.then(r).catch(r); }); }catch(e){}
     sessionStorage.removeItem(AUTH_CLAVE);
     try{ const app=msalApp(); await app.initialize();
       const acc=app.getAllAccounts()[0];
@@ -10412,7 +10456,12 @@ function enlazarEventos(){
 /* ---------------------- 22. ARRANQUE ---------------------- */
 /* Cerrar la pestaña aborta las peticiones en vuelo. Se marca para que el fallo se trate
    como lo que es —una salida— y no como un problema de permisos. */
-['pagehide','beforeunload'].forEach(ev=>window.addEventListener(ev,()=>{ _cerrando=true; }));
+['pagehide','beforeunload'].forEach(ev=>window.addEventListener(ev,()=>{
+  _cerrando=true;
+  /* Lo que estuviera esperando a agruparse se manda ya. Si no llega, sigue en la cola
+     del navegador y se sube en la próxima sesión: agrupar no puede costar registros. */
+  try{ volcarBit(); }catch(e){}
+}));
 /* Si el navegador recupera la red, no hay que esperar a la siguiente sesión. */
 window.addEventListener('online',()=>{ vaciarColaBit().catch(e=>{
   /* Sigue sin haber red: no se avisa nada, la cola ya guarda lo pendiente. */
@@ -10519,7 +10568,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
   puedeSimular:puedeSimular,esDueno:esDueno,iniciarSimulacion:iniciarSimulacion,simulacionActiva:simulacionActiva,cambiarRol:cambiarRol,
   recuperarSimulacion:recuperarSimulacion,DUENO:DUENO,SIM_CLAVE:SIM_CLAVE,
-  rutaBit:rutaBit,mesDe:mesDe,bitFiltrada:bitFiltrada,P_BIT:P_BIT,P_BIT_LEGACY:P_BIT_LEGACY,
+  rutaBit:rutaBit,mesDe:mesDe,volcarBit:volcarBit,agruparBit:agruparBit,BIT_AGRUPA_MS:BIT_AGRUPA_MS,BIT_AGRUPA_MAX:BIT_AGRUPA_MAX,bitFiltrada:bitFiltrada,P_BIT:P_BIT,P_BIT_LEGACY:P_BIT_LEGACY,
   cabeceraPdf:cabeceraPdf,pieDePagina:pieDePagina,
   MODS_REP:MODS_REP,modsDisponibles:modsDisponibles,repTickets:repTickets,repDataset:repDataset,
   repFilaPlana:repFilaPlana,pRep:pRep,repInventario:repInventario,enLocs:enLocs,
