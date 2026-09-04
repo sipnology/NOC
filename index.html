@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-03 · r114';
+const APP_VER = '2026-09-04 · r115';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -5050,6 +5050,20 @@ function coloresPara(etiquetas){
   });
   return salida;
 }
+/* Degradado que sigue la forma redonda: más claro en el centro, pleno en el borde. El
+   vertical de las barras aplicado a una dona corta el anillo por la mitad y se ve como
+   un error; este acompaña el radio y el aro queda parejo en toda la vuelta. */
+function degradadoRadial(ctx,area,color){
+  if(!ctx||!area) return color;
+  try{
+    const cx=(area.left+area.right)/2, cy=(area.top+area.bottom)/2;
+    const r=Math.max(10,Math.min(area.right-area.left,area.bottom-area.top)/2);
+    const g=ctx.createRadialGradient(cx,cy,r*0.35,cx,cy,r);
+    g.addColorStop(0,color+'8c');
+    g.addColorStop(1,color);
+    return g;
+  }catch(e){ return color; }
+}
 /* Degradado vertical para las barras: el mismo color, más vivo arriba que abajo. Da
    profundidad sin añadir ruido ni inventarse tonos que no están en la paleta. */
 function degradado(ctx,area,color){
@@ -5380,12 +5394,17 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
      vertical, donde va rotado. Así que el recorte depende de la orientación y se limita
      cuántas se dibujan en vez de apretarlas hasta que no se lean. */
   const horizontal=tipo==='barH';
-  const ejeCat={color:gris,font:{size:10},autoSkip:true,
-    maxRotation:horizontal?0:55, minRotation:horizontal?0:0,
-    maxTicksLimit:horizontal?24:14, autoSkipPadding:8,
+  /* autoSkip apagado. Chart.js escondía una de cada dos etiquetas cuando no le cabían,
+     y la única forma de saber a qué correspondía una barra era pasarle el cursor: eso no
+     existe en un Excel ni en un PDF, que es donde acaban estas gráficas. Prefiero letra
+     más pequeña y todas las etiquetas, a la mitad grandes y la otra mitad invisibles. */
+  const muchas=(labels||[]).length;
+  const ejeCat={color:gris, font:{size: muchas>18?8.5 : (muchas>12?9:10)}, autoSkip:false,
+    maxRotation:horizontal?0:(muchas>6?90:55), minRotation:horizontal?0:(muchas>6?90:0),
+    autoSkipPadding:2,
     callback:function(v){ const t=String(this.getLabelForValue?this.getLabelForValue(v):v);
       /* En horizontal el nombre va derecho y caben ~34; rotado, apenas 18. */
-      const max=horizontal?34:18;
+      const max=horizontal?34:(muchas>6?26:18);
       return t.length>max? t.slice(0,max-1)+'…' : t; }};
   const ejeNum={color:gris,precision:0,padding:4};
   const cfg={
@@ -5394,11 +5413,15 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
       /* Las barras se pintan con degradado, que necesita el lienzo ya medido: por eso
          es una función y no un color suelto. En la primera pasada Chart.js todavía no
          tiene el área, y ahí se devuelve el color plano. */
+      /* Todas las formas comparten el mismo acabado. Las circulares salían planas
+         mientras las barras tenían degradado, y en el mismo tablero se notaba que eran
+         de dos épocas distintas. En un círculo el degradado va del centro hacia fuera,
+         no de arriba abajo: seguir la forma es lo que hace que no parezca un parche. */
       backgroundColor: linea? function(c){ return degradado(c.chart.ctx,c.chart.chartArea,'#4f9cf0')||'rgba(79,156,240,.28)'; }
-        : (radial? colores.map(c=>c+'cc')
-        : (tarta? colores
+        : ((tarta||radial)? function(c){ const col=colores[c.dataIndex%colores.length];
+            return degradadoRadial(c.chart.ctx,c.chart.chartArea,col); }
         : function(c){ const col=colores[c.dataIndex%colores.length];
-            return degradado(c.chart.ctx,c.chart.chartArea,col); })),
+            return degradado(c.chart.ctx,c.chart.chartArea,col); }),
       hoverBackgroundColor: tarta||radial? undefined
         : function(c){ return colores[c.dataIndex%colores.length]; },
       borderColor:linea?'#4f9cf0':(tarta?'rgba(15,23,42,.85)':(radial?'#4f9cf0':'rgba(255,255,255,.14)')),
@@ -5406,6 +5429,10 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
       /* Esquinas redondeadas: la barra deja de parecer un bloque de hoja de cálculo. */
       borderRadius: (tarta||radial||linea)? 0 : 6, borderSkipped:false,
       hoverBorderColor:'rgba(255,255,255,.5)', hoverBorderWidth:tarta?3:2,
+      /* Los colores planos se guardan aparte porque backgroundColor pasó a ser una
+         función —la que construye el degradado— y la leyenda no puede pintar una
+         función: sus puntos salían grises. Aquí siempre hay un color de verdad. */
+      _cols: colores,
       /* La dona con un hueco más generoso respira mejor y deja sitio al total. */
       cutout: tipo==='doughnut'? '58%' : undefined,
       pointBackgroundColor:'#4f9cf0', pointBorderColor:'rgba(255,255,255,.85)',
@@ -5440,7 +5467,11 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
               const tot=vals.reduce((a,b)=>a+(+b||0),0);
               return (d.labels||[]).map((l,i)=>{
                 const v=+vals[i]||0;
-                const bg=Array.isArray(ds.backgroundColor)?ds.backgroundColor[i%ds.backgroundColor.length]:ds.backgroundColor;
+                /* _cols primero: backgroundColor puede ser la función del degradado. */
+                const cols=Array.isArray(ds._cols)? ds._cols
+                  : (Array.isArray(ds.backgroundColor)? ds.backgroundColor : null);
+                const bg=cols? cols[i%cols.length]
+                  : (typeof ds.backgroundColor==='string'? ds.backgroundColor : '#7c8aa5');
                 /* Chart.js v4 pinta cada elemento con su propio fontColor; si el
                    generador no lo incluye, el texto sale en negro y se pierde. */
                 return {text:l+' — '+v+(tot?' ('+Math.round(v/tot*100)+'%)':''),
@@ -8717,7 +8748,7 @@ const DATASETS={
                 ['f1','Inicio desde','fecha'],['f2','Inicio hasta','fecha']],
     dims:[
       {k:'estado',t:'CRQs por estado',f:r=>r.origen.estado||'(sin estado)',tipo:'doughnut'},
-      {k:'sede',t:'CRQs por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'bar'},
+      {k:'sede',t:'CRQs por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'barH'},
       {k:'fuente',t:'CRQs por origen',f:r=>r.fuente==='manual'?'Documentado en la plataforma':'Importado del cliente',tipo:'doughnut'},
       {k:'mes',t:'CRQs por mes',f:r=>String(r.origen.fechaIni||'').slice(0,7)||'(sin fecha)',tipo:'bar'},
       {k:'dia',t:'CRQs por día',f:r=>r.origen.fechaIni||'(sin fecha)',tipo:'line'}
@@ -8766,7 +8797,7 @@ const DATASETS={
     dims:[
       {k:'estado',t:'Casos por status',f:r=>r.origen.estado||'(sin status)',tipo:'doughnut'},
       {k:'tipo',t:'Casos por tipo de equipo',f:r=>r.origen.tipo||'(sin tipo)',tipo:'doughnut'},
-      {k:'sede',t:'Casos por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'bar'},
+      {k:'sede',t:'Casos por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'barH'},
       {k:'mes',t:'Casos por mes',f:r=>String(r.origen.fechaAp||'').slice(0,7)||'(sin fecha)',tipo:'bar'},
       {k:'fuente',t:'Casos por origen',f:r=>r.fuente==='manual'?'Documentado en la plataforma':'Importado',tipo:'doughnut'}
     ],
@@ -8826,7 +8857,7 @@ const DATASETS={
     dims:[
       {k:'estado',t:'RMA por status',f:r=>r.origen.estado||'(sin status)',tipo:'doughnut'},
       {k:'tipo',t:'RMA por tipo de equipo',f:r=>r.origen.tipo||'(sin tipo)',tipo:'doughnut'},
-      {k:'sede',t:'RMA por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'bar'},
+      {k:'sede',t:'RMA por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'barH'},
       {k:'mes',t:'RMA por mes',f:r=>String(r.origen.fechaAp||'').slice(0,7)||'(sin fecha)',tipo:'bar'},
       {k:'fuente',t:'RMA por origen',f:r=>r.fuente==='manual'?'Documentado en la plataforma':'Importado',tipo:'doughnut'}
     ],
@@ -8876,9 +8907,9 @@ const DATASETS={
                 ['elemento','Elemento','select'],['f1','Vence desde','fecha'],['f2','Vence hasta','fecha']],
     dims:[
       {k:'estado',t:'SITs por estado',f:r=>r.origen.estado||'(sin estado)',tipo:'doughnut'},
-      {k:'sede',t:'SITs por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'bar'},
-      {k:'elemento',t:'SITs por elemento solicitado',f:r=>r.origen.elemento||'(n/d)',tipo:'bar'},
-      {k:'config',t:'SITs por configuración',f:r=>r.origen.configuracion||'(n/d)',tipo:'bar'},
+      {k:'sede',t:'SITs por sede',f:r=>(r.sip.sedes||[]).length?r.sip.sedes.map(locLabel):['(sin asignar)'],tipo:'barH'},
+      {k:'elemento',t:'SITs por elemento solicitado',f:r=>r.origen.elemento||'(n/d)',tipo:'barH'},
+      {k:'config',t:'SITs por configuración',f:r=>r.origen.configuracion||'(n/d)',tipo:'barH'},
       {k:'mes',t:'SITs por mes de vencimiento',f:r=>String(r.origen.vence||'').slice(0,7)||'(sin fecha)',tipo:'bar'},
       {k:'puesto',t:'SITs por puesto solicitante',f:r=>r.origen.puesto||'(n/d)',tipo:'doughnut'}
     ],
@@ -10482,7 +10513,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
-  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,coloresPara:coloresPara,procesando:procesando,conProceso:conProceso,degradado:degradado,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,
+  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,coloresPara:coloresPara,procesando:procesando,conProceso:conProceso,degradado:degradado,degradadoRadial:degradadoRadial,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
