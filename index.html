@@ -1131,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-04 · r121';
+const APP_VER = '2026-09-04 · r122';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -3129,13 +3129,19 @@ async function cargarDatos(silent,saltarInv,soloLeer){
    pintaría sin sedes ni categorías —desplegables vacíos, etiquetas en blanco— y quien
    estuviera mirando lo vería un instante antes de que se arreglara solo. */
 async function _cargarDatos(silent,saltarInv,soloLeer){
+  /* Qué módulos están activos lo dice el CATÁLOGO, y en la precarga del arranque el
+     catálogo todavía viene en camino: preguntar entonces daba «ninguno», y CRQs, SITs,
+     Casos y RMA quedaban vacíos en pantalla teniendo datos en disco. Así que mientras se
+     precarga se traen todos, y el filtro real se aplica después, cuando ya se sabe.
+     Leer de más aquí no es un riesgo: es el mismo cliente, solo trabajo de sobra. */
+  const activo=mod=>soloLeer? true : moduloActivo(mod);
   const tareas=[['índice', idxPull(true)]];
   if(saltarInv){ if(!soloLeer) renderInv(); }
-  else if(moduloActivo('inventario')) tareas.push(['inventario', invPull(true)]);
+  else if(activo('inventario')) tareas.push(['inventario', invPull(true)]);
   else { S.inv=[]; if(!soloLeer) renderInv(); }
   [['crq','crq',crqPull],['sit','sit',sitPull],['fab','fab',fabPull],['rma','rma',rmaPull]]
     .forEach(([mod,campo,fn])=>{
-      if(moduloActivo(mod)) tareas.push([mod, fn(true)]); else S[campo]=[];
+      if(activo(mod)) tareas.push([mod, fn(true)]); else S[campo]=[];
     });
   tareas.push(['reportes', repPull(true)]);
   const res=await Promise.allSettled(tareas.map(t=>t[1]));
@@ -3154,7 +3160,15 @@ async function _cargarDatos(silent,saltarInv,soloLeer){
 }
 /* Pintar todo lo que depende de los datos ya cargados. Separado de la lectura para que
    el arranque pueda leer primero y pintar cuando el catálogo esté listo. */
+/* Vacía lo que el cliente activo no tiene contratado. Hace falta porque la precarga del
+   arranque trae todo sin mirar el catálogo —no lo tiene aún—, y sin este barrido un
+   módulo apagado enseñaría datos que no le corresponden a esa pantalla. */
+function aplicarModulosADatos(){
+  [['crq','crq'],['sit','sit'],['fab','fab'],['rma','rma'],['inventario','inv']]
+    .forEach(([mod,campo])=>{ if(!moduloActivo(mod)) S[campo]=[]; });
+}
 function pintarTodo(){
+  aplicarModulosADatos();
   poblarCatalogosUI(); renderSeg(); renderDash(); renderCRQ(); renderSIT(); renderFAB(); renderRMA();
   renderReportes();   /* repinta conservando lo elegido; ya no lo tira a la basura */
   renderInv();
@@ -10763,7 +10777,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   clientesEnAlcance:clientesEnAlcance,pCli:pCli,pIdx:pIdx,pInv:pInv,pCrq:pCrq,pSit:pSit,pCasos:pCasos,
   pCatCli:pCatCli,SEC_CLIENTE:SEC_CLIENTE,SEC_GLOBAL:SEC_GLOBAL,CAT_DE_CLIENTE:CAT_DE_CLIENTE,
   CAT_GRUPOS:CAT_GRUPOS,grupoDe:grupoDe,elegirParaRestaurar:elegirParaRestaurar,
-  respaldoDe:respaldoDe,enParalelo:enParalelo,pintarTodo:pintarTodo,marcarMigracionResuelta:marcarMigracionResuelta,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
+  respaldoDe:respaldoDe,enParalelo:enParalelo,pintarTodo:pintarTodo,aplicarModulosADatos:aplicarModulosADatos,marcarMigracionResuelta:marcarMigracionResuelta,EN_VUELO:EN_VUELO,RESP_VER:RESP_VER,P_BACKUP:P_BACKUP,rutaBackup:rutaBackup,listarBackups:listarBackups,
   PARTES_RESP:PARTES_RESP,ponerRespaldoElegido:ponerRespaldoElegido,
   totalesCliente:totalesCliente,clienteDeBackup:clienteDeBackup,borrarBackup:borrarBackup,
   tablaBackups:tablaBackups,selloLocal:selloLocal,selloArchivo:selloArchivo,
