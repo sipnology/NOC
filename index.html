@@ -375,6 +375,19 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .chip{background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:11.5px;display:flex;gap:6px;align-items:center}
 .chip .rm{background:transparent;border:0;color:var(--p1);cursor:pointer;font-size:13px;line-height:1}
+/* Indicador de proceso. Tomado tal cual del Cotizador —mismos tiempos, mismo naranja,
+   mismo texto— para que quien use las dos aplicaciones reconozca la espera sin pensarlo. */
+@keyframes busy-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-10px);opacity:1}}
+.busy-ov{position:fixed;inset:0;background:rgba(5,10,22,.62);display:none;align-items:center;justify-content:center;z-index:9999}
+.busy-ov.on{display:flex}
+.busy-box{display:flex;flex-direction:column;align-items:center;gap:14px;padding:26px 34px;background:#0c1730;border:1px solid #22314f;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.busy-dots{display:flex;gap:9px}
+.busy-dots span{width:13px;height:13px;border-radius:50%;background:#E8632A;animation:busy-bounce 1s ease-in-out infinite}
+.busy-dots span:nth-child(2){animation-delay:.16s}
+.busy-dots span:nth-child(3){animation-delay:.32s}
+.busy-text{font-size:13px;color:#cbd5e1;letter-spacing:.3px}
+/* Quien pidió menos movimiento ve los puntos quietos, pero sigue viendo que se trabaja. */
+@media (prefers-reduced-motion: reduce){ .busy-dots span{animation:none;opacity:.85} }
 .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand2);border-radius:50%;
  display:inline-block;animation:sp .8s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -1073,6 +1086,12 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </div>
 
+<div class="busy-ov" id="busyOv" role="status" aria-live="polite" aria-hidden="true">
+  <div class="busy-box">
+    <div class="busy-dots"><span></span><span></span><span></span></div>
+    <div class="busy-text" id="busyTxt">Procesando…</div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <div id="pdfStage" style="position:fixed;left:-10000px;top:0;width:1100px;background:#fff;color:#111"></div>
 
@@ -1112,7 +1131,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-03 · r113';
+const APP_VER = '2026-09-03 · r114';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1462,6 +1481,29 @@ function bloqueadoPorTarea(){
   toast('Hay un proceso en curso ('+tareaDesc()+'). Espera a que termine: si sales ahora, '+
         'los datos quedan a medio escribir.','warn',9000);
   return true;
+}
+/* Velo de proceso para toda la pantalla.
+   Lleva CUENTA de cuántas operaciones lo pidieron, no un simple sí/no: desde que los
+   módulos se cargan en paralelo, dos tareas pueden solaparse, y con un booleano la
+   primera en terminar apagaba el velo mientras la otra seguía trabajando. */
+let _procesando=0;
+function procesando(on,texto){
+  const ov=$('#busyOv'); if(!ov) return;
+  if(on){
+    _procesando++;
+    const t=$('#busyTxt'); if(t) t.textContent=texto||'Procesando…';
+    ov.classList.add('on'); ov.setAttribute('aria-hidden','false');
+  }else{
+    _procesando=Math.max(0,_procesando-1);
+    if(_procesando===0){ ov.classList.remove('on'); ov.setAttribute('aria-hidden','true'); }
+  }
+  return _procesando;
+}
+/* Envuelve una promesa: el velo se levanta pase lo que pase, también si falla. */
+async function conProceso(texto,fn){
+  procesando(true,texto);
+  try{ return await fn(); }
+  finally{ procesando(false); }
 }
 function busy(btn,on){ if(!btn) return; btn.disabled=!!on;
   if(on){ btn.dataset.txt=btn.innerHTML; btn.innerHTML='<span class="spin"></span>'; }
@@ -2924,6 +2966,11 @@ async function cambiarCliente(id){
    ya están cargados y la pantalla se pinta con lo que hay, en vez de quedarse vacía por
    un archivo. El que falle se dice, no se esconde. */
 async function cargarDatos(silent,saltarInv){
+  procesando(true,'Cargando información…');
+  try{ return await _cargarDatos(silent,saltarInv); }
+  finally{ procesando(false); }
+}
+async function _cargarDatos(silent,saltarInv){
   const tareas=[['índice', idxPull(true)]];
   if(saltarInv) renderInv();
   else if(moduloActivo('inventario')) tareas.push(['inventario', invPull(true)]);
@@ -4917,15 +4964,17 @@ async function guardarSeguimiento(){
 /* ---------------------- 16. MÓDULO 3 · ESTADO / DASHBOARD ---------------------- */
 const DIMENSIONES=[
   {k:'cliente',   t:'Tickets por cliente',        f:t=>t.cliente||'(sin cliente)', tipo:'bar'},
-  {k:'localidad', t:'Tickets por sede/localidad', f:t=>t.localidad||'(sin sede)',  tipo:'bar'},
+  /* Barra horizontal, no vertical: «Guadalajara - Landmark» rotado 55 grados se
+     solapa con el vecino y no se lee. En horizontal el nombre va derecho. */
+  {k:'localidad', t:'Tickets por sede/localidad', f:t=>t.localidad||'(sin sede)',  tipo:'barH'},
   {k:'piso',      t:'Tickets por piso',           f:t=>((t.pisos&&t.pisos.length)?t.pisos:[t.piso||'(sin piso)']),tipo:'bar'},
   {k:'status',    t:'Tickets por status',         f:t=>t.status,                   tipo:'doughnut'},
   {k:'prioridad', t:'Tickets por prioridad',      f:t=>t.prioridad,                tipo:'doughnut'},
   {k:'categoria', t:'Tickets por categoría',      f:t=>t.categoria,                tipo:'doughnut'},
-  {k:'subcategoria',t:'Tickets por subcategoría', f:t=>t.subcategoria,             tipo:'bar'},
-  {k:'tipo',      t:'Tickets por tipo de incidente',f:t=>t.tipo,                   tipo:'bar'},
-  {k:'equipo',    t:'Tickets por equipo/hostname',f:t=>((t.equipos||[]).length?t.equipos:['(sin equipo)']),tipo:'bar'},
-  {k:'serie',     t:'Tickets por número de serie',f:t=>((t.series||[]).length?t.series:['(sin serie)']),tipo:'bar'},
+  {k:'subcategoria',t:'Tickets por subcategoría', f:t=>t.subcategoria,             tipo:'barH'},
+  {k:'tipo',      t:'Tickets por tipo de incidente',f:t=>t.tipo,                   tipo:'barH'},
+  {k:'equipo',    t:'Tickets por equipo/hostname',f:t=>((t.equipos||[]).length?t.equipos:['(sin equipo)']),tipo:'barH'},
+  {k:'serie',     t:'Tickets por número de serie',f:t=>((t.series||[]).length?t.series:['(sin serie)']),tipo:'barH'},
   {k:'dia',       t:'Tickets por día',            f:t=>t.fechaAp||'(sin fecha)',   tipo:'line'},
   {k:'mes',       t:'Tickets por mes',            f:t=>String(t.fechaAp||'').slice(0,7),tipo:'bar'},
   {k:'imputable', t:'Tickets por imputable',      f:t=>t.imputable||'(sin definir)',tipo:'doughnut'},
@@ -4955,12 +5004,51 @@ const COLOR_SEMANTICO={
   'programado':'#4f9cf0', 'en ejecución':'#a97bff', 'en ejecucion':'#a97bff',
   'concluido':'#3fc98a', 'cancelado':'#7c8aa5', 'reprogramado':'#ffcc47',
   /* Casos de fabricante y RMA */
-  'en curso':'#a97bff'
+  'en curso':'#a97bff',
+  /* Los SITs dicen «En proceso» donde otros módulos dicen «En curso». Mismo momento del
+     ciclo, mismo color: si no, el mismo estado cambia de tono según la pestaña. */
+  'en proceso':'#a97bff', 'en progreso':'#a97bff', 'en atención':'#a97bff', 'en atencion':'#a97bff',
+  'pendiente':'#ffcc47', 'en revisión':'#ffcc47', 'en revision':'#ffcc47',
+  /* Cumplimiento: salía azul y naranja, que no dicen nada. Cumplir es verde. */
+  'dentro de sla':'#3fc98a', 'fuera de sla':'#f4564d', 'en riesgo':'#ffb020',
+  'por vencer':'#ffb020', 'vencido':'#f4564d',
+  /* Lo que falta por capturar no es ni bueno ni malo: gris, y no compite por la vista. */
+  '(sin definir)':'#7c8aa5', '(sin sede)':'#7c8aa5', '(sin cliente)':'#7c8aa5',
+  '(sin piso)':'#7c8aa5', '(sin equipo)':'#7c8aa5', '(sin serie)':'#7c8aa5',
+  '(sin fecha)':'#7c8aa5', 'sin definir':'#7c8aa5', 'n/a':'#7c8aa5'
 };
 /* Se pide el color por etiqueta; si no la conoce, cae en la paleta por posición. */
 function colorDe(etiqueta,i){
   const k=String(etiqueta==null?'':etiqueta).trim().toLowerCase();
   return COLOR_SEMANTICO[k] || PALETA[i%PALETA.length];
+}
+/* Colores de una gráfica entera, y no de cada barra por su cuenta.
+   Hacía falta porque pedirlos uno a uno permitía que dos salieran iguales: en «SITs por
+   estado», «Abierto» tomaba su naranja del mapa y «En proceso» —que no estaba en el
+   mapa— caía en la paleta y le tocaba EL MISMO naranja. Dos conceptos distintos con el
+   mismo color en el mismo anillo, que es justo lo que este mecanismo venía a evitar.
+   Ahora se reparten en dos pasadas: primero los que tienen significado propio, y después
+   los demás, saltándose los tonos ya ocupados. */
+function coloresPara(etiquetas){
+  const lista=Array.isArray(etiquetas)?etiquetas:[];
+  const salida=new Array(lista.length);
+  const usados={};
+  lista.forEach((et,i)=>{
+    const k=String(et==null?'':et).trim().toLowerCase();
+    const sem=COLOR_SEMANTICO[k];
+    if(sem){ salida[i]=sem; usados[sem.toLowerCase()]=true; }
+  });
+  let p=0;
+  lista.forEach((et,i)=>{
+    if(salida[i]) return;
+    /* Se avanza por la paleta hasta dar con uno libre. Si se agotara —más categorías
+       que tonos—, se acepta repetir: mejor un color repetido que ninguno. */
+    let intentos=0, c;
+    do{ c=PALETA[p%PALETA.length]; p++; intentos++; }
+    while(usados[c.toLowerCase()] && intentos<=PALETA.length);
+    salida[i]=c; usados[c.toLowerCase()]=true;
+  });
+  return salida;
 }
 /* Degradado vertical para las barras: el mismo color, más vivo arriba que abajo. Da
    profundidad sin añadir ruido ni inventarse tonos que no están en la paleta. */
@@ -5153,7 +5241,7 @@ function renderDashDs(ds){
     const box=document.createElement('div'); box.className='chartbox'; box.dataset.i=i;
     box.innerHTML=cabGrafica(ds.k,i,defs.length,dim.t,selectorTipo(ds.k,k,tipo));
     $('#charts').appendChild(box);
-    const g=agrupar(filas,dim.f), cols=g.map((x,j)=>colorDe(x.k,j));
+    const g=agrupar(filas,dim.f), cols=coloresPara(g.map(x=>x.k));
     S.charts.push(new Chart(box.querySelector('canvas'),
       configGrafica(tipo,ds.plural,g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
@@ -5183,7 +5271,7 @@ function renderDash(){
     box.innerHTML=cabGrafica('tickets',i,S.chartDefs.length,dim.t,selectorTipo('tickets',k,tipo));
     $('#charts').appendChild(box);
     const g=agrupar(d,dim.f);
-    const cols=g.map((x,j)=>colorDe(x.k,j));
+    const cols=coloresPara(g.map(x=>x.k));
     S.charts.push(new Chart(box.querySelector('canvas'),
       configGrafica(tipo,'Tickets',g.map(x=>x.k),g.map(x=>x.n),cols)));
   });
@@ -5287,9 +5375,18 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
   const linea=tipo==='line'||tipo==='area';
   const real=tipo==='barH'?'bar':(tipo==='area'?'line':tipo);
   const gris='#93a0bd', reja='rgba(255,255,255,.07)';
-  const ejeCat={color:gris,font:{size:10},autoSkip:true,maxRotation:tipo==='barH'?0:55,
+  /* Eje de categorías. Dos cosas que se veían mal en pantalla: con veinte fechas las
+     etiquetas se pisaban unas a otras, y en horizontal cabe mucho más texto que en
+     vertical, donde va rotado. Así que el recorte depende de la orientación y se limita
+     cuántas se dibujan en vez de apretarlas hasta que no se lean. */
+  const horizontal=tipo==='barH';
+  const ejeCat={color:gris,font:{size:10},autoSkip:true,
+    maxRotation:horizontal?0:55, minRotation:horizontal?0:0,
+    maxTicksLimit:horizontal?24:14, autoSkipPadding:8,
     callback:function(v){ const t=String(this.getLabelForValue?this.getLabelForValue(v):v);
-      return t.length>22? t.slice(0,21)+'…' : t; }};
+      /* En horizontal el nombre va derecho y caben ~34; rotado, apenas 18. */
+      const max=horizontal?34:18;
+      return t.length>max? t.slice(0,max-1)+'…' : t; }};
   const ejeNum={color:gris,precision:0,padding:4};
   const cfg={
     type:real,
@@ -5314,6 +5411,12 @@ function configGrafica(tipo,etiqueta,labels,datos,colores){
       pointBackgroundColor:'#4f9cf0', pointBorderColor:'rgba(255,255,255,.85)',
       pointRadius:tipo==='radar'?3.5:3, pointHoverRadius:6, maxBarThickness:46}]},
     options:{responsive:true,maintainAspectRatio:true,
+      /* Alto según cuántas barras hay. Con doce categorías y el aspecto fijo de 2:1 las
+         barras salían como hilos y las cifras se pisaban unas con otras; con tres,
+         sobraba la mitad del panel. El aspecto se calcula, con topes para que no se
+         vuelva ni un sello ni una columna interminable. */
+      aspectRatio: horizontal? Math.max(0.85, Math.min(2.1, 2.1-(labels||[]).length*0.115))
+                 : (circular? 1.35 : 1.9),
       /* Entrada escalonada: las barras crecen desde la base una tras otra. Dura poco
          —medio segundo largo— porque una animación lenta estorba al que ya sabe lo que
          viene a mirar. Se respeta a quien pidió menos movimiento en su sistema. */
@@ -9635,7 +9738,7 @@ async function graficasReporte(modKey,filas){
   dims.forEach(dim=>{
     const cv=document.createElement('canvas'); cv.width=680; cv.height=380;
     stage.appendChild(cv);
-    const g=agrupar(filas,dim.f), cols=g.map((x,j)=>colorDe(x.k,j));
+    const g=agrupar(filas,dim.f), cols=coloresPara(g.map(x=>x.k));
     const cfg=configGrafica(tipoGraf(modKey,dim.k,dim.tipo),modKey,g.map(x=>x.k),g.map(x=>x.n),cols);
     cfg.options.responsive=false; cfg.options.animation=false;
     const ch=new Chart(cv,cfg); vivos.push(ch);
@@ -10379,7 +10482,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
-  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,degradado:degradado,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,
+  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,coloresPara:coloresPara,procesando:procesando,conProceso:conProceso,degradado:degradado,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
