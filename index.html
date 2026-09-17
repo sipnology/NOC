@@ -895,6 +895,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <h2>Ticket <span id="mId" style="font-family:ui-monospace,monospace;color:var(--brand)"></span></h2>
       <span class="pill" id="mStatus"></span><span class="pill" id="mPri"></span>
       <span id="mSla" style="font-size:12px"></span>
+      <span id="mQuieto" style="font-size:12px"></span>
       <button class="close" id="mClose">×</button>
     </div>
     <div class="mb">
@@ -1323,6 +1324,19 @@ function durHMS(ms){
 function hmsToMs(t){
   const m=/^(\d+):(\d{2}):(\d{2})$/.exec(String(t||'').trim());
   return m? ((+m[1])*3600+(+m[2])*60+(+m[3]))*1000 : null;
+}
+/* «377:35:25» es exacto pero nadie lo lee de un vistazo: hay que dividir entre 24 a
+   mano para saber si son días o semanas. Para los tiempos que se miran de reojo —lo que
+   lleva vencido, lo que lleva sin moverse— se dice en días y horas. El exacto no se
+   quita: se acompaña, porque para reclamar un SLA hacen falta los segundos. */
+function durCorta(ms){
+  if(ms==null||isNaN(ms)||ms<0) return '';
+  const m=Math.floor(ms/60000);
+  if(m<60) return m+'m';
+  const h=Math.floor(m/60), mm=m%60;
+  if(h<24) return mm? h+'h '+mm+'m' : h+'h';
+  const d=Math.floor(h/24), hh=h%24;
+  return hh? d+'d '+hh+'h' : d+'d';
 }
 function fechaHumana(iso,h24){
   if(!iso) return '';
@@ -2462,6 +2476,20 @@ async function invPush(detalle){
 }
 
 /* ---------------------- 7. ÍNDICE DE TICKETS ---------------------- */
+/* La última entrada del historial, que es el último momento en que alguien tocó el
+   ticket de verdad. Si a idxEntry le llega una entrada de índice en vez de un expediente
+   —pasa al reescribir el índice sin releer los archivos— no hay historial que mirar, y
+   entonces se conserva el valor que ya traía en lugar de borrarlo. */
+function ultAccDe(t){
+  const h=(t&&t.historial)||[];
+  for(let i=h.length-1;i>=0;i--) if(h[i]&&h[i].cuando) return h[i].cuando;
+  return (t&&t.ultAcc)||'';
+}
+function ultAccQueDe(t){
+  const h=(t&&t.historial)||[];
+  for(let i=h.length-1;i>=0;i--) if(h[i]&&h[i].cuando) return h[i].accion||'';
+  return (t&&t.ultAccQue)||'';
+}
 function idxEntry(t){
   return {id:t.id, clienteId:t.clienteId, cliente:t.cliente, localidadId:t.localidadId, localidad:t.localidad,
     pisos:(t.pisos&&t.pisos.length? t.pisos : (t.piso?String(t.piso).split(/\s*,\s*/).filter(Boolean):[])),
@@ -2474,6 +2502,10 @@ function idxEntry(t){
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
     imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respCi:t.respCi, status:t.status,
     crq:t.crq, ruta:t.ruta, actualizado:t.actualizado,
+    /* Fecha del último movimiento real, sacada del historial al escribir el índice. Es lo
+       que permite decir «lleva 3d sin moverse» en la lista sin abrir 250 expedientes, y
+       no sale de la plantilla de carga: la calcula el sistema. */
+    ultAcc:ultAccDe(t), ultAccQue:ultAccQueDe(t),
     /* Solo lo necesario para recalcular el reloj sin abrir el expediente completo. */
     pausas:(t.pausas||[]).map(p=>({desde:p.desde,hasta:p.hasta,imputable:p.imputable,
       tercero:p.tercero,compromiso:p.compromiso})),
@@ -3485,7 +3517,14 @@ function categoriaConTiempos(cat){
   const l=(S.cat&&S.cat.catsConTiempos)||['Falla'];
   return l.indexOf(String(cat||''))!==-1;
 }
-function slaHoras(pri){ const p=(S.cat.prioridades||[]).find(x=>x.id===pri); return p?(p.slaHoras||24):24; }
+/* El «S.cat &&» no sobra: hay un instante al arrancar en que los tickets ya están y el
+   catálogo todavía viene en camino. Pintar la lista en ese momento tumbaba la pantalla
+   entera por leer una propiedad de null, que es el mismo hueco que dejó los módulos
+   vacíos en r121. Sin catálogo se usa el compromiso por defecto y se sigue. */
+function slaHoras(pri){
+  const p=((S.cat&&S.cat.prioridades)||[]).find(x=>x.id===pri);
+  return p?(p.slaHoras||24):24;
+}
 
 function poblarCatalogosUI(){
   if(!S.cat) return;
@@ -4110,22 +4149,28 @@ function pausaAbierta(t){
   for(let i=a.length-1;i>=0;i--) if(!a[i].hasta) return a[i];
   return null;
 }
-/* soloDescontables=true → tiempo que se resta del SLA. false → toda la espera, para reportar. */
-function msPausas(t,soloDescontables,corte){
-  const fin=corte||Date.now(); let ms=0;
+/* soloDescontables=true → tiempo que se resta del SLA. false → toda la espera, para reportar.
+   «inicio» acota la cuenta a una ventana: se usa para el tiempo sin atención, que no
+   empieza en la apertura sino en el último movimiento. Sin él la función se comporta
+   exactamente igual que antes. */
+function msPausas(t,soloDescontables,corte,inicio){
+  const fin=corte||Date.now(); const ini=inicio||0; let ms=0;
   ((t&&t.pausas)||[]).forEach(p=>{
     if(soloDescontables&&!pausaDescuenta(p)) return;
     const d=new Date(p.desde).getTime(); if(isNaN(d)) return;
     const h=p.hasta? new Date(p.hasta).getTime() : fin;
-    const cierre=Math.min(h,fin);
-    if(cierre>d) ms+=cierre-d;
+    const abre=Math.max(d,ini), cierre=Math.min(h,fin);
+    if(cierre>abre) ms+=cierre-abre;
   });
   /* Tickets anteriores al registro de pausas: se respeta su acumulado. */
   if(!pausaAbierta(t)){
-    ms+=(t&&t.esperaMs)||0;
+    /* El acumulado heredado no trae fechas, así que no se puede repartir en el tiempo:
+       dentro de una ventana se omite, porque aplicarlo entero descontaría de más. */
+    if(!ini) ms+=(t&&t.esperaMs)||0;
     if(t&&t.status==='EN ESPERA'&&t.esperaDesde){
       const d=new Date(t.esperaDesde).getTime();
-      if(!isNaN(d)&&fin>d) ms+=fin-d;
+      const abre=Math.max(d,ini);
+      if(!isNaN(d)&&fin>abre) ms+=fin-abre;
     }
   }
   return ms;
@@ -4142,8 +4187,59 @@ function slaInfo(t){
   const lim=(t.slaHoras||slaHoras(t.prioridad))*3600000;
   const pct=lim? ms/lim : 0;
   const cls = t.status==='CERRADO' ? (pct>1?'sla-bad':'sla-ok') : (pct>1?'sla-bad':(pct>=0.7?'sla-warn':'sla-ok'));
-  const txt = durHMS(ms)+' / '+(t.slaHoras||slaHoras(t.prioridad))+'h'+(pct>1?' ⚠ VENCIDO':(pct>=0.7&&t.status!=='CERRADO'?' ⚠':''));
-  return {pct:pct,ms:ms,txt:txt,cls:cls,vencido:pct>1,pausado:msDescontable(t,fin.getTime()),bruto:Math.max(0,fin-ini)};
+  /* Saber que está vencido no dice si lleva veinte minutos o tres semanas, y son dos
+     conversaciones distintas con el cliente. El exceso va en el propio texto. */
+  const excedido = pct>1? Math.max(0,ms-lim) : 0;
+  const txt = durHMS(ms)+' / '+(t.slaHoras||slaHoras(t.prioridad))+'h'+
+    (pct>1? (' ⚠ VENCIDO +'+durCorta(excedido)) : (pct>=0.7&&t.status!=='CERRADO'?' ⚠':''));
+  return {pct:pct,ms:ms,txt:txt,cls:cls,vencido:pct>1,excedido:excedido,
+    restante:Math.max(0,lim-ms),pausado:msDescontable(t,fin.getTime()),bruto:Math.max(0,fin-ini)};
+}
+/* ---- Tiempo sin atención ----
+   Cuenta desde el último movimiento del ticket: seguimiento, cambio de status, pausa,
+   reapertura o edición de datos. Todos dejan entrada en el historial, así que no hace
+   falta ningún campo nuevo en la plantilla de carga ni en el archivo del cliente.
+
+   «actualizado» NO sirve para esto aunque lo parezca: renombrar una sede reescribe de
+   golpe todos sus tickets y reiniciaría el reloj sin que nadie los haya mirado. Por eso
+   se busca el historial, que solo crece cuando alguien hace algo.
+
+   El índice del tablero no carga el historial —son 250 expedientes—, así que lleva
+   «ultAcc», la fecha de la última entrada, que se calcula al escribir el índice. Un
+   ticket que no se haya vuelto a guardar desde esta versión no la tiene todavía: en ese
+   caso se aproxima y se marca como aproximada, en vez de inventar una cifra exacta. */
+function ultimoMovimiento(t){
+  const h=(t&&t.historial)||[];
+  for(let i=h.length-1;i>=0;i--) if(h[i]&&h[i].cuando) return {cuando:h[i].cuando,exacto:true,que:h[i].accion||''};
+  if(t&&t.ultAcc) return {cuando:t.ultAcc,exacto:true,que:t.ultAccQue||''};
+  const a=t&&t.actualizado;
+  const iso=(a&&typeof a==='object')? a.cuando : a;
+  if(iso) return {cuando:iso,exacto:false,que:''};
+  const ap=t&&dt(t.fechaAp,t.horaAp);
+  return ap? {cuando:ap.toISOString(),exacto:false,que:'APERTURA'} : null;
+}
+function sinAtencion(t){
+  if(!t||t.status==='CERRADO') return null;
+  const u=ultimoMovimiento(t); if(!u) return null;
+  let desde=new Date(u.cuando).getTime();
+  if(isNaN(desde)) return null;
+  const ahora=Date.now();
+  if(desde>ahora) desde=ahora;           /* reloj del equipo adelantado */
+  /* Misma regla que el reloj de SLA: si esperamos al cliente o a un tercero el tiempo no
+     es nuestro, y el ticket no está desatendido aunque nadie lo toque. */
+  const ms=Math.max(0,(ahora-desde)-msPausas(t,true,ahora,desde));
+  return {ms:ms,desde:new Date(desde).toISOString(),exacto:u.exacto,que:u.que,
+    txt:durCorta(ms),bruto:ahora-desde};
+}
+/* Cuánto silencio es demasiado depende de la prioridad: media hora sin mover un P1 es
+   grave y tres días sin mover un P4 es normal. Se toma la mitad del compromiso, así que
+   el umbral se ajusta solo y no hay un número más que configurar. */
+function sinAtencionAlerta(t,a){
+  const s=a||sinAtencion(t); if(!s) return 0;
+  const lim=(t.slaHoras||slaHoras(t.prioridad))*3600000;
+  if(!lim) return 0;
+  if(s.ms>=lim) return 2;
+  return s.ms>=lim/2? 1 : 0;
 }
 /* Ajustes de aviso, con los valores de fábrica como red: un archivo viejo que no traiga
    el bloque no debe encender nada por su cuenta. */
@@ -4327,19 +4423,33 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
     });
   });
   if(!nuevos.length) return false;
-  const fila=x=>'<tr>'+
-    '<td style="padding:4px 10px;border-bottom:1px solid #e6edf5"><b>'+esc(x.tipo)+'</b></td>'+
-    '<td style="padding:4px 10px;border-bottom:1px solid #e6edf5">'+esc(x.t.id)+'</td>'+
-    '<td style="padding:4px 10px;border-bottom:1px solid #e6edf5">'+esc(x.t.localidad||'')+'</td>'+
-    '<td style="padding:4px 10px;border-bottom:1px solid #e6edf5">'+esc(x.t.prioridad||'')+'</td>'+
-    '<td style="padding:4px 10px;border-bottom:1px solid #e6edf5">'+esc(x.t.status||'')+'</td></tr>';
+  /* El aviso se lee en el teléfono y hay que decidir en dos segundos a cuál se entra
+     primero. Se ordenan por lo que llevan vencido: el peor arriba. */
+  nuevos.sort((a,b)=> (slaInfo(b.t).excedido||0)-(slaInfo(a.t).excedido||0));
+  const td='padding:4px 10px;border-bottom:1px solid #e6edf5';
+  const fila=x=>{
+    const s=slaInfo(x.t), q=sinAtencion(x.t);
+    return '<tr>'+
+      '<td style="'+td+'"><b>'+esc(x.tipo)+'</b></td>'+
+      '<td style="'+td+'">'+esc(x.t.id)+'</td>'+
+      '<td style="'+td+'">'+esc(x.t.localidad||'')+'</td>'+
+      '<td style="'+td+'">'+esc(x.t.prioridad||'')+'</td>'+
+      '<td style="'+td+'">'+esc(x.t.status||'')+'</td>'+
+      '<td style="'+td+'"><b>'+esc(s.excedido? durCorta(s.excedido) : '—')+'</b></td>'+
+      '<td style="'+td+'">'+esc(q? (q.exacto?'':'~')+q.txt : '—')+'</td></tr>';
+  };
+  const th='text-align:left;padding:4px 10px';
   const html='<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#12263a">'+
     '<p><b>'+nuevos.length+' ticket(s)</b> de <b>'+esc(nombreCliente())+'</b> requieren atención.</p>'+
     '<table style="border-collapse:collapse;font-size:12.5px">'+
-    '<tr><th style="text-align:left;padding:4px 10px">Aviso</th><th style="text-align:left;padding:4px 10px">Folio</th>'+
-    '<th style="text-align:left;padding:4px 10px">Sede</th><th style="text-align:left;padding:4px 10px">Prioridad</th>'+
-    '<th style="text-align:left;padding:4px 10px">Status</th></tr>'+
+    '<tr><th style="'+th+'">Aviso</th><th style="'+th+'">Folio</th>'+
+    '<th style="'+th+'">Sede</th><th style="'+th+'">Prioridad</th>'+
+    '<th style="'+th+'">Status</th><th style="'+th+'">Vencido por</th>'+
+    '<th style="'+th+'">Sin movimiento</th></tr>'+
     nuevos.map(fila).join('')+'</table>'+
+    '<p style="color:#5b6b80;font-size:12px;margin-top:10px">El tiempo sin movimiento descuenta '+
+    'las esperas imputables al cliente o a un tercero. Un «~» significa que el ticket no se ha '+
+    'vuelto a guardar desde que se registra el último movimiento, y la cifra es aproximada.</p>'+
     '<p style="color:#5b6b80;font-size:12px;margin-top:14px">Enviado por el Sistema de Tickets NOC desde '+
     'la sesión de '+esc(S.me.mail||'')+'. Para dejar de recibirlo, quita tu dirección en '+
     'Catálogos › Administración › Alertas.</p></div>';
@@ -4360,7 +4470,13 @@ function alertasSLA(){
   if(!alertasActivas()) return;
   const v=S.idx.filter(t=>t.status!=='CERRADO'&&slaInfo(t).vencido);
   const p=S.idx.filter(t=>{const s=slaInfo(t);return t.status!=='CERRADO'&&!s.vencido&&s.pct>=0.7;});
-  if(v.length&&alertasActivas('slaVencido')) toast(v.length+' ticket(s) con SLA VENCIDO: '+v.slice(0,4).map(t=>t.id).join(', '),'err',12000);
+  /* Cuatro folios sueltos no dicen por cuál empezar. Se enseñan los que más tiempo
+     llevan pasados del compromiso, con ese tiempo al lado. */
+  if(v.length&&alertasActivas('slaVencido')){
+    const peor=v.slice().sort((a,b)=>slaInfo(b).excedido-slaInfo(a).excedido);
+    toast(v.length+' ticket(s) con SLA VENCIDO: '+
+      peor.slice(0,4).map(t=>t.id+' (+'+durCorta(slaInfo(t).excedido)+')').join(', '),'err',12000);
+  }
   if(p.length&&alertasActivas('slaPorVencer')) toast(p.length+' ticket(s) por vencer SLA: '+p.slice(0,4).map(t=>t.id).join(', '),'warn',10000);
   /* Una espera sin vigilancia se vuelve permanente: se avisa cuando el tercero incumple. */
   const c=S.idx.filter(t=>{
@@ -4420,7 +4536,15 @@ function filtrar(f){
 const COLSEG=[
   {k:'id',    t:'ID',                a:130, cls:'mono', v:t=>esc(t.id)},
   {k:'status',t:'Status',            a:95,  v:t=>pillStatus(t.status)},
-  {k:'sla',   t:'SLA',               a:120, v:t=>{const s=slaInfo(t);return '<span class="'+s.cls+'" style="font-size:11.5px">'+esc(s.txt)+'</span>';}},
+  /* La segunda línea solo aparece cuando hay algo que decir. Poner «0m sin mover» en las
+     250 filas convertiría el aviso en decorado y dejaría de leerse. */
+  {k:'sla',   t:'SLA',               a:165, v:t=>{
+    const s=slaInfo(t), a=sinAtencion(t), n=sinAtencionAlerta(t,a);
+    let h='<span class="'+s.cls+'" style="font-size:11.5px">'+esc(s.txt)+'</span>';
+    if(a&&n) h+='<div class="'+(n>1?'sla-bad':'sla-warn')+'" style="font-size:11px;margin-top:2px">'+
+      esc((a.exacto?'':'~')+a.txt+' sin mover')+'</div>';
+    return h;
+  }},
   {k:'prioridad',t:'Pri',            a:60,  v:t=>pillPri(t.prioridad)},
   {k:'cliente',t:'Cliente',          a:100, v:t=>esc(t.cliente)},
   {k:'localidad',t:'Localidad',      a:150, v:t=>esc(t.localidad)},
@@ -4890,11 +5014,41 @@ function pintarPausas(t){
       '</tr></thead><tbody>'+filas+'</tbody></table></div>' : '')+
     legado+'</div>';
 }
+/* En la cabecera del ticket, junto al SLA. Un ticket cerrado no se pinta: ya no hay nada
+   que atender y el número solo distraería. */
+/* Abrir un ticket ya trae su historial, así que de paso se afina la fila de la lista: no
+   cuesta ninguna petición y el «~» desaparece en cuanto alguien consulta el ticket. Solo
+   en memoria; el valor definitivo se escribe cuando el ticket se guarda. */
+function afinarUltAcc(t){
+  if(!t||!(t.historial||[]).length) return;
+  const e=(S.idx||[]).find(x=>x.id===t.id); if(!e) return;
+  const c=ultAccDe(t); if(!c) return;
+  e.ultAcc=c; e.ultAccQue=ultAccQueDe(t);
+}
+function pintarSinAtencion(t){
+  afinarUltAcc(t);
+  const el=$('#mQuieto'); if(!el) return;
+  const a=sinAtencion(t);
+  if(!a){ el.textContent=''; el.className=''; el.removeAttribute('title'); return; }
+  const n=sinAtencionAlerta(t,a);
+  el.className = n>1? 'sla-bad' : (n? 'sla-warn' : 'sla-ok');
+  el.textContent = ' · '+a.txt+' sin movimiento';
+  /* La fecha se enseña en hora del NOC, como todo lo demás del sistema. */
+  const dm=ahoraMx(new Date(a.desde)), h=hora12(dm);
+  el.title = 'Último movimiento'+(a.que? ' ('+a.que+')':'')+': '+
+    fechaHumana(todayISO(dm))+' '+h.t+' '+h.ap+'. '+
+    (a.bruto!==a.ms? 'Se descuentan '+durCorta(a.bruto-a.ms)+' de espera imputable a un tercero. ' : '')+
+    (a.exacto? '' : 'Aproximado: este ticket no se ha vuelto a guardar desde que se registra el último movimiento.');
+}
 function pintarTicket(t){
   const s=slaInfo(t);
   $('#mStatus').className='pill s-'+(t.status==='EN ESPERA'?'ESPERA':t.status); $('#mStatus').textContent=t.status;
   $('#mPri').className='pill pr-'+t.prioridad; $('#mPri').textContent=t.prioridad;
   $('#mSla').className=s.cls; $('#mSla').textContent='SLA '+s.txt;
+  /* Aquí el expediente ya está en memoria con su historial, así que el tiempo sin
+     atención es exacto y se dice desde qué movimiento se cuenta: sin eso, un número
+     solo invita a discutirlo. */
+  pintarSinAtencion(t);
   $('#mResumen').innerHTML=[
     campo('Cliente',t.cliente),campo('Localidad',t.localidad+' ['+t.localidadId+']'),
     campo('Piso(s)',(t.pisos&&t.pisos.length?t.pisos.join(', '):t.piso)),
@@ -6007,7 +6161,11 @@ const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad']
   ['fechaAp','Fecha apertura'],['horaAp','Hora apertura'],['tFalla','Tiempo de falla'],['tAfect','Tiempo de afectación'],
   ['fechaRes','Fecha restablecimiento'],['horaRes','Hora restablecimiento'],['fechaCie','Fecha cierre'],['horaCie','Hora cierre'],
   ['imputable','Imputable'],['esperaTotal','Tiempo en espera'],['esperaDesc','Espera descontada del SLA'],
-  ['esperaDe','Espera depende de'],['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
+  ['esperaDe','Espera depende de'],
+  /* Columnas de salida, no de entrada: se calculan al exportar. La plantilla de carga
+     (COLS_HIST) no cambia, así que los archivos que ya usa el cliente siguen sirviendo. */
+  ['slaExcedido','Tiempo vencido'],['sinAtencion','Tiempo sin movimiento'],['ultMov','Último movimiento'],
+  ['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
 function corteDe(t){
   return (t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
 }
@@ -6015,6 +6173,16 @@ const celda=(t,k)=>{
   if(k==='esperaTotal'){ const ms=msEspera(t,corteDe(t)); return ms? durHMS(ms):''; }
   if(k==='esperaDesc'){ const ms=msDescontable(t,corteDe(t)); return ms? durHMS(ms):''; }
   if(k==='esperaDe'){ const p=pausaAbierta(t); return p? ((p.imputable||'')+(p.tercero?' · '+p.tercero:'')):''; }
+  /* En horas:minutos:segundos, no en «3d 4h»: dentro de Excel el valor se ordena y se
+     suma, y para eso hace falta una sola unidad. El resumen corto es para la pantalla. */
+  if(k==='slaExcedido'){ const s=slaInfo(t); return s.excedido? durHMS(s.excedido):''; }
+  if(k==='sinAtencion'){ const a=sinAtencion(t); return a? durHMS(a.ms):''; }
+  if(k==='ultMov'){
+    const u=ultimoMovimiento(t); if(!u) return '';
+    const d=ahoraMx(new Date(u.cuando)); if(isNaN(d.getTime())) return '';
+    const h=hora12(d);
+    return todayISO(d)+' '+h.t+' '+h.ap+(u.exacto?'':' (aprox.)');
+  }
   return Array.isArray(t[k])?t[k].join(', '):(t[k]==null?'':String(t[k]));
 };
 
@@ -10955,6 +11123,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   guardarOrdenGraficas:guardarOrdenGraficas,PREF_ORDEN:PREF_ORDEN,_dashDefs:_dashDefs,
   sembrarDashDefs:sembrarDashDefs,_dashPorDefecto:_dashPorDefecto,
   pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
+  durCorta:durCorta,ultimoMovimiento:ultimoMovimiento,sinAtencion:sinAtencion,slaHoras:slaHoras,
+  sinAtencionAlerta:sinAtencionAlerta,ultAccDe:ultAccDe,ultAccQueDe:ultAccQueDe,afinarUltAcc:afinarUltAcc,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
