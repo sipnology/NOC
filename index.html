@@ -1132,7 +1132,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-17 · r123';
+const APP_VER = '2026-09-18 · r124';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1329,6 +1329,27 @@ function hmsToMs(t){
    mano para saber si son días o semanas. Para los tiempos que se miran de reojo —lo que
    lleva vencido, lo que lleva sin moverse— se dice en días y horas. El exacto no se
    quita: se acompaña, porque para reclamar un SLA hacen falta los segundos. */
+/* El texto que se ve al pasar el cursor por una celda. Quitar las etiquetas a secas pega
+   una línea contra la siguiente —«VENCIDO +15d 9h~16d 3h sin mover»—, que es justo lo que
+   vuelve inútil un tooltip. Los cortes de bloque pasan a ser separador, y de paso se
+   deshacen las entidades: el contenido ya venía escapado y al escaparlo otra vez para el
+   atributo salía «&amp;» donde debía verse «&». */
+function textoCelda(html){
+  return String(html==null?'':html)
+    .replace(/<br\s*\/?>/gi,' · ')
+    /* Hace falta marcar tanto la apertura como el cierre del bloque: el corte entre
+       «…9h</span><div>~16d…» está en el <div> que abre, no en el que cierra. */
+    .replace(/<\/?(div|p|li|tr|h\d)(\s[^>]*)?>/gi,' · ')
+    .replace(/<[^>]*>/g,'')
+    .replace(/&nbsp;/g,' ')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&apos;/g,"'")
+    .replace(/&amp;/g,'&')
+    .replace(/\s*·\s*/g,' · ')
+    .replace(/^(?:\s*·\s*)+|(?:\s*·\s*)+$/g,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
 function durCorta(ms){
   if(ms==null||isNaN(ms)||ms<0) return '';
   const m=Math.floor(ms/60000);
@@ -4218,6 +4239,65 @@ function ultimoMovimiento(t){
   const ap=t&&dt(t.fechaAp,t.horaAp);
   return ap? {cuando:ap.toISOString(),exacto:false,que:'APERTURA'} : null;
 }
+/* La espera solo tapa este reloj mientras el tercero esté DENTRO de la fecha que
+   prometió. Pasada esa fecha el tiempo vuelve a ser nuestro: el SLA sigue detenido
+   —contractualmente esa espera no nos corresponde— pero perseguir a quien incumplió sí
+   es trabajo nuestro.
+   Sin esto, los doce tickets en espera de BBVA mostraban «0m sin movimiento» llevando
+   diecisiete días parados y con el compromiso vencido entre catorce y veintidós días
+   antes: la lectura más sana posible para los tickets con peor pinta de todos.
+   Una espera SIN compromiso anotado no tiene fecha que vencer, y descontarla para
+   siempre reabriría el mismo agujero por la puerta de atrás. Poner el ticket en espera
+   desde la pantalla ya obliga a capturar el compromiso; la única forma de que llegue sin
+   él es una importación del histórico, donde la columna es opcional y la plantilla no se
+   toca. Para esos casos la espera se cubre como mucho una ventana de SLA: sin nada
+   documentado, un ticket se puede aparcar sobre la palabra de alguien el tiempo del
+   compromiso que el cliente ya tiene, y a partir de ahí es abandono. El umbral sale de
+   la prioridad, igual que el del aviso, así que no hay ningún número que configurar. */
+function ventanaSinCompromiso(t){ return (t&&(t.slaHoras||slaHoras(t.prioridad)))*3600000||0; }
+function msEsperaCubierta(t,corte,inicio){
+  const fin=corte||Date.now(); const ini=inicio||0; let ms=0;
+  ((t&&t.pausas)||[]).forEach(p=>{
+    if(!pausaDescuenta(p)) return;
+    const d=new Date(p.desde).getTime(); if(isNaN(d)) return;
+    let h=p.hasta? new Date(p.hasta).getTime() : fin;
+    if(p.compromiso){
+      const c=new Date(p.compromiso).getTime();
+      if(!isNaN(c)) h=Math.min(h,c);
+    }else{
+      const lim=ventanaSinCompromiso(t);
+      if(lim) h=Math.min(h,d+lim);
+    }
+    const abre=Math.max(d,ini), cierra=Math.min(h,fin);
+    if(cierra>abre) ms+=cierra-abre;
+  });
+  if(!pausaAbierta(t)){
+    if(!ini) ms+=(t&&t.esperaMs)||0;
+    if(t&&t.status==='EN ESPERA'&&t.esperaDesde){
+      const d=new Date(t.esperaDesde).getTime();
+      const abre=Math.max(d,ini);
+      if(!isNaN(d)&&fin>abre) ms+=fin-abre;
+    }
+  }
+  return ms;
+}
+/* Desde cuándo el tercero está fuera de plazo, para poder explicarlo en vez de soltar
+   un número que ayer era cero y hoy son tres semanas. */
+function compromisoVencido(t){
+  const p=pausaAbierta(t); if(!p) return null;
+  const quien=p.tercero||p.imputable||'';
+  if(p.compromiso){
+    const c=new Date(p.compromiso).getTime();
+    if(isNaN(c)||c>=Date.now()) return null;
+    return {desde:p.compromiso, tercero:quien, ms:Date.now()-c, sinCompromiso:false};
+  }
+  /* Espera sin compromiso: vence al cumplirse una ventana de SLA desde que empezó. */
+  const d=new Date(p.desde).getTime(); const lim=ventanaSinCompromiso(t);
+  if(isNaN(d)||!lim) return null;
+  const c=d+lim;
+  if(c>=Date.now()) return null;
+  return {desde:new Date(c).toISOString(), tercero:quien, ms:Date.now()-c, sinCompromiso:true};
+}
 function sinAtencion(t){
   if(!t||t.status==='CERRADO') return null;
   const u=ultimoMovimiento(t); if(!u) return null;
@@ -4225,11 +4305,10 @@ function sinAtencion(t){
   if(isNaN(desde)) return null;
   const ahora=Date.now();
   if(desde>ahora) desde=ahora;           /* reloj del equipo adelantado */
-  /* Misma regla que el reloj de SLA: si esperamos al cliente o a un tercero el tiempo no
-     es nuestro, y el ticket no está desatendido aunque nadie lo toque. */
-  const ms=Math.max(0,(ahora-desde)-msPausas(t,true,ahora,desde));
+  const cubierto=msEsperaCubierta(t,ahora,desde);
+  const ms=Math.max(0,(ahora-desde)-cubierto);
   return {ms:ms,desde:new Date(desde).toISOString(),exacto:u.exacto,que:u.que,
-    txt:durCorta(ms),bruto:ahora-desde};
+    txt:durCorta(ms),bruto:ahora-desde,cubierto:cubierto,incumplido:compromisoVencido(t)};
 }
 /* Cuánto silencio es demasiado depende de la prioridad: media hora sin mover un P1 es
    grave y tres días sin mover un P4 es normal. Se toma la mitad del compromiso, así que
@@ -4798,7 +4877,7 @@ function renderSeg(){
     }).join('')+'<th></th>';
   tb.tBodies[0].innerHTML = rows.length? rows.map(t=>'<tr'+(_segSel.has(t.id)?' class="sel"':'')+'>'+
       (puedeSel?'<td><input type="checkbox" data-sel="'+esc(t.id)+'"'+(_segSel.has(t.id)?' checked':'')+'></td>':'')+
-      cols.map(c=>'<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(String(c.v(t)).replace(/<[^>]*>/g,''))+'">'+c.v(t)+'</td>').join('')+
+      cols.map(c=>'<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(textoCelda(c.v(t)))+'">'+c.v(t)+'</td>').join('')+
       '<td><button class="btn sec" style="padding:4px 10px" data-open="'+esc(t.id)+'">Abrir</button></td>'+
     '</tr>').join('')
     : '<tr><td colspan="'+(cols.length+1+(puedeSel?1:0))+'" style="text-align:center;color:var(--muted);padding:22px">Sin resultados</td></tr>';
@@ -5033,12 +5112,21 @@ function pintarSinAtencion(t){
   const n=sinAtencionAlerta(t,a);
   el.className = n>1? 'sla-bad' : (n? 'sla-warn' : 'sla-ok');
   el.textContent = ' · '+a.txt+' sin movimiento';
-  /* La fecha se enseña en hora del NOC, como todo lo demás del sistema. */
+  /* La fecha se enseña en hora del NOC, como todo lo demás del sistema. Las frases se
+     arman por partes y se unen: así no queda un espacio suelto al final cuando no hay
+     ni descuento que explicar ni aviso de aproximación. */
   const dm=ahoraMx(new Date(a.desde)), h=hora12(dm);
-  el.title = 'Último movimiento'+(a.que? ' ('+a.que+')':'')+': '+
-    fechaHumana(todayISO(dm))+' '+h.t+' '+h.ap+'. '+
-    (a.bruto!==a.ms? 'Se descuentan '+durCorta(a.bruto-a.ms)+' de espera imputable a un tercero. ' : '')+
-    (a.exacto? '' : 'Aproximado: este ticket no se ha vuelto a guardar desde que se registra el último movimiento.');
+  const partes=['Último movimiento'+(a.que? ' ('+a.que+')':'')+': '+
+    fechaHumana(todayISO(dm))+' '+h.t+' '+h.ap+'.'];
+  if(a.cubierto) partes.push('Se descuentan '+durCorta(a.cubierto)+' de espera imputable a un tercero.');
+  /* Sin esta frase el número parece un error: el mismo ticket pasaba de «0m» a semanas. */
+  if(a.incumplido) partes.push(a.incumplido.sinCompromiso
+    ? ('El reloj volvió a correr el '+fechaHumana(String(a.incumplido.desde).slice(0,10))+
+       ': la espera no traía compromiso anotado y solo se cubre una ventana de SLA.')
+    : ('El reloj volvió a correr el '+fechaHumana(String(a.incumplido.desde).slice(0,10))+
+       ', cuando venció el compromiso'+(a.incumplido.tercero? ' de '+a.incumplido.tercero : '')+'.'));
+  if(!a.exacto) partes.push('Aproximado: este ticket no se ha vuelto a guardar desde que se registra el último movimiento.');
+  el.title = partes.join(' ');
 }
 function pintarTicket(t){
   const s=slaInfo(t);
@@ -8708,6 +8796,14 @@ async function analizarHistorico(file){
     if(st==='EN ESPERA'&&!pausas.length)
       avisos.push('Fila '+L+': ticket EN ESPERA sin datos de espera; su reloj de SLA seguirá corriendo. '+
                   'Llena «Inicio de espera» para que se descuente.');
+    /* La columna del compromiso es opcional en la plantilla y así se queda: los archivos
+       que el cliente ya tiene llenados siguen sirviendo. Pero sin ella no hay fecha que
+       vencer, y el ticket dejaría de contar como desatendido pasada una ventana de SLA
+       sin que nadie lo haya decidido. Se avisa en vez de callarlo. */
+    if(pausas.length&&!pausas[0].hasta&&!pausas[0].compromiso)
+      avisos.push('Fila '+L+': la espera no trae «Compromiso del tercero». El SLA se descuenta igual, '+
+                  'pero el tiempo sin atención solo se cubre '+(pri&&pri.slaHoras||24)+' h y después vuelve a correr. '+
+                  'Anota el compromiso para que se respete la fecha real.');
     if(st!=='EN ESPERA'&&pausas.length&&!pausas[0].hasta){
       pausas[0].hasta=(fin||new Date()).toISOString();
       avisos.push('Fila '+L+': la espera no traía fin y el ticket no está EN ESPERA; se cierra con la fecha de cierre.');
@@ -10125,7 +10221,7 @@ function dsRender(ds){
       if(edit&&c.k==='sedes') return '<td><select multiple size="4" data-ed="sedes">'+
         (S.cat.localidades||[]).map(l=>'<option value="'+esc(l.id)+'"'+((r.sip.sedes||[]).indexOf(l.id)!==-1?' selected':'')+'>'+esc(locLabel(l.id))+'</option>').join('')+'</select></td>';
       if(edit&&c.k==='nota') return '<td><input data-ed="nota" value="'+esc(r.sip.nota||'')+'"></td>';
-      return '<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(String(c.v(r)).replace(/<[^>]*>/g,''))+'">'+c.v(r)+'</td>';
+      return '<td class="'+(c.cls||'')+(c.wrap?' wrap':'')+'" title="'+esc(textoCelda(c.v(r)))+'">'+c.v(r)+'</td>';
     }).join('')+
     (puede? '<td style="white-space:nowrap">'+(edit
       ? '<button class="btn" style="padding:3px 9px" data-ok="'+i+'">✓</button> <button class="btn sec" style="padding:3px 9px" data-no="1">✕</button>'
@@ -11123,8 +11219,9 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   guardarOrdenGraficas:guardarOrdenGraficas,PREF_ORDEN:PREF_ORDEN,_dashDefs:_dashDefs,
   sembrarDashDefs:sembrarDashDefs,_dashPorDefecto:_dashPorDefecto,
   pausaDescuenta:pausaDescuenta,pausaAbierta:pausaAbierta,msPausas:msPausas,
-  durCorta:durCorta,ultimoMovimiento:ultimoMovimiento,sinAtencion:sinAtencion,slaHoras:slaHoras,
+  durCorta:durCorta,ultimoMovimiento:ultimoMovimiento,sinAtencion:sinAtencion,slaHoras:slaHoras,textoCelda:textoCelda,
   sinAtencionAlerta:sinAtencionAlerta,ultAccDe:ultAccDe,ultAccQueDe:ultAccQueDe,afinarUltAcc:afinarUltAcc,
+  msEsperaCubierta:msEsperaCubierta,compromisoVencido:compromisoVencido,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
