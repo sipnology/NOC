@@ -105,6 +105,30 @@ nav.subtabs2 button.on:hover{background:transparent;color:var(--brand2)}
 #rolMenu .nota{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
 main{padding:18px;max-width:1500px;margin:0 auto}
 .view{display:none}.view.on{display:block}
+/* Ayuda: tapa la aplicación entera pero no la descarta. Al cerrarla se vuelve justo
+   a donde se estaba, que es lo que diferencia consultar una duda de perder el sitio. */
+#ayudaCapa{position:fixed;inset:0;background:var(--bg);z-index:70;overflow:auto;display:none}
+#ayudaCapa.on{display:block}
+.ay-top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:14px 22px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:2}
+.ay-cuerpo{max-width:980px;margin:0 auto;padding:18px 22px 60px}
+.ay-cat{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
+.ay-cat button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+  border-radius:999px;padding:5px 13px;font-size:12.5px;cursor:pointer}
+.ay-cat button.on{background:var(--brand2);color:#fff;border-color:var(--brand2)}
+.ay-it{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel)}
+.ay-q{padding:12px 14px;cursor:pointer;font-weight:600;font-size:14px;display:flex;gap:10px;align-items:flex-start}
+.ay-q:hover{background:var(--panel2)}
+.ay-q .fl{color:var(--brand2);flex:0 0 auto;transition:transform .15s}
+.ay-it.on .ay-q .fl{transform:rotate(90deg)}
+.ay-a{display:none;padding:0 14px 14px 36px;font-size:13.5px;line-height:1.65;color:var(--txt)}
+.ay-it.on .ay-a{display:block}
+.ay-a b{color:var(--brand2)}
+.ay-a ol,.ay-a ul{margin:8px 0;padding-left:20px}
+.ay-a li{margin:4px 0}
+.ay-a .avi{border-left:3px solid var(--warn);background:var(--panel2);padding:8px 12px;
+  margin:10px 0;border-radius:0 6px 6px 0;font-size:13px}
+.ay-nada{color:var(--muted);text-align:center;padding:40px 0}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
 .panel>h2{font-size:15px;color:var(--brand2);letter-spacing:.3px;text-transform:uppercase;font-size:12.5px}
 .panel .hrow{display:flex;align-items:center;gap:12px;margin-bottom:12px}
@@ -422,6 +446,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <img id="logoCliente" class="hide" alt="">
     </div>
     <div class="who right" style="position:relative"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
+    <button class="btn sec" id="btnAyuda" title="Cómo se hace cada cosa, para tu perfil">? Ayuda</button>
     <button class="btn sec" id="btnLogout">Salir</button>
   </div>
   <nav class="tabs" id="tabs">
@@ -891,6 +916,21 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
   </div>
 </section>
 </main>
+
+<!-- ============ AYUDA ============ -->
+<div id="ayudaCapa">
+  <div class="ay-top">
+    <b style="font-size:17px">Ayuda</b>
+    <span class="badge" id="ayNivel"></span>
+    <input id="ayBuscar" placeholder="Busca por palabra: cerrar, pausa, reporte, SLA…" style="flex:1;min-width:220px">
+    <button class="btn sec" id="ayCerrar">Cerrar</button>
+  </div>
+  <div class="ay-cuerpo">
+    <div class="note" id="ayIntro"></div>
+    <div class="ay-cat" id="ayCats"></div>
+    <div id="ayLista"></div>
+  </div>
+</div>
 
 <!-- ============ MODAL DE SEGUIMIENTO ============ -->
 <div class="mask" id="mSeg">
@@ -11140,6 +11180,13 @@ function enlazarEventos(){
   }
   $('#btnMios').onclick=()=>vistaRapida('mios');
   $('#btnSinDueno').onclick=()=>vistaRapida('sinDueno');
+  $('#btnAyuda').onclick=abrirAyuda;
+  $('#ayCerrar').onclick=cerrarAyuda;
+  $('#ayBuscar').oninput=pintarAyuda;
+  /* Escape cierra la ayuda. Si hay un ticket abierto detrás, sigue abierto al volver. */
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&$('#ayudaCapa').classList.contains('on')) cerrarAyuda();
+  });
   $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
   $('#btnCols').onclick=e=>{ e.stopPropagation(); panelColumnas(); };
   document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove();
@@ -11379,6 +11426,370 @@ window.addEventListener('DOMContentLoaded',function(){
   setInterval(()=>{ if(S.idx.length) alertasSLA(); }, 15*60*1000);   // recordatorio de SLA cada 15 min
 });
 
+/* ---------------------- AYUDA EN PANTALLA ----------------------
+   Sustituye a los manuales en Word. La razón es el mantenimiento: este sistema va por la
+   versión r125, y cada cambio de pantalla deja obsoleta una captura de un documento que
+   nadie vuelve a abrir. Esto viaja dentro del propio archivo, así que no puede
+   desfasarse de la versión que el usuario tiene delante.
+   Cada entrada declara para qué niveles vale, y solo se enseña lo que ese perfil puede
+   hacer de verdad: al cliente no se le explican botones que no va a ver. */
+const NIVELES=['cliente','operador','admin','dueno'];
+function nivelUsuario(){
+  if(esDueno()) return 'dueno';
+  if(isAdmin()) return 'admin';
+  return esInterno()? 'operador' : 'cliente';
+}
+function nivelAlcanza(minimo){
+  return NIVELES.indexOf(nivelUsuario()) >= NIVELES.indexOf(minimo);
+}
+/* Algunas preguntas son la misma para todos pero con respuesta distinta según el perfil
+   —«¿qué puedo hacer aquí?» no se responde igual a un cliente que a un operador—. Esas
+   llevan «hasta», el nivel máximo que las ve, para que un operador no se encuentre la
+   misma pregunta dos veces con dos respuestas. */
+function ayudaAplica(e){
+  if(!nivelAlcanza(e.n)) return false;
+  if(e.hasta && NIVELES.indexOf(nivelUsuario()) > NIVELES.indexOf(e.hasta)) return false;
+  return true;
+}
+const AYUDA=[
+ /* ---- Primeros pasos ---- */
+ {c:'Primeros pasos', n:'cliente', hasta:'cliente', ir:'vSeguimiento',
+  q:'¿Qué es esto y qué puedo hacer aquí?',
+  a:'Es el sistema con el que la NOC de Sipnology lleva el control de las incidencias de tu '+
+    'operación. Aquí puedes <b>consultar</b> el estado de cualquier ticket, ver su historial '+
+    'completo, revisar el inventario de equipos y <b>sacar reportes</b> en Excel o PDF.'+
+    '<div class="avi">Tu perfil es de <b>solo lectura</b>: puedes ver y exportar todo lo tuyo, '+
+    'pero no modificar nada. Quien abre, mueve y cierra los tickets es la NOC.</div>'},
+ {c:'Primeros pasos', n:'operador', ir:'vSeguimiento',
+  q:'¿Qué es esto y qué puedo hacer aquí?',
+  a:'Es el sistema de tickets de la NOC. Con tu perfil puedes <b>abrir tickets</b>, darles '+
+    'seguimiento, ponerlos en espera, cerrarlos, capturar CRQs, SITs, casos de fabricante y '+
+    'RMA, mantener el inventario y sacar reportes.<ul>'+
+    '<li>Lo que <b>no</b> puedes hacer: eliminar tickets, tocar los catálogos maestros ni '+
+    'administrar cuentas. Eso es del administrador.</li></ul>'},
+ {c:'Primeros pasos', n:'cliente',
+  q:'¿Por qué solo veo la información de mi empresa?',
+  a:'Porque el sistema es multicliente y cada cliente está aislado. Tu cuenta está asociada a '+
+    'un cliente y <b>solo ves lo de ese cliente</b>: sus tickets, sus sedes, su inventario y '+
+    'sus reportes. No hay forma de que veas datos de otro, ni otro los tuyos. Los catálogos '+
+    '(sedes, pisos, tipos de incidente) también son propios de cada cliente.'},
+ {c:'Primeros pasos', n:'operador',
+  q:'¿Qué significa el nivel que aparece junto a mi nombre?',
+  a:'Hay cuatro, de menos a más permisos:<ul>'+
+    '<li><b>CLIENTE</b> — solo lectura, y solo de su empresa.</li>'+
+    '<li><b>OPERADOR</b> — abre, mueve y cierra tickets; captura los demás módulos.</li>'+
+    '<li><b>ADMIN</b> — todo lo anterior más catálogos, cuentas, importaciones y borrado de tickets.</li>'+
+    '<li><b>PROPIETARIO</b> — además, respaldos, restauración y borrados masivos.</li></ul>'+
+    'Si tu insignia se puede pulsar, puedes <b>simular otro perfil</b> sin cerrar sesión, para '+
+    'comprobar qué ve un cliente. Mientras simulas, todo queda registrado con tu cuenta real.'},
+ {c:'Primeros pasos', n:'cliente',
+  q:'¿Queda registro de lo que hago aquí?',
+  a:'Sí, y es deliberado. Cada consulta, búsqueda y reporte queda con tu correo, la fecha y la '+
+    'hora. Sirve para poder responder después «quién vio qué y cuándo», que es lo que da valor '+
+    'a un registro de incidencias frente a un correo suelto.'},
+
+ /* ---- Tablero ---- */
+ {c:'Tablero', n:'cliente', ir:'vEstado',
+  q:'¿Qué me está diciendo el tablero?',
+  a:'Es la foto del momento, y responde a los filtros que tengas puestos arriba. Los recuadros '+
+    'de cifras son:<ul>'+
+    '<li><b>Total / Abiertos / En espera / Cerrados</b> — el reparto por status.</li>'+
+    '<li><b>Fuera de SLA</b> — cuántos pasaron su compromiso, abiertos y cerrados.</li>'+
+    '<li><b>Cumplimiento SLA</b> — el porcentaje dentro de compromiso sobre el total filtrado. '+
+    'Es la métrica frente al cliente.</li>'+
+    '<li><b>MTTR bruto</b> y <b>MTTR neto</b> — el tiempo medio de resolución con y sin las '+
+    'esperas imputables a terceros. La diferencia entre los dos es lo que se perdió esperando '+
+    'a alguien de fuera.</li></ul>'+
+    'Pasa el cursor por la (i) de cada recuadro para ver qué cuenta exactamente.'},
+ {c:'Tablero', n:'operador', ir:'vEstado',
+  q:'¿Puedo cambiar las gráficas del tablero?',
+  a:'Sí, y se queda guardado para ti.<ul>'+
+    '<li><b>Agregar</b> — elige una dimensión en «Nueva gráfica…» y pulsa «+ Agregar gráfica». '+
+    'Hay por cliente, sede, piso, status, prioridad, categoría, tipo de incidente, equipo, '+
+    'número de serie, día, mes, imputable, responsable y cumplimiento de SLA.</li>'+
+    '<li><b>Cambiar el tipo</b> — con el desplegable de cada una: barras, barras horizontales, '+
+    'pastel, dona o líneas.</li>'+
+    '<li><b>Mover</b> — arrastrando desde el asa de la esquina.</li>'+
+    '<li><b>Quitar</b> — con la × de la esquina.</li></ul>'+
+    'Para nombres largos, como los de sede, las <b>barras horizontales</b> se leen mejor: en '+
+    'vertical el texto se solapa.'},
+ {c:'Tablero', n:'cliente', ir:'vEstado',
+  q:'¿Puedo llevarme el tablero a Excel o PDF?',
+  a:'Sí, con <b>Exportar…</b> arriba a la derecha del tablero. Las gráficas van con los mismos '+
+    'datos y los mismos colores que ves en pantalla, y el Excel lleva además los datos detrás '+
+    'de cada gráfica para que puedas filtrarlos por tu cuenta.'},
+
+ /* ---- Tickets ---- */
+ {c:'Tickets', n:'operador', ir:'vApertura',
+  q:'¿Cómo abro un ticket?',
+  a:'En <b>Apertura de ticket</b>. El folio se calcula solo a partir de la sede y la fecha, no '+
+    'se escribe a mano.<ol>'+
+    '<li>Elige <b>sede</b> y <b>piso</b>. La sede fija los dos primeros dígitos del folio.</li>'+
+    '<li>Elige <b>categoría → subcategoría → tipo de incidente</b>. Van en cascada: cada una '+
+    'filtra la siguiente.</li>'+
+    '<li>Marca la <b>prioridad</b>. De ahí sale el compromiso de SLA en horas.</li>'+
+    '<li>Añade los <b>equipos</b> afectados. Si es un stack, el número de serie es lo que '+
+    'identifica al equipo exacto, porque el hostname se repite.</li>'+
+    '<li>Indica los <b>colaterales</b> o marca «sin afectación colateral». No se puede dejar en blanco.</li>'+
+    '<li>Fecha y hora de apertura, y la <b>descripción</b> de lo que pasa.</li></ol>'+
+    '<div class="avi">Lo que escribas se guarda como <b>borrador</b> conforme lo capturas. Si se '+
+    'cierra la pestaña o se va la luz, al volver te ofrece recuperarlo.</div>'},
+ {c:'Tickets', n:'operador',
+  q:'¿Por qué me avisa de que el ticket puede estar duplicado?',
+  a:'Salta cuando ya hay un ticket abierto con la misma sede y el mismo equipo. No te bloquea: '+
+    'te enseña el que ya existe para que decidas. Si de verdad es el mismo problema, conviene '+
+    'seguir en el ticket abierto en vez de crear otro; si es distinto, continúa.'},
+ {c:'Tickets', n:'cliente', ir:'vSeguimiento',
+  q:'¿Cómo busco un ticket?',
+  a:'En <b>Seguimiento</b>. Puedes filtrar por folio, sede, piso, categoría, prioridad, status, '+
+    'fechas o responsable. El campo de <b>equipo afectado</b> busca a la vez en hostname y en '+
+    'número de serie, así que sirve cualquiera de los dos. Después de <b>Aplicar filtros</b>, '+
+    'pulsa <b>Abrir</b> en la fila para ver el expediente completo.'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Cómo registro un avance sin cerrar el ticket?',
+  a:'Abre el ticket y baja a <b>Seguimiento y cierre</b>. Escribe la nota en «Notas y '+
+    'actividades», puedes adjuntar evidencias, y pulsa <b>Guardar seguimiento</b> dejando '+
+    '«Nuevo status» en <i>— sin cambio —</i>.<div class="avi">Cada seguimiento reinicia el '+
+    'contador de <b>tiempo sin movimiento</b>. Es lo que evita que un ticket se quede semanas '+
+    'olvidado sin que nadie lo note.</div>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Cómo cierro un ticket?',
+  a:'En el mismo formulario, poniendo «Nuevo status» en <b>CERRADO</b>. El sistema exige, y no '+
+    'te deja guardar sin ellos: fecha y hora de <b>restablecimiento</b>, fecha y hora de '+
+    '<b>cierre</b>, <b>tiempo de afectación</b>, a quién es <b>imputable</b>, las notas y las '+
+    'observaciones de cierre.<div class="avi">No es burocracia: sin esos datos no se puede '+
+    'defender después un incumplimiento de SLA ante el cliente.</div>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Cómo pongo un ticket en espera y qué efecto tiene?',
+  a:'Cambia el status a <b>EN ESPERA</b>. Te va a pedir de quién depende la espera, el tercero '+
+    'o área concreta, el motivo y la <b>fecha y hora comprometidas</b>. Los cinco son obligatorios.<ul>'+
+    '<li>Si la espera depende del <b>cliente o de un tercero</b>, ese tiempo <b>se descuenta '+
+    'del SLA</b>: no es tiempo nuestro.</li>'+
+    '<li>Si esperamos algo <b>nuestro</b>, no descuenta nada.</li></ul>'+
+    '<div class="avi">El reloj de <b>tiempo sin movimiento</b> se comporta distinto: la espera lo '+
+    'tapa solo mientras el tercero esté dentro de la fecha que prometió. Pasada esa fecha vuelve '+
+    'a correr, porque perseguir a quien incumplió sí es trabajo nuestro.</div>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿De quién es un ticket? ¿Cómo lo reasigno?',
+  a:'Quien <b>abre</b> el ticket se queda con él automáticamente, así que ninguno nace sin '+
+    'responsable. Dentro del ticket verás «Asignado a» con dos botones: <b>Tomarlo yo</b> y '+
+    '<b>Reasignar</b>. Cualquier operador puede hacerlo, sin pedir permiso.<ul>'+
+    '<li>Solo se puede asignar a cuentas <b>@sipnology.com.mx</b>.</li>'+
+    '<li>El cambio queda en el historial con quién lo hizo y desde quién.</li>'+
+    '<li>No se manda correo al nuevo responsable: lo ve con el botón <b>Mis tickets</b>.</li></ul>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Qué hacen los botones «Mis tickets» y «Sin dueño»?',
+  a:'Son dos atajos en <b>Seguimiento</b>, a la derecha de los filtros.<ul>'+
+    '<li><b>Mis tickets</b> — los que están a tu nombre.</li>'+
+    '<li><b>Sin dueño</b> — los abiertos que nadie ha reclamado. Los importados del histórico '+
+    'salen aquí, porque traen el nombre de quien los abrió en su día pero nadie de la NOC los '+
+    'ha tomado.</li></ul>Se quedan marcados en azul mientras están puestos, para que no creas '+
+    'que no hay tickets cuando lo que pasa es que están filtrados. Se apagan pulsándolos otra vez.'},
+ {c:'Tickets', n:'cliente',
+  q:'¿Qué significa la columna de SLA?',
+  a:'Lleva hasta tres líneas:<ul>'+
+    '<li><b>377:48:34 / 8h</b> — tiempo transcurrido frente al compromiso de esa prioridad.</li>'+
+    '<li><b>⚠ VENCIDO +15d 9h</b> — cuánto se pasó del compromiso, no solo que se pasó.</li>'+
+    '<li><b>16d 3h sin mover</b> — lo que lleva sin que nadie lo toque. Solo aparece cuando ya '+
+    'es preocupante para esa prioridad.</li></ul>'+
+    'Un <b>~</b> delante significa que la cifra es aproximada porque ese ticket no se ha vuelto '+
+    'a guardar desde que el sistema registra el último movimiento. Desaparece en cuanto se abre.'+
+    '<div class="avi">El SLA puede verse en <b>verde</b> y el tiempo sin movimiento en <b>rojo</b> '+
+    'a la vez, y los dos son correctos: el reloj del compromiso está detenido por una espera '+
+    'legítima, pero el ticket sigue sin que nadie lo empuje.</div>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Puedo cerrar varios tickets de una vez?',
+  a:'Sí. Marca las casillas de las filas en <b>Seguimiento</b> y usa la barra de acciones que '+
+    'aparece abajo. Te pedirá una <b>nota de cierre</b> obligatoria, que se registra en el '+
+    'historial de cada uno de los tickets por separado, no como un apunte común.'},
+ {c:'Tickets', n:'admin', ir:'vSeguimiento',
+  q:'¿Cómo corrijo un dato mal capturado en la apertura?',
+  a:'Abre el ticket y pulsa <b>Editar datos del ticket</b>. Cada campo que cambies queda '+
+    'registrado en el historial <b>con su valor anterior</b>, y el sistema te dice cuántos '+
+    'cambios va a registrar antes de confirmar. No se puede corregir nada en silencio.'},
+ {c:'Tickets', n:'admin', ir:'vSeguimiento',
+  q:'¿Cómo reabro un ticket cerrado?',
+  a:'Ábrelo y pulsa <b>Reabrir ticket</b>. El <b>motivo es obligatorio</b> y queda en el '+
+    'historial. El ticket vuelve a ABIERTO y su reloj de SLA vuelve a correr. En la ficha queda '+
+    'anotado cuántas veces se ha reabierto.'},
+
+ /* ---- Módulos ---- */
+ {c:'CRQs, SITs, Fabricante y RMA', n:'cliente', ir:'vCRQ',
+  q:'¿Qué son estos cuatro módulos?',
+  a:'<ul><li><b>CRQs</b> — cambios programados.</li>'+
+    '<li><b>SITs</b> — solicitudes de instalación o traslado.</li>'+
+    '<li><b>Casos Fabricante</b> — casos abiertos con el fabricante.</li>'+
+    '<li><b>RMA</b> — devoluciones y reemplazos de equipo.</li></ul>'+
+    'Solo aparecen los módulos que tu empresa tenga contratados.'},
+ {c:'CRQs, SITs, Fabricante y RMA', n:'operador', ir:'vCRQ',
+  q:'¿Cómo cargo un archivo de CRQs o SITs?',
+  a:'Descarga primero la <b>plantilla</b> desde el propio módulo y llénala.<ol>'+
+    '<li>Arrastra el archivo o selecciónalo.</li>'+
+    '<li>El sistema <b>reconoce los encabezados</b> aunque no se llamen igual: «CRQ», «Folio» o '+
+    '«Número de cambio» se entienden como lo mismo.</li>'+
+    '<li>Antes de escribir nada te enseña un <b>informe</b>: cuántos registros leyó, cuáles '+
+    'pisarían a uno existente y con qué valores, y qué filas descarta.</li>'+
+    '<li>Revísalo y confirma.</li></ol>'+
+    '<div class="avi">Si el archivo no trae columna de folio se <b>rechaza entero</b>, porque sin '+
+    'identificador no hay forma de saber si un renglón es nuevo o pisa a otro.</div>'},
+
+ /* ---- Reportes ---- */
+ {c:'Reportes', n:'cliente', ir:'vReportes',
+  q:'¿Cómo saco un reporte?',
+  a:'En <b>Reportes</b>.<ol>'+
+    '<li>Marca los <b>módulos</b> que quieres incluir.</li>'+
+    '<li>Elige las <b>columnas</b> de cada uno.</li>'+
+    '<li>Acota por <b>localidad</b> y por fechas si hace falta.</li>'+
+    '<li>Decide si quieres <b>gráficas</b> y <b>hoja de resumen</b>.</li>'+
+    '<li>Genera en <b>Excel</b> o <b>PDF</b>.</li></ol>'+
+    'Si repites el mismo reporte a menudo, guárdalo como <b>plantilla</b> y la próxima vez es un clic.'},
+ {c:'Reportes', n:'cliente',
+  q:'¿Qué columnas de tiempo puedo incluir?',
+  a:'Además de las de siempre, hay tres que se calculan al exportar:<ul>'+
+    '<li><b>Tiempo vencido</b> — cuánto se pasó del compromiso.</li>'+
+    '<li><b>Tiempo sin movimiento</b> — lo que lleva sin que nadie lo toque.</li>'+
+    '<li><b>Último movimiento</b> — cuándo fue y de qué tipo.</li></ul>'+
+    'Salen en formato <b>horas:minutos:segundos</b> a propósito, para que dentro de Excel se '+
+    'puedan ordenar y sumar. El resumen corto («15d 9h») es solo para la pantalla.'},
+ {c:'Reportes', n:'operador', ir:'vReportes',
+  q:'¿Puedo mandar el reporte por correo?',
+  a:'Sí, eligiendo <b>enviar</b> como destino y poniendo las direcciones. Sale desde tu propia '+
+    'cuenta de Microsoft 365, con el logo de Sipnology y el del cliente.'+
+    '<div class="avi">Si está puesto el <b>bloqueo total de correo</b> en Administración, no sale '+
+    'nada. Es el seguro para enseñar el sistema sin riesgo de escribirle a un cliente por error.</div>'},
+
+ /* ---- Inventario ---- */
+ {c:'Inventario', n:'cliente', ir:'vInventario',
+  q:'¿Qué hay en Inventario?',
+  a:'Los equipos de tu operación: hostname, número de serie, IP, tipo, modelo, sede, piso y '+
+    'versión de firmware. Puedes filtrar, buscar y exportarlo. Es también de donde salen los '+
+    'equipos al abrir un ticket, por eso conviene que esté al día.'},
+ {c:'Inventario', n:'operador', ir:'vInventario',
+  q:'¿Cómo actualizo el inventario?',
+  a:'Se puede editar en pantalla o cargar un archivo con la plantilla de dispositivos. Los '+
+    'cambios se quedan <b>en memoria</b> hasta que pulsas <b>Guardar cambios</b>.'+
+    '<div class="avi">Si intentas salir del inventario con cambios sin guardar, el sistema te '+
+    'detiene y te obliga a guardarlos o descartarlos. No se pierden por accidente.</div>'},
+
+ /* ---- Catálogos y administración ---- */
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo doy de alta un cliente nuevo?',
+  a:'En <b>Catálogos → Administración → Clientes</b>. Pon el nombre, marca los módulos que tiene '+
+    'contratados y sube su logo.<div class="avi">El <b>ID interno</b> se genera del nombre y '+
+    '<b>no se puede cambiar</b> después, porque nombra su carpeta en SharePoint y queda escrito '+
+    'dentro de cada ticket, equipo, CRQ y SIT. El nombre visible sí se puede cambiar cuando quieras.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo doy acceso a alguien del cliente?',
+  a:'En <b>Administración → Usuarios cliente</b>, asociando su correo al cliente que le toca. '+
+    'Esa cuenta entrará con perfil CLIENTE y verá <b>solo</b> lo de ese cliente.'+
+    '<div class="avi">La invitación como usuario externo en Microsoft 365 la hace un '+
+    'administrador del tenant desde el portal; el sistema no la manda por ti.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo cambio quién recibe las alertas de SLA?',
+  a:'En <b>Administración → Alertas</b>, en «A quién se avisa de los SLA». Escribe las '+
+    'direcciones separadas por coma, punto y coma o una por línea. Debajo te dice cuántas '+
+    'reconoció y te marca en rojo las que no parecen correos, las repetidas y las de fuera '+
+    'de sipnology.com.mx.<div class="avi">Los avisos salen desde <b>la sesión de quien esté '+
+    'conectado</b>. De madrugada, sin nadie con el sistema abierto, no hay quien los mande.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Para qué sirve el interruptor general de alertas?',
+  a:'Con <b>Avisos automáticos</b> apagado el sistema no dice nada por su cuenta: ni recordatorios '+
+    'en pantalla ni correos. Los interruptores de abajo (SLA vencido, por vencer, compromiso de '+
+    'tercero) no tienen efecto mientras el general esté apagado. Es lo que conviene durante las '+
+    'pruebas, para que nadie reciba avisos de datos que no son reales.'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo edito sedes, pisos, categorías o prioridades?',
+  a:'En <b>Catálogos</b>, eligiendo el grupo en el desplegable. Recuerda que <b>los catálogos son '+
+    'propios de cada cliente</b>: las sedes de uno no aparecen en otro.'+
+    '<div class="avi">Si un guardado fuera a dejar el catálogo de sedes con menos entradas de las '+
+    'que tenía, el sistema <b>se detiene y avisa</b> antes de escribir. Un catálogo de sedes vacío '+
+    'dejaría huérfanos todos los tickets del cliente.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo importo el histórico de tickets?',
+  a:'En <b>Catálogos → Tickets</b>, con la plantilla de histórico. Igual que en los demás módulos, '+
+    'te enseña un informe antes de escribir nada.<div class="avi">Si un ticket viene EN ESPERA, '+
+    'llena las columnas de espera. Sin ellas su reloj de SLA sigue corriendo como si nadie lo '+
+    'hubiera detenido, y el incumplimiento sale inflado. Y si no anotas el <b>compromiso del '+
+    'tercero</b>, el tiempo sin atención solo se cubre una ventana de SLA y después vuelve a correr.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Qué es el modo diagnóstico?',
+  a:'En <b>Administración → Diagnóstico</b>. Con él encendido, los fallos que normalmente el '+
+    'sistema se calla —para no enseñarle a un cliente un error técnico de SharePoint que no le '+
+    'corresponde resolver— se pintan en pantalla con su código y su causa. Sirve cuando alguien '+
+    'reporta que «algo no funciona» y no hay forma de ver su consola. Déjalo apagado en el día a día.'},
+ {c:'Administración', n:'dueno', ir:'vCatalogos',
+  q:'¿Cómo hago un respaldo y cómo lo restauro?',
+  a:'En <b>Administración → Respaldo y Restauración</b>. El respaldo incluye catálogo, inventario, '+
+    'tickets con su historial y sus pausas, y los adjuntos. Puedes descargarlo o dejarlo guardado '+
+    'en SharePoint.<div class="avi">Restaurar <b>sobrescribe</b> lo que haya. Antes de hacerlo, '+
+    'saca un respaldo del estado actual: es la única forma de volver atrás si la restauración no '+
+    'era la que creías.</div>'},
+
+ /* ---- Bitácora ---- */
+ {c:'Bitácora', n:'operador', ir:'vBitacora',
+  q:'¿Qué guarda la bitácora?',
+  a:'Quién hizo qué y cuándo: entradas y salidas, navegación, búsquedas, aperturas, seguimientos, '+
+    'cierres, ediciones, importaciones, reportes y cambios de catálogo. Se puede filtrar por '+
+    'usuario, tipo de evento y fechas, y exportar.'+
+    '<div class="avi">La actividad de las cuentas de cliente <b>no</b> va aquí: va a una lista '+
+    'aparte en SharePoint. La bitácora es el registro interno de Sipnology, y darle escritura a '+
+    'un cliente sería dejarle tocar la auditoría de los demás.</div>'}
+];
+let _ayCat='', _ayVistaPrevia='';
+function ayudaVisibles(){
+  return AYUDA.filter(ayudaAplica);
+}
+function pintarAyuda(){
+  const q=String(($('#ayBuscar')||{}).value||'').trim().toLowerCase();
+  let lista=ayudaVisibles();
+  if(_ayCat) lista=lista.filter(e=>e.c===_ayCat);
+  if(q){
+    /* Se busca también en la respuesta, sin etiquetas: quien escribe «pausa» no tiene por
+       qué acertar con el título exacto de la pregunta. */
+    lista=lista.filter(e=>(e.q+' '+e.c+' '+textoCelda(e.a)).toLowerCase().indexOf(q)!==-1);
+  }
+  const cont=$('#ayLista'); if(!cont) return;
+  cont.innerHTML = lista.length? lista.map((e,i)=>
+    '<div class="ay-it" data-ay="'+i+'">'+
+      '<div class="ay-q"><span class="fl">▸</span><span>'+esc(e.q)+'</span></div>'+
+      '<div class="ay-a">'+e.a+
+        (e.ir? '<div style="margin-top:12px"><button class="btn sec" data-ayir="'+esc(e.ir)+'" '+
+               'style="padding:5px 12px">Llévame ahí →</button></div>' : '')+
+      '</div></div>').join('')
+    : '<div class="ay-nada">Nada coincide con «'+esc(q)+'».<br>Prueba con una palabra suelta: '+
+      'cerrar, espera, reporte, inventario, alertas.</div>';
+  cont.querySelectorAll('.ay-q').forEach(el=>{
+    el.onclick=()=>el.parentElement.classList.toggle('on');
+  });
+  cont.querySelectorAll('[data-ayir]').forEach(b=>{
+    b.onclick=e=>{ e.stopPropagation(); cerrarAyuda(); irA(b.dataset.ayir); };
+  });
+}
+function pintarCatsAyuda(){
+  const cats=[...new Set(ayudaVisibles().map(e=>e.c))];
+  const c=$('#ayCats'); if(!c) return;
+  c.innerHTML='<button class="'+(_ayCat?'':'on')+'" data-aycat="">Todo</button>'+
+    cats.map(x=>'<button class="'+(_ayCat===x?'on':'')+'" data-aycat="'+esc(x)+'">'+esc(x)+'</button>').join('');
+  c.querySelectorAll('[data-aycat]').forEach(b=>{
+    b.onclick=()=>{ _ayCat=b.dataset.aycat; pintarCatsAyuda(); pintarAyuda(); };
+  });
+}
+function abrirAyuda(){
+  const n=nivelUsuario();
+  const etiqueta={cliente:'CLIENTE',operador:'OPERADOR',admin:'ADMIN',dueno:'PROPIETARIO'}[n];
+  $('#ayNivel').textContent=etiqueta;
+  $('#ayNivel').className='badge '+(n==='cliente'?'b-cli':(n==='operador'?'b-op':'b-admin'));
+  $('#ayIntro').innerHTML='Esto es lo que puedes hacer con el perfil <b>'+esc(etiqueta)+'</b>. '+
+    'Se muestra solo lo que tu perfil permite, así que no vas a leer instrucciones de botones '+
+    'que no vas a encontrar. Versión <b class="mono">'+esc(APP_VER)+'</b>.';
+  _ayCat=''; $('#ayBuscar').value='';
+  pintarCatsAyuda(); pintarAyuda();
+  $('#ayudaCapa').classList.add('on');
+  $('#ayBuscar').focus();
+  logEvent('AYUDA_ABIERTA','perfil '+etiqueta);
+}
+function cerrarAyuda(){ $('#ayudaCapa').classList.remove('on'); }
+
 /* Exponer para pruebas automatizadas (jsdom) */
 window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
@@ -11396,6 +11807,8 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   sinAtencionAlerta:sinAtencionAlerta,ultAccDe:ultAccDe,ultAccQueDe:ultAccQueDe,afinarUltAcc:afinarUltAcc,
   msEsperaCubierta:msEsperaCubierta,compromisoVencido:compromisoVencido,
   asignado:asignado,esMio:esMio,sinDueno:sinDueno,reasignar:reasignar,gentePosible:gentePosible,
+  AYUDA:AYUDA,NIVELES:NIVELES,nivelUsuario:nivelUsuario,nivelAlcanza:nivelAlcanza,
+  ayudaVisibles:ayudaVisibles,abrirAyuda:abrirAyuda,cerrarAyuda:cerrarAyuda,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
