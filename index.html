@@ -1177,7 +1177,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-18 · r126';
+const APP_VER = '2026-09-18 · r127';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -11868,11 +11868,17 @@ function pintarCatsAyuda(){
 function abrirAyuda(){
   const n=nivelUsuario();
   const etiqueta={cliente:'CLIENTE',operador:'OPERADOR',admin:'ADMIN',dueno:'PROPIETARIO'}[n];
-  $('#ayNivel').textContent=etiqueta;
-  $('#ayNivel').className='badge '+(n==='cliente'?'b-cli':(n==='operador'?'b-op':'b-admin'));
+  /* Si se está simulando un perfil, la ayuda sigue al simulado —que es justo para lo que
+     sirve simular— pero lo dice. Leer «esto es lo que puedes hacer con el perfil OPERADOR»
+     siendo propietario, sin más, invita a pensar que se perdieron permisos. */
+  const sim=!!_simRol;
+  $('#ayNivel').textContent=etiqueta+(sim?' (SIMULADO)':'');
+  $('#ayNivel').className='badge '+(sim?'b-admin':(n==='cliente'?'b-cli':(n==='operador'?'b-op':'b-admin')));
   $('#ayIntro').innerHTML='Esto es lo que puedes hacer con el perfil <b>'+esc(etiqueta)+'</b>. '+
     'Se muestra solo lo que tu perfil permite, así que no vas a leer instrucciones de botones '+
-    'que no vas a encontrar. Versión <b class="mono">'+esc(APP_VER)+'</b>.';
+    'que no vas a encontrar. Versión <b class="mono">'+esc(APP_VER)+'</b>.'+
+    (sim? '<br><b style="color:var(--warn)">Estás simulando este perfil</b>: la ayuda te enseña '+
+      'lo que vería quien lo tenga de verdad. Vuelve a tu perfil para ver la tuya completa.' : '');
   _ayCat=''; $('#ayBuscar').value='';
   pintarCatsAyuda(); pintarAyuda();
   $('#ayudaCapa').classList.add('on');
