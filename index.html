@@ -256,6 +256,7 @@ tr.sel td{background:rgba(59,130,246,.12)}
 .btn:hover{filter:brightness(1.08)}
 .btn.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line);font-weight:600}
 .btn.dan{background:var(--p1);color:#fff}
+.btn.sec.on{background:var(--brand2);color:#fff;border-color:var(--brand2)}
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .right{margin-left:auto}
@@ -558,6 +559,9 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <button class="btn" id="btnFiltrar">Aplicar filtros</button>
       <button class="btn sec" id="btnLimpiaF">Limpiar</button>
       <button class="btn sec" id="btnRefrescar">↻ Refrescar desde SharePoint</button>
+      <span style="flex:1"></span>
+      <button class="btn sec" id="btnMios" title="Los tickets de los que respondes tú">Mis tickets</button>
+      <button class="btn sec" id="btnSinDueno" title="Abiertos que nadie ha reclamado">Sin dueño</button>
     </div>
   </div>
   <div class="panel">
@@ -902,6 +906,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <div class="panel" style="margin:0 0 14px">
         <h2 id="mResTit">Datos de apertura</h2>
         <div class="row" id="mAdminBar" style="margin-bottom:10px"></div>
+        <div id="mAsigBox" style="margin-bottom:10px"></div>
         <div id="mReabrirBox"></div>
         <div class="grid" id="mResumen"></div>
         <div id="mEditBox" class="hide"></div>
@@ -1132,7 +1137,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-18 · r124';
+const APP_VER = '2026-09-18 · r125';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2521,7 +2526,11 @@ function idxEntry(t){
     colaterales:(t.colaterales||[]).map(c=>c.tipo+' x'+c.cant),
     fechaAp:t.fechaAp, horaAp:t.horaAp, fechaCie:t.fechaCie, horaCie:t.horaCie,
     fechaRes:t.fechaRes, horaRes:t.horaRes, tFalla:t.tFalla, tAfect:t.tAfect,
-    imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respCi:t.respCi, status:t.status,
+    imputable:t.imputable, observaciones:t.observaciones, respAp:t.respAp, respApMail:t.respApMail,
+    respCi:t.respCi, status:t.status,
+    /* De quién es el ticket ahora mismo. Va en el índice para poder filtrar «mis tickets»
+       y pintar la columna sin abrir 250 expedientes. */
+    asignadoA:t.asignadoA||'', asignadoNombre:t.asignadoNombre||'',
     crq:t.crq, ruta:t.ruta, actualizado:t.actualizado,
     /* Fecha del último movimiento real, sacada del historial al escribir el índice. Es lo
        que permite decir «lleva 3d sin moverse» en la lista sin abrir 250 expedientes, y
@@ -4126,6 +4135,10 @@ async function crearTicket(){
       equipos:_equipos.slice(), colaterales:_colaterales.slice(),
       sinColaterales:!_colaterales.length&&$('#tSinCol').checked, colateralNota:$('#tColNota').value,
       fechaAp:fecha, horaAp:h24, respAp:S.me.name||S.me.mail, respApMail:S.me.mail,
+      /* Quien abre el ticket se queda con él. Así ninguno nace huérfano, que es como
+         doce tickets acabaron diecisiete días sin que nadie los mirara. Se puede
+         reasignar en cualquier momento. */
+      asignadoA:S.me.mail, asignadoNombre:S.me.name||S.me.mail,
       status:'ABIERTO', imputable:'', fechaRes:'', horaRes:'', fechaCie:'', horaCie:'',
       tFalla:'', tAfect:'', respCi:'', respCiMail:'', crq:'',
       descripcion:sanitizeHtml($('#tDesc').innerHTML),
@@ -4310,6 +4323,30 @@ function sinAtencion(t){
   return {ms:ms,desde:new Date(desde).toISOString(),exacto:u.exacto,que:u.que,
     txt:durCorta(ms),bruto:ahora-desde,cubierto:cubierto,incumplido:compromisoVencido(t)};
 }
+/* ---- De quién es el ticket ----
+   La regla es que quien lo abre se queda con él hasta que alguien lo reasigne. Por eso
+   un ticket sin asignación explícita no está huérfano: es de quien lo abrió, y para eso
+   se mira respApMail, que el sistema ya guardaba.
+   Los importados del histórico son el caso distinto: traen el nombre de quien lo abrió
+   en su día, pero no su correo, porque la plantilla no lo pide y no se toca. Se muestra
+   ese nombre y se marca como heredado —nadie lo ha tomado— y no aparecen en «mis
+   tickets» de nadie hasta que alguien los reclame. Es la verdad incómoda: son
+   justamente los que llevan semanas sin dueño real. */
+function asignado(t){
+  if(!t) return {mail:'', nombre:'', heredado:false, libre:true};
+  if(t.asignadoA) return {mail:t.asignadoA, nombre:t.asignadoNombre||t.asignadoA, heredado:false, libre:false};
+  if(t.respApMail) return {mail:t.respApMail, nombre:t.respAp||t.respApMail, heredado:true, libre:false};
+  if(t.respAp) return {mail:'', nombre:t.respAp, heredado:true, libre:true};
+  return {mail:'', nombre:'', heredado:false, libre:true};
+}
+function esMio(t){
+  const a=asignado(t); if(!a.mail) return false;
+  return currentUserEmails().some(e=>normCorreo(e)===normCorreo(a.mail));
+}
+/* Un ticket abierto que nadie ha reclamado y que además nadie mueve es el agujero que se
+   quiere cerrar: se señala en la lista para que no haga falta ir a buscarlo. */
+function sinDueno(t){ return t && t.status!=='CERRADO' && asignado(t).libre; }
+
 /* Cuánto silencio es demasiado depende de la prioridad: media hora sin mover un P1 es
    grave y tres días sin mover un P4 es normal. Se toma la mitad del compromiso, así que
    el umbral se ajusta solo y no hay un número más que configurar. */
@@ -4507,7 +4544,7 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
   nuevos.sort((a,b)=> (slaInfo(b.t).excedido||0)-(slaInfo(a.t).excedido||0));
   const td='padding:4px 10px;border-bottom:1px solid #e6edf5';
   const fila=x=>{
-    const s=slaInfo(x.t), q=sinAtencion(x.t);
+    const s=slaInfo(x.t), q=sinAtencion(x.t), a=asignado(x.t);
     return '<tr>'+
       '<td style="'+td+'"><b>'+esc(x.tipo)+'</b></td>'+
       '<td style="'+td+'">'+esc(x.t.id)+'</td>'+
@@ -4515,7 +4552,10 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
       '<td style="'+td+'">'+esc(x.t.prioridad||'')+'</td>'+
       '<td style="'+td+'">'+esc(x.t.status||'')+'</td>'+
       '<td style="'+td+'"><b>'+esc(s.excedido? durCorta(s.excedido) : '—')+'</b></td>'+
-      '<td style="'+td+'">'+esc(q? (q.exacto?'':'~')+q.txt : '—')+'</td></tr>';
+      '<td style="'+td+'">'+esc(q? (q.exacto?'':'~')+q.txt : '—')+'</td>'+
+      /* Sin esta columna el aviso llega a una lista y cada quien supone que otro
+         se hará cargo. Con nombre, el aviso tiene destinatario. */
+      '<td style="'+td+'">'+esc(a.nombre||'Sin asignar')+'</td></tr>';
   };
   const th='text-align:left;padding:4px 10px';
   const html='<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#12263a">'+
@@ -4524,7 +4564,7 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
     '<tr><th style="'+th+'">Aviso</th><th style="'+th+'">Folio</th>'+
     '<th style="'+th+'">Sede</th><th style="'+th+'">Prioridad</th>'+
     '<th style="'+th+'">Status</th><th style="'+th+'">Vencido por</th>'+
-    '<th style="'+th+'">Sin movimiento</th></tr>'+
+    '<th style="'+th+'">Sin movimiento</th><th style="'+th+'">Asignado a</th></tr>'+
     nuevos.map(fila).join('')+'</table>'+
     '<p style="color:#5b6b80;font-size:12px;margin-top:10px">El tiempo sin movimiento descuenta '+
     'las esperas imputables al cliente o a un tercero. Un «~» significa que el ticket no se ha '+
@@ -4601,6 +4641,10 @@ function filtrar(f){
     if(f.status && t.status!==f.status) return false;
     if(f.respAp && t.respAp!==f.respAp) return false;
     if(f.respCi && t.respCi!==f.respCi) return false;
+    /* «Mis tickets» y «sin dueño» son dos vistas del mismo campo: quién responde por él. */
+    if(f.mios && !esMio(t)) return false;
+    if(f.sinDueno && !sinDueno(t)) return false;
+    if(f.asignado && normCorreo(asignado(t).mail)!==normCorreo(f.asignado)) return false;
     /* Un solo campo busca en hostname y en número de serie */
     if(fEq && ((t.equipos||[]).join(' ')+' '+(t.series||[]).join(' ')).toLowerCase().indexOf(fEq)===-1) return false;
     if(fSn && (t.series||[]).join(' ').toLowerCase().indexOf(fSn)===-1) return false;
@@ -4625,6 +4669,15 @@ const COLSEG=[
     return h;
   }},
   {k:'prioridad',t:'Pri',            a:60,  v:t=>pillPri(t.prioridad)},
+  /* El cliente también lo ve: se enseña el NOMBRE, nunca el correo interno. */
+  {k:'asignado',t:'Asignado a',      a:150, v:t=>{
+    const a=asignado(t);
+    if(!a.nombre) return '<span style="color:var(--muted);font-size:11.5px">Sin asignar</span>';
+    const mio=esMio(t);
+    return '<span style="font-size:12px'+(mio?';font-weight:700':'')+'">'+esc(a.nombre)+'</span>'+
+      (a.libre&&t.status!=='CERRADO'
+        ? '<div style="font-size:10.5px;color:var(--muted)">sin reclamar</div>' : '');
+  }},
   {k:'cliente',t:'Cliente',          a:100, v:t=>esc(t.cliente)},
   {k:'localidad',t:'Localidad',      a:150, v:t=>esc(t.localidad)},
   {k:'piso',  t:'Piso',              a:80,  v:t=>esc(t.piso)},
@@ -5149,6 +5202,7 @@ function pintarTicket(t){
     campo('Responsable de apertura',t.respAp)
   ].join('');
   barraAdmin(t);
+  pintarAsignacion(t);
   $('#mEditBox').classList.add('hide'); $('#mEditBox').innerHTML='';
   $('#mResTit').textContent = isAdmin()? 'Datos de apertura' : 'Datos de apertura (no editables)';
   $('#mDescBox').innerHTML = t.descripcion? '<label style="font-size:11.5px;color:var(--muted);font-weight:600">DESCRIPCIÓN INICIAL</label><div class="tl"><div class="it"><div class="bd">'+sanitizeHtml(t.descripcion)+'</div></div></div>':'';
@@ -5247,6 +5301,102 @@ function aplicarEditable(t,k,v){
   if(k==='localidadId'){ t.localidadId=v; t.localidad=nombreLoc(v); return; }
   if(k==='prioridad'){ t.prioridad=v; t.slaHoras=slaHoras(v); return; }
   t[k]=v;
+}
+/* ---- Reasignar ----
+   Cualquier operador puede asignar y reasignar, sin pedir permiso a nadie. El cliente lo
+   ve pero no lo toca: para él es información, no un control.
+   La lista de a quién se puede asignar sale de la gente que ya ha trabajado en tickets
+   de este cliente más quien esté conectado, así que no hay un catálogo más que mantener.
+   Siempre se puede escribir un correo a mano para alguien que aún no aparezca. */
+function gentePosible(){
+  const m={};
+  const mete=(mail,nombre)=>{
+    const c=normCorreo(mail); if(!c||!/@sipnology\.com\.mx$/i.test(c)) return;
+    if(!m[c]||(!m[c].nombre&&nombre)) m[c]={mail:c, nombre:nombre||c};
+  };
+  (S.idx||[]).forEach(t=>{ mete(t.asignadoA,t.asignadoNombre); mete(t.respApMail,t.respAp); });
+  mete(S.me.mail, S.me.name);
+  listaPropietarios().forEach(c=>mete(c,''));
+  return Object.keys(m).sort().map(k=>m[k]);
+}
+function pintarAsignacion(t){
+  const box=$('#mAsigBox'); if(!box) return;
+  const a=asignado(t);
+  const quien=a.nombre? esc(a.nombre) : '<span style="color:var(--muted)">Sin asignar</span>';
+  const nota=a.libre&&t.status!=='CERRADO'
+    ? '<span style="color:var(--warn);font-size:11.5px">· nadie lo ha reclamado</span>' : '';
+  /* Al cliente se le enseña el nombre y nada más: ni el correo ni el botón. */
+  if(!esInterno()){
+    box.innerHTML='<div style="font-size:12.5px"><b>Asignado a:</b> '+quien+'</div>';
+    return;
+  }
+  const gente=gentePosible();
+  box.innerHTML='<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'+
+    '<span style="font-size:12.5px"><b>Asignado a:</b> '+quien+'</span>'+nota+
+    (t.status==='CERRADO'? '' :
+      (esMio(t)? '' : '<button class="btn sec" id="btnTomar" style="padding:4px 10px">Tomarlo yo</button>')+
+      '<button class="btn sec" id="btnReasig" style="padding:4px 10px">Reasignar</button>')+
+    '</div><div id="mAsigEdit"></div>';
+  const tomar=box.querySelector('#btnTomar');
+  if(tomar) tomar.onclick=()=>reasignar(t,S.me.mail,S.me.name||S.me.mail);
+  const re=box.querySelector('#btnReasig');
+  if(re) re.onclick=()=>{
+    const ed=box.querySelector('#mAsigEdit');
+    ed.innerHTML='<div class="note" style="margin-top:8px">'+
+      '<label style="font-size:11.5px;color:var(--muted);font-weight:600">RESPONSABLE</label>'+
+      '<select id="selAsig" style="margin-top:6px">'+
+      '<option value="">— sin asignar —</option>'+
+      gente.map(g=>'<option value="'+esc(g.mail)+'"'+(normCorreo(g.mail)===normCorreo(a.mail)?' selected':'')+'>'+
+        esc(g.nombre)+' · '+esc(g.mail)+'</option>').join('')+
+      '<option value="__otro">Otra persona (escribir correo)…</option></select>'+
+      '<div id="otroAsig"></div>'+
+      '<div class="row" style="margin-top:8px"><button class="btn" id="okAsig">Guardar</button>'+
+      '<button class="btn sec" id="noAsig">Cancelar</button></div></div>';
+    const sel=ed.querySelector('#selAsig'), otro=ed.querySelector('#otroAsig');
+    sel.onchange=()=>{ otro.innerHTML = sel.value==='__otro'
+      ? '<input id="asigMail" placeholder="nombre@sipnology.com.mx" style="margin-top:8px">' : ''; };
+    ed.querySelector('#noAsig').onclick=()=>{ ed.innerHTML=''; };
+    ed.querySelector('#okAsig').onclick=()=>{
+      let mail=sel.value, nombre='';
+      if(mail==='__otro'){
+        mail=normCorreo((ed.querySelector('#asigMail')||{}).value||'');
+        if(!correoValido(mail)){ toast('Ese correo no parece válido.','err'); return; }
+        nombre=mail;
+      }else if(mail){
+        const g=gente.find(x=>x.mail===mail); nombre=(g&&g.nombre)||mail;
+      }
+      reasignar(t,mail,nombre);
+    };
+  };
+}
+/* El cambio queda en el historial como cualquier otro, con quién lo hizo y desde quién.
+   Sin correo: el interruptor de alertas está apagado y esto no es una excepción. */
+async function reasignar(t,mail,nombre){
+  const antes=asignado(t);
+  const nuevo=normCorreo(mail||'');
+  if(normCorreo(antes.mail)===nuevo && !!nuevo){ toast('Ya está asignado a esa persona.'); return; }
+  const ahoraISO=new Date().toISOString();
+  const texto=(antes.nombre||'sin asignar')+' → '+(nombre||'sin asignar');
+  try{
+    busy(true,'Guardando la asignación…');
+    t.asignadoA=nuevo; t.asignadoNombre=nuevo? (nombre||nuevo) : '';
+    t.actualizado=ahoraISO;
+    t.historial=t.historial||[];
+    t.historial.push({cuando:ahoraISO, usuario:S.me.mail, accion:'REASIGNADO',
+      status:t.status, nota:texto});
+    const h=await H();
+    await gPutJson(h,t.ruta+'/ticket.json',t);
+    await idxUpsert(t);
+    logEvent('TICKET_REASIGNADO',t.id+' · '+texto);
+    toast('Asignado a '+(nombre||'nadie')+'.');
+    pintarTicket(t); renderSeg(); renderDash();
+  }catch(e){
+    toast('No se pudo guardar la asignación: '+e.message,'err',8000);
+    /* Se deshace en memoria para que la pantalla no mienta sobre lo que hay en disco. */
+    t.asignadoA=antes.heredado?'':antes.mail; t.asignadoNombre=antes.heredado?'':antes.nombre;
+    (t.historial||[]).pop();
+    pintarTicket(t);
+  }finally{ busy(false); }
 }
 function barraAdmin(t){
   const bar=$('#mAdminBar'), box=$('#mReabrirBox');
@@ -6253,6 +6403,7 @@ const COLS=[['id','ID del ticket'],['status','Status'],['prioridad','Prioridad']
   /* Columnas de salida, no de entrada: se calculan al exportar. La plantilla de carga
      (COLS_HIST) no cambia, así que los archivos que ya usa el cliente siguen sirviendo. */
   ['slaExcedido','Tiempo vencido'],['sinAtencion','Tiempo sin movimiento'],['ultMov','Último movimiento'],
+  ['asignado','Asignado a'],
   ['observaciones','Observaciones'],['crq','Ticket cliente (CRQ)'],['respAp','Responsable apertura'],['respCi','Responsable cierre']];
 function corteDe(t){
   return (t.status==='CERRADO'&&dt(t.fechaCie,t.horaCie))? dt(t.fechaCie,t.horaCie).getTime() : Date.now();
@@ -6265,6 +6416,8 @@ const celda=(t,k)=>{
      suma, y para eso hace falta una sola unidad. El resumen corto es para la pantalla. */
   if(k==='slaExcedido'){ const s=slaInfo(t); return s.excedido? durHMS(s.excedido):''; }
   if(k==='sinAtencion'){ const a=sinAtencion(t); return a? durHMS(a.ms):''; }
+  /* En el reporte va el nombre, igual que en pantalla: el correo interno no sale de aquí. */
+  if(k==='asignado'){ const a=asignado(t); return a.nombre? (a.nombre+(a.libre&&t.status!=='CERRADO'?' (sin reclamar)':'')) : 'Sin asignar'; }
   if(k==='ultMov'){
     const u=ultimoMovimiento(t); if(!u) return '';
     const d=ahoraMx(new Date(u.cuando)); if(isNaN(d.getTime())) return '';
@@ -10958,7 +11111,9 @@ function enlazarEventos(){
 
   // Seguimiento
   $('#btnFiltrar').onclick=()=>{
-    S.filtro=leerFiltros(); S.segPage=1; renderSeg();
+    /* Aplicar los filtros del formulario apaga los dos atajos: si no, se quedarían
+       puestos por debajo y la lista saldría recortada sin que nada lo indique. */
+    S.filtro=leerFiltros(); S.segPage=1; marcarVistaRapida(); renderSeg();
     /* Se registra el filtro aplicado, no cada tecla: queda constancia de qué buscó
        cada quien sin convertir la bitácora en un registro de pulsaciones. */
     const puestos=Object.keys(S.filtro).filter(k=>S.filtro[k]).map(k=>k+'='+S.filtro[k]);
@@ -10966,7 +11121,25 @@ function enlazarEventos(){
   };
   $('#btnLimpiaF').onclick=()=>{ $$('#vSeguimiento input').forEach(i=>i.value='');
     $$('#vSeguimiento select').forEach(s=>{if(s.id!=='segSize')s.selectedIndex=0;});
-    S.filtro={};S.segPage=1;renderSeg(); };
+    S.filtro={};S.segPage=1;marcarVistaRapida();renderSeg(); };
+  /* Dos atajos que se encienden y se apagan. Se quedan marcados mientras están puestos:
+     una lista filtrada que no dice que lo está es la forma más fácil de creer que no hay
+     tickets cuando lo que pasa es que no se ven. */
+  function marcarVistaRapida(){
+    const m=$('#btnMios'), s=$('#btnSinDueno');
+    if(m) m.classList.toggle('on', !!(S.filtro&&S.filtro.mios));
+    if(s) s.classList.toggle('on', !!(S.filtro&&S.filtro.sinDueno));
+  }
+  function vistaRapida(clave){
+    S.filtro=S.filtro||{};
+    const puesto=!S.filtro[clave];
+    S.filtro.mios=false; S.filtro.sinDueno=false;
+    S.filtro[clave]=puesto;
+    S.segPage=1; marcarVistaRapida(); renderSeg();
+    logEvent('BUSQUEDA_TICKETS', puesto? (clave==='mios'?'mis tickets':'sin dueño') : 'sin filtros (todos)');
+  }
+  $('#btnMios').onclick=()=>vistaRapida('mios');
+  $('#btnSinDueno').onclick=()=>vistaRapida('sinDueno');
   $('#btnRefrescar').onclick=async function(){ busy(this,true); await catalogoPull(true); await idxPull(); busy(this,false); alertasSLA(); };
   $('#btnCols').onclick=e=>{ e.stopPropagation(); panelColumnas(); };
   document.addEventListener('click',()=>{ const p=$('#colPanel'); if(p) p.remove();
@@ -11222,6 +11395,7 @@ window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24
   durCorta:durCorta,ultimoMovimiento:ultimoMovimiento,sinAtencion:sinAtencion,slaHoras:slaHoras,textoCelda:textoCelda,
   sinAtencionAlerta:sinAtencionAlerta,ultAccDe:ultAccDe,ultAccQueDe:ultAccQueDe,afinarUltAcc:afinarUltAcc,
   msEsperaCubierta:msEsperaCubierta,compromisoVencido:compromisoVencido,
+  asignado:asignado,esMio:esMio,sinDueno:sinDueno,reasignar:reasignar,gentePosible:gentePosible,
   msDescontable:msDescontable,msEspera:msEspera,corteDe:corteDe,celda:celda,COLS:COLS,
   correoHTML:correoHTML,adjuntosLogo:adjuntosLogo,logosCorreo:logosCorreo,CID_SIP:CID_SIP,CID_CLI:CID_CLI,idxEntry:idxEntry,deepMerge:deepMerge,CAT_DEFAULT:CAT_DEFAULT,
   parseFecha:parseFecha,parseHora:parseHora,normFolio:normFolio,normEnc:normEnc,
