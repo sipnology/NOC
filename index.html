@@ -446,7 +446,7 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <img id="logoCliente" class="hide" alt="">
     </div>
     <div class="who right" style="position:relative"><b id="whoName">—</b><span id="whoMail"></span> <span class="badge" id="whoRole"></span></div>
-    <button class="btn sec" id="btnAyuda" title="Cómo se hace cada cosa, para tu perfil">? Ayuda</button>
+    <button class="btn sec" id="btnAyuda" title="Cómo se hace cada cosa, para tu perfil">Ayuda</button>
     <button class="btn sec" id="btnLogout">Salir</button>
   </div>
   <nav class="tabs" id="tabs">
@@ -1177,7 +1177,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-18 · r125';
+const APP_VER = '2026-09-18 · r126';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -11482,6 +11482,28 @@ const AYUDA=[
     '<li><b>PROPIETARIO</b> — además, respaldos, restauración y borrados masivos.</li></ul>'+
     'Si tu insignia se puede pulsar, puedes <b>simular otro perfil</b> sin cerrar sesión, para '+
     'comprobar qué ve un cliente. Mientras simulas, todo queda registrado con tu cuenta real.'},
+ {c:'Primeros pasos', n:'operador',
+  q:'¿Cómo cambio de cliente?',
+  a:'Con el desplegable <b>Cliente</b> de la barra de arriba, junto al logo. Al cambiar se '+
+    'recarga todo lo de ese cliente: sus tickets, sus sedes, su inventario y su catálogo. El '+
+    'logo del cliente aparece al lado para que sepas de un vistazo en cuál estás.'+
+    '<div class="avi">Los catálogos <b>no se mezclan nunca</b>. Las sedes, los pisos y los tipos '+
+    'de incidente de un cliente no existen para otro, porque son información privada suya.</div>'},
+ {c:'Primeros pasos', n:'cliente',
+  q:'¿En qué horario están las fechas y horas?',
+  a:'Todo el sistema trabaja en la <b>hora de la Ciudad de México</b>: la apertura, el cierre, '+
+    'el reloj de SLA, la bitácora y los reportes. No depende de la zona horaria del equipo desde '+
+    'el que entres, así que dos personas en husos distintos ven exactamente la misma hora para '+
+    'el mismo hecho. Las horas se capturan y se muestran en formato de 12 horas con AM/PM.'},
+ {c:'Primeros pasos', n:'cliente',
+  q:'Algo no funciona o veo un dato raro, ¿qué hago?',
+  a:'<ol><li>Recarga la página. Se pedirá autenticación otra vez: la sesión se cierra al salir '+
+    'de la pestaña, a propósito.</li>'+
+    '<li>Comprueba que no tengas filtros puestos de antes. Los botones de vista rápida se '+
+    'quedan marcados en azul cuando están activos.</li>'+
+    '<li>Si sigue, avisa a la NOC indicando el <b>folio</b>, qué esperabas ver y qué viste. '+
+    'La versión del sistema aparece arriba en esta misma pantalla de ayuda.</li></ol>'+
+    'Todo lo que ocurre queda registrado, así que con esos datos se puede reconstruir qué pasó.'},
  {c:'Primeros pasos', n:'cliente',
   q:'¿Queda registro de lo que hago aquí?',
   a:'Sí, y es deliberado. Cada consulta, búsqueda y reporte queda con tu correo, la fecha y la '+
@@ -11602,6 +11624,45 @@ const AYUDA=[
   a:'Sí. Marca las casillas de las filas en <b>Seguimiento</b> y usa la barra de acciones que '+
     'aparece abajo. Te pedirá una <b>nota de cierre</b> obligatoria, que se registra en el '+
     'historial de cada uno de los tickets por separado, no como un apunte común.'},
+ {c:'Tickets', n:'cliente', ir:'vSeguimiento',
+  q:'¿Puedo elegir qué columnas veo y en qué orden?',
+  a:'Sí, con <b>⚙ Columnas</b> arriba a la derecha de la tabla. Ahí puedes:<ul>'+
+    '<li>Marcar y desmarcar las que quieres ver.</li>'+
+    '<li><b>Arrastrarlas</b> por el asa para cambiar su orden.</li>'+
+    '<li>Cambiar su <b>ancho</b> tirando del borde derecho del encabezado.</li>'+
+    '<li>Volver a la configuración de fábrica con <b>Restablecer vista</b>.</li></ul>'+
+    'También puedes <b>ordenar</b> pulsando el encabezado de las columnas que lo permiten. Tu '+
+    'configuración se guarda en tu navegador, así que la próxima vez sigue como la dejaste.'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Cómo adjunto evidencias a un ticket?',
+  a:'Se pueden adjuntar en dos momentos: al <b>abrirlo</b> y en cada <b>seguimiento</b>. Arrastra '+
+    'los archivos al recuadro de «Evidencias / Archivos» o pulsa para seleccionarlos. Quedan '+
+    'guardados dentro del expediente del ticket en SharePoint, con quién los subió, cuándo y en '+
+    'qué fase, y se listan al final de la ficha.'+
+    '<div class="avi">Un seguimiento puede guardarse con solo la evidencia, sin nota, pero no al '+
+    'revés: sin nota ni archivo no hay nada que registrar.</div>'},
+ {c:'Tickets', n:'operador', ir:'vSeguimiento',
+  q:'¿Cómo mando la ficha de un ticket al cliente?',
+  a:'Dentro del ticket, al final, tienes <b>Generar ficha en PDF</b> y <b>✉ Enviar por correo</b>. '+
+    'La ficha lleva los datos de apertura, el historial completo, las pausas y los adjuntos, con '+
+    'el logo de Sipnology y el del cliente.<div class="avi">El envío sale desde tu propia cuenta '+
+    'de Microsoft 365, así que el cliente ve que se lo mandaste tú. Si está puesto el bloqueo '+
+    'total de correo en Administración, no sale nada.</div>'},
+ {c:'Tickets', n:'operador',
+  q:'¿Qué pasa si dos operadores guardamos el mismo ticket a la vez?',
+  a:'No se pierde nada. El sistema comprueba antes de escribir si el archivo cambió desde que lo '+
+    'leyó; si otro compañero guardó mientras tanto, <b>vuelve a leer y aplica tu cambio encima</b>, '+
+    'en vez de pisar el suyo. Acaban los dos guardados.'+
+    '<div class="avi">Si ves un aviso de que hubo un choque de edición, no es un error: es el '+
+    'sistema avisándote de que reintentó. Vuelve a abrir el ticket para ver cómo quedó.</div>'},
+ {c:'Tickets', n:'admin', ir:'vSeguimiento',
+  q:'¿Cómo elimino un ticket y qué implica?',
+  a:'Dentro del ticket, con <b>🗑 Eliminar ticket</b>. Te pide confirmación.'+
+    '<div class="avi">Borra el ticket <b>y su expediente completo</b>: historial, pausas y '+
+    'adjuntos. <b>No hay deshacer.</b> En el día a día conviene <b>cerrar</b> un ticket mal '+
+    'abierto con una nota que lo explique, en vez de borrarlo: así queda el rastro de que '+
+    'existió. Borrar es para duplicados y pruebas, no para corregir.</div>'+
+    'El borrado queda registrado en la bitácora con tu cuenta y el folio.'},
  {c:'Tickets', n:'admin', ir:'vSeguimiento',
   q:'¿Cómo corrijo un dato mal capturado en la apertura?',
   a:'Abre el ticket y pulsa <b>Editar datos del ticket</b>. Cada campo que cambies queda '+
@@ -11632,6 +11693,20 @@ const AYUDA=[
     '<li>Revísalo y confirma.</li></ol>'+
     '<div class="avi">Si el archivo no trae columna de folio se <b>rechaza entero</b>, porque sin '+
     'identificador no hay forma de saber si un renglón es nuevo o pisa a otro.</div>'},
+
+ {c:'CRQs, SITs, Fabricante y RMA', n:'operador', ir:'vCRQ',
+  q:'¿Puedo capturar un CRQ o un caso a mano, sin archivo?',
+  a:'Sí. En cada módulo hay un botón de <b>nuevo</b> que abre el formulario. Los campos son los '+
+    'mismos que trae la plantilla, así que un registro capturado a mano y uno importado quedan '+
+    'idénticos. Después se puede editar pulsando su fila.'+
+    '<div class="avi">Los registros se guardan <b>por cliente</b>. Si no tienes cliente fijado en '+
+    'la barra de arriba, el botón de nuevo no aparece: no habría dónde guardarlo.</div>'},
+ {c:'CRQs, SITs, Fabricante y RMA', n:'operador', ir:'vRMA',
+  q:'En un RMA sustituyeron el equipo, ¿actualizo el inventario a mano?',
+  a:'No hace falta. Al registrar en el RMA el <b>número de serie que entra</b>, el sistema '+
+    'actualiza el equipo en el inventario y deja anotado el cambio, tanto en el RMA como en el '+
+    'propio equipo. Así el inventario no se queda con la serie del equipo que ya no está, que es '+
+    'el error que después hace que un ticket apunte a hardware inexistente.'},
 
  /* ---- Reportes ---- */
  {c:'Reportes', n:'cliente', ir:'vReportes',
@@ -11717,6 +11792,22 @@ const AYUDA=[
     'sistema se calla —para no enseñarle a un cliente un error técnico de SharePoint que no le '+
     'corresponde resolver— se pintan en pantalla con su código y su causa. Sirve cuando alguien '+
     'reporta que «algo no funciona» y no hay forma de ver su consola. Déjalo apagado en el día a día.'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'Borré una sede por error, ¿se puede recuperar?',
+  a:'Sí. El sistema guarda las sedes, pisos y alias que se quitaron y los ofrece para volver a '+
+    'ponerlos: márcalos y pulsa <b>Restaurar lo seleccionado</b>.'+
+    '<div class="avi">Además, si un guardado fuera a dejar el catálogo con <b>menos sedes de las '+
+    'que tenía</b>, el sistema se detiene y te avisa antes de escribir. Para vaciarlo de verdad '+
+    'hay que confirmarlo aparte, porque un catálogo de sedes vacío deja huérfanos todos los '+
+    'tickets de ese cliente.</div>'},
+ {c:'Administración', n:'dueno', ir:'vCatalogos',
+  q:'¿Qué hace «Eliminar datos» y cuándo se usa?',
+  a:'Está en <b>Administración → Eliminar datos</b> y borra en bloque tickets, CRQs, SITs y sus '+
+    'expedientes de un cliente.'+
+    '<div class="avi"><b>Es irreversible y no distingue.</b> Se usa para dejar limpio un cliente '+
+    'de demostración o retirar datos de prueba, nunca sobre información real. Antes de tocarlo, '+
+    'saca un respaldo: es la única forma de volver atrás.</div>'+
+    'Queda registrado en la bitácora con tu cuenta, el cliente y cuántos registros se quitaron.'},
  {c:'Administración', n:'dueno', ir:'vCatalogos',
   q:'¿Cómo hago un respaldo y cómo lo restauro?',
   a:'En <b>Administración → Respaldo y Restauración</b>. El respaldo incluye catálogo, inventario, '+
