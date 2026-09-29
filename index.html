@@ -1293,7 +1293,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r132';
+const APP_VER = '2026-09-29 · r133';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -5631,7 +5631,7 @@ function barraAdmin(t){
 /* Eliminación definitiva. Pensada para limpiar la carga de pruebas antes de producción:
    se lleva el expediente entero, incluidas sus evidencias, y no hay deshacer. */
 async function borrarTicket(t){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Puedes consultarlo con quien figure en Catálogos › Administración › Propietarios.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
   const escrito=prompt('Esto elimina el ticket '+t.id+' y TODO su expediente en SharePoint:\n'+
     'ticket.json, evidencias y su carpeta. No se puede deshacer.\n\n'+
     'Escribe el folio para confirmar:');
@@ -5667,7 +5667,7 @@ function confirmarBorrado(que,n,detalle){
 /* Borra tickets agrupando por cliente: un solo reescrito de índice por cliente
    en vez de uno por ticket, que con 250 folios serían 250 escrituras a SharePoint. */
 async function borrarTicketsLote(lista,btn){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Puedes consultarlo con quien figure en Catálogos › Administración › Propietarios.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
   if(!lista.length){ toast('No hay tickets seleccionados.','warn'); return; }
   if(!confirmarBorrado('ticket(s) con TODO su expediente en SharePoint',lista.length,
       'Se eliminan sus carpetas, evidencias y entradas del índice.')) return;
@@ -8470,10 +8470,6 @@ async function accRevisar(){
                      'en él vería lo de todos los clientes: conviene quitarlo.'
                    : 'Sin acceso a las carpetas del sistema.');
   }catch(e){ it('aviso','Permisos de carpetas','No se pudieron leer: '+esc(e.message)); }
-  it('manual','Operadores',
-    'Toda cuenta de Sipnology es operador si «Todos excepto los usuarios externos» está en '+
-    '<b>Integrantes de la NOC</b>. Esto no se puede leer desde aquí: compruébalo en '+
-    '<a href="'+URL_GRUPOS_SP+'" target="_blank" rel="noopener">los grupos del sitio</a>.');
   return out;
 }
 function renderAccesos(box){
@@ -8571,7 +8567,11 @@ function renderAccesos(box){
   if(rev&&soyDueno) accRevisar().then(items=>{
     const col={ok:'var(--p3)',aviso:'var(--warn)',mal:'var(--p1)',manual:'var(--muted)'};
     const ico={ok:'✓',aviso:'!',mal:'✗',manual:'?'};
-    rev.innerHTML='<div style="font-weight:600;margin-bottom:6px">Configuración en Microsoft</div>'+
+    /* r133: con todo en orden la lista no aporta nada y estorba (lo pidió Fernando). Solo
+       aparece lo que falla, para que una configuración rota no pase inadvertida. */
+    items=items.filter(x=>x.estado!=='ok');
+    if(!items.length){ rev.innerHTML=''; return; }
+    rev.innerHTML='<div style="font-weight:600;margin-bottom:6px;color:var(--warn)">Algo falla en la configuración de Microsoft</div>'+
       items.map(x=>'<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)">'+
         '<b style="color:'+col[x.estado]+';width:16px">'+ico[x.estado]+'</b><div><b>'+x.titulo+'</b> — '+x.texto+'</div></div>').join('');
   }).catch(e=>{ rev.innerHTML='<div class="note" style="border-left-color:var(--warn)">No se pudo revisar la configuración: '+esc(e.message)+'</div>'; });
@@ -8844,15 +8844,18 @@ function renderMantenimiento(box){
     {k:'crq',       t:'CRQs',       n:(S.crq||[]).length, aviso:'Se pueden volver a importar del archivo del cliente.'},
     {k:'sit',       t:'SITs',       n:(S.sit||[]).length, aviso:'Se pueden volver a importar del archivo del cliente.'},
     {k:'fab',       t:'Casos de fabricante', n:(S.fab||[]).length, aviso:'Se pueden volver a importar o capturar.'},
-    {k:'rma',       t:'RMA',        n:(S.rma||[]).length, aviso:'No toca el inventario: solo borra el registro de las sustituciones.'}
+    {k:'rma',       t:'RMA',        n:(S.rma||[]).length, aviso:'No toca el inventario: solo borra el registro de las sustituciones.'},
+    /* r133: Proyectos no tenía cómo vaciarse, y un tablero de demostración se habría quedado
+       para siempre en el tablero real del cliente (y en la copia que él ve). */
+    {k:'pmo',       t:'Proyectos',  n:pmoCuenta(), aviso:'Vacía el tablero (proyectos y tareas) y la copia que ve el cliente. Conserva la lista de avisos.'}
   ].filter(m=>m.k==='tickets'||moduloActivo(m.k));
   box.innerHTML='<div class="note" style="border-left-color:var(--p1)"><b>Zona de riesgo.</b> '+
     'Esto elimina datos de <b>'+esc(cli)+'</b> de forma definitiva y sin deshacer. '+
     'Todo lo que se elimine queda registrado en la bitácora con tu usuario.</div>'+
     mods.map(m=>'<div class="panel" style="margin:0 0 12px"><div class="row">'+
-      '<div><b>'+esc(m.t)+'</b> · <span style="color:var(--muted)">'+m.n+' registro(s) de '+esc(cli)+'</span>'+
+      '<div><b>'+esc(m.t)+'</b> · <span style="color:var(--muted)">'+(m.n===null?'abre la pestaña Proyectos para ver cuántas tareas hay':m.n+' registro(s) de '+esc(cli))+'</span>'+
       '<div style="font-size:12px;color:var(--muted);margin-top:4px">'+esc(m.aviso)+'</div></div>'+
-      '<button class="btn dan right" data-purgar="'+m.k+'"'+(m.n?'':' disabled')+'>Eliminar '+esc(m.t)+'</button>'+
+      '<button class="btn dan right" data-purgar="'+m.k+'"'+(m.n||m.n===null?'':' disabled')+'>Eliminar '+esc(m.t)+'</button>'+
       '</div></div>').join('')+
     '<div class="panel" style="margin:0 0 12px"><div class="row">'+
       '<div><b>Expedientes sueltos</b>'+
@@ -8893,7 +8896,7 @@ function renderMantenimiento(box){
   };
 }
 async function purgar(mod,cli,btn){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Puedes consultarlo con quien figure en Catálogos › Administración › Propietarios.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
   const frase='BORRAR '+mod.toUpperCase();
   const escrito=prompt('Vas a eliminar TODOS los '+mod+' de '+cli+'. No hay deshacer.\n\n'+
     'Escribe exactamente: '+frase);
@@ -8914,6 +8917,22 @@ async function purgar(mod,cli,btn){
       logEvent('PURGA_TICKETS',cli+' · '+n+' ticket(s) y sus expedientes');
       toast(n+' ticket(s) eliminados.');
       renderSeg();
+    }else if(mod==='pmo'){
+      /* Se vacía sobre una relectura fresca, conservando avisos y numeración: los folios
+         PMO-#### nunca se reutilizan, así un folio viejo citado en un correo no apunta a otra tarea. */
+      let n=0;
+      const cliId=S.cliente;
+      const r=await gActualizarJson(h,pPmoInterno(cliId),disco=>{
+        const d=pmoNormalizar(disco? JSON.parse(JSON.stringify(disco)) : null);
+        n=d.tareas.length+d.proyectos.length;
+        if(!n) return undefined;
+        d.tareas=[]; d.proyectos=[];
+        return d;
+      });
+      if(r.escrito) await gPutJson(h,pPmoCliente(cliId),pmoProyeccion(r.datos));
+      const E=pmoEstado(); if(E.cli===cliId) E.datos=pmoNormalizar(r.datos||E.datos);
+      logEvent('PURGA_PROYECTOS',cli+' · '+n+' proyecto(s) y tarea(s)');
+      toast(n? n+' proyecto(s) y tarea(s) eliminados.' : 'El tablero ya estaba vacío.');
     }else{
       const ds=DATASETS[mod];
       const n=(S[ds.st]||[]).length;
@@ -12193,6 +12212,11 @@ function pmoEstado(){
   if(!S.pmo) S.pmo={cli:'',datos:null,
     filtro:{texto:'',proyecto:'',resp:'',pri:'',mias:false,venc:false,internas:false}};
   return S.pmo;
+}
+/* Cuántas tareas tiene el tablero cargado del cliente actual; null si no se ha abierto. */
+function pmoCuenta(){
+  const E=S.pmo;
+  return (E&&E.cli===S.cliente&&E.datos)? E.datos.tareas.length : null;
 }
 function pmoVacio(){ return {version:1,seq:0,proyectos:[],tareas:[],avisos:{activo:true,modo:'clave',destinatarios:[]}}; }
 function pmoNormalizar(d){
