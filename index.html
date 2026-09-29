@@ -1293,7 +1293,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r130';
+const APP_VER = '2026-09-29 · r131';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -8493,7 +8493,7 @@ async function accSincronizar(){
    lado, al activar cambiaría de perfil sin que nadie lo decidiera. */
 function accDiferencias(){ return accPersonas().filter(f=>f.rolEntra&&f.rolCat!==f.rolEntra); }
 async function accCambiarModo(modo){
-  if(!esDuenoReal()||_simRol) throw new Error('Solo un propietario puede cambiar quién manda en los roles.');
+  if(!esDuenoReal()||_simRol) throw new Error('Solo un propietario puede cambiar de dónde lee el sistema los roles.');
   const a=S.acc||{};
   if(modo==='entra'){
     if(a.estado!=='ok') throw new Error('No hay conexión con Entra ID.');
@@ -8508,7 +8508,8 @@ async function accCambiarModo(modo){
   const ok=await accEscribirCatalogo(g=>{ g.accesos=acc; if(l){ g.propietarios=l.props; g.admins=l.adm; } });
   if(!ok && JSON.stringify((S.catGlobal||{}).accesos||{})!==JSON.stringify(acc))
     throw new Error('No se pudo guardar el cambio en el catálogo de Sistema.');
-  logEvent('ACCESOS_MODO',modo==='entra'?'Manda Entra ID':'Manda el catálogo');
+  logEvent('ACCESOS_MODO',modo==='entra'?'Los roles se leen de los grupos de Microsoft (Entra ID)'
+                                       :'Los roles se leen de las listas del catálogo');
   revisarRol();
   return true;
 }
@@ -8592,10 +8593,13 @@ function renderAccesos(box){
       '(además borra, restaura y asigna roles; control total del sitio). Cambiar un rol aquí cambia su '+
       'grupo en Entra ID al momento: ya no hay un segundo paso en SharePoint.</div>'+
     '<div class="note" style="margin-top:10px;border-left-color:'+(entra?'var(--p3)':'var(--warn)')+'">'+
-      (entra? '<b>Manda Entra ID.</b> El rol de cada persona es el de su grupo. Las listas de Propietarios y '+
-               'Administradores quedan como copia de respaldo por si Entra no responde.'
-            : '<b>Todavía manda el catálogo.</b> Mientras tanto, cada cambio que hagas aquí se aplica en los dos '+
-               'lados. Cuando no queden diferencias podrás pasar el mando a Entra ID.')+'</div>'+
+      /* «Quién manda» no se entendía (lo dijo Fernando al verlo): se explica qué lee el sistema. */
+      (entra? '<b>Los roles se leen de los grupos de Microsoft (Entra ID).</b> Quien esté en un grupo tiene su '+
+               'rol, aunque lo hayan añadido desde el portal de Microsoft. Las listas de Propietarios y '+
+               'Administradores quedan como copia por si Microsoft no respondiera.'
+            : '<b>Hoy los roles todavía se leen de las listas de Propietarios y Administradores.</b> Cada cambio '+
+               'que hagas aquí se aplica en las listas y en los grupos de Microsoft a la vez. Cuando las dos '+
+               'cosas coincidan, abajo podrás hacer que el sistema lea los roles de los grupos.')+'</div>'+
     (!conectado? '<div class="note" style="margin-top:10px;border-left-color:var(--p1)">'+
       (a.estado==='pendiente'? 'Leyendo los grupos de Entra ID…' :
        a.estado==='sin-permiso'? '<b>Sin permiso para leer los grupos.</b> Falta aprobar el permiso de la '+
@@ -8632,15 +8636,16 @@ function renderAccesos(box){
       '<select id="accNuevoRol"><option value="administrador">Administrador</option><option value="propietario">Propietario</option></select>'+
       '<button class="btn" id="accAsignar">Asignar</button></div></div>' : '')+
     (soyDueno&&conectado? '<div class="note" style="margin-top:14px">'+
-      (entra? 'Si Entra ID dejara de responder de forma prolongada puedes <button class="btn sec" id="accModoCat">devolver el mando al catálogo</button>. '+
-              'Los grupos de Entra no se tocan.'
-            : '<b>Paso a Entra ID.</b> '+
+      (entra? 'Si Microsoft dejara de responder por mucho tiempo, puedes '+
+              '<button class="btn sec" id="accModoCat">volver a leer los roles de las listas</button>. Los grupos no se tocan.'
+            : '<b>Último paso: que el sistema lea los roles de los grupos de Microsoft.</b> '+
               (difs.length? difs.length+' persona(s) tienen un rol distinto en cada lado. '+
                  (difs.some(f=>({propietario:0,administrador:1,operador:2})[f.rolCat]<({propietario:0,administrador:1,operador:2})[f.rolEntra])?
                    '<button class="btn sec" id="accSync">Dar en Entra el rol del catálogo</button> sube a quien le falte (no le quita nada a nadie). ':'')+
                  'Lo que sobre en Entra resuélvelo fila por fila.'
-               : 'No hay diferencias. ')+
-              '<button class="btn" id="accModoEntra"'+(difs.length?' disabled':'')+'>Que mande Entra ID</button>')+
+               : 'Las listas y los grupos ya coinciden. Al pulsar el botón, el sistema deja de leer las listas y lee '+
+                 'los grupos: desde entonces, dar o quitar un rol aquí o en el portal de Microsoft es lo mismo. ')+
+              '<button class="btn" id="accModoEntra"'+(difs.length?' disabled':'')+'>Leer los roles desde los grupos de Microsoft</button>')+
       '</div>' : '')+
     (!soyDueno? '<div class="note" style="margin-top:10px"><b>Solo un propietario asigna roles.</b> Puedes ver quién tiene cada uno.</div>':'');
 
@@ -8726,18 +8731,18 @@ function renderAccesos(box){
   };
   const modoE=box.querySelector('#accModoEntra');
   if(modoE) modoE.onclick=async()=>{
-    if(!confirm('Desde ahora el rol de cada persona será el de su grupo en Entra ID.\n\n'+
+    if(!confirm('Desde ahora el sistema leerá el rol de cada persona de su grupo de Microsoft (Entra ID).\n\n'+
         'Las pantallas Propietarios y Administradores pasan a ser de consulta. ¿Continuar?')) return;
     busy(modoE,true);
-    try{ await accCambiarModo('entra'); toast('Ahora manda Entra ID.'); }
+    try{ await accCambiarModo('entra'); toast('Listo: los roles se leen de los grupos de Microsoft.'); }
     catch(e){ toast(e.message,'err',12000); }
     finally{ renderAccesos(box); }
   };
   const modoC=box.querySelector('#accModoCat');
   if(modoC) modoC.onclick=async()=>{
-    if(!confirm('Los roles volverán a salir del catálogo (la copia actual). Los grupos de Entra no se tocan.\n\n¿Continuar?')) return;
+    if(!confirm('El sistema volverá a leer los roles de las listas de Propietarios y Administradores (la copia actual). Los grupos de Microsoft no se tocan.\n\n¿Continuar?')) return;
     busy(modoC,true);
-    try{ await accCambiarModo('catalogo'); toast('Ahora manda el catálogo.'); }
+    try{ await accCambiarModo('catalogo'); toast('Los roles se leen otra vez de las listas.'); }
     catch(e){ toast(e.message,'err',12000); }
     finally{ renderAccesos(box); }
   };
