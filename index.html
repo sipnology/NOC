@@ -1293,7 +1293,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r129';
+const APP_VER = '2026-09-29 · r130';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -8271,6 +8271,17 @@ async function _accLeer(interactivo){
   }
   a.duenos=[]; a.duenosObj.forEach(p=>p.correos.forEach(c=>a.duenos.push(c)));
   a.admins=[]; a.adminsObj.forEach(p=>p.correos.forEach(c=>a.admins.push(c)));
+  /* Quien está en las listas del catálogo pero no en ningún grupo: ¿existe siquiera? Una
+     dirección mal escrita (visto en vivo: una cuenta que nunca existió) bloqueaba el paso a
+     Entra para siempre, porque no se le podía dar ni quitar nada. Ahora se detecta y se ofrece
+     sacarla de la lista. */
+  a.noExisten=[];
+  const sueltos=catPropietarios().concat(catAdmins())
+    .filter((c,i,l)=>l.indexOf(c)===i && a.duenos.indexOf(c)===-1 && a.admins.indexOf(c)===-1);
+  await Promise.all(sueltos.map(async c=>{
+    try{ await gJson(h,'/users/'+encodeURIComponent(c)+'?$select=id'); }
+    catch(e){ if(e.status===404) a.noExisten.push(c); }
+  }));
   S.acc=a;
   /* En modo Entra, un propietario mantiene al día la copia del catálogo. Solo escribe si
      algo cambió, así que en el día a día no cuesta nada. */
@@ -8331,6 +8342,7 @@ function accPersonas(){
     f.correo=correoPrincipal(f);
     f.rolCat=rolDeLista(f.correos,cp,ca);
     f.rolEntra=ok? rolDeLista(f.correos,a.duenos,a.admins) : '';
+    f.noExiste=ok && !f.id && f.correos.every(c=>(a.noExisten||[]).indexOf(c)!==-1);
   });
   const orden={propietario:0,administrador:1,operador:2};
   return filas.sort((x,y)=>(orden[x.rolEntra||x.rolCat]-orden[y.rolEntra||y.rolCat])||x.correo.localeCompare(y.correo));
@@ -8364,7 +8376,19 @@ async function accCambiarRol(fila,nuevo,opts){
   const antes=rolDeLista(correos,a.duenos,a.admins);
   /* Mismo rol no significa «nada que hacer»: si un intento anterior quedó a medias (dueño
      del sitio pero no de administradores, por ejemplo), volver a asignarlo lo completa. */
-  if(antes===nuevo && accCompleto(correos,nuevo)) return {antes:antes,nuevo:nuevo,hechos:[],fallos:[]};
+  if(antes===nuevo && accCompleto(correos,nuevo)){
+    /* Entra ya está como se pide, pero el catálogo puede no estarlo (p. ej. «Quitar» a quien
+       nunca estuvo en un grupo): se ajusta solo esta persona en la copia. */
+    let hechos=[];
+    if(rolDeLista(correos,catPropietarios(),catAdmins())!==nuevo && !opts.sinReleer){
+      if(nuevo!=='propietario' && !catPropietarios().some(c=>correos.indexOf(c)===-1))
+        throw new Error('Es el único propietario del catálogo: la lista no puede quedarse vacía.');
+      if(await accAjustarCatalogo(correos,correo,nuevo)) hechos=[{tipo:'catalogo'}];
+      logEvent('ACCESO_ROL',correo+': en el catálogo pasa a '+ROL_TXT[nuevo]+' (en Entra ya lo era)');
+      revisarRol();
+    }
+    return {antes:antes,nuevo:nuevo,hechos:hechos,fallos:[]};
+  }
   if(antes==='propietario' && (a.duenosObj||[]).length<=1)
     throw new Error('Es el único propietario. Nombra a otro antes de quitarle el rol: sin propietarios nadie podría restaurar ni asignar roles.');
   if(nuevo==='administrador' && !a.grupoAdmins)
@@ -8375,7 +8399,11 @@ async function accCambiarRol(fila,nuevo,opts){
   let id=fila.id;
   if(!id){
     try{ id=(await gJson(h,'/users/'+encodeURIComponent(correo)+'?$select=id')).id; }
-    catch(e){ throw new Error(e.status===404? 'No existe la cuenta '+correo+' en Entra ID.' : e.message); }
+    catch(e){
+      /* Bajar a operador a alguien que ni existe = sacarlo de las listas. No hay nada que quitar en Entra. */
+      if(e.status===404 && nuevo==='operador') return accQuitarDeLista(correos);
+      throw new Error(e.status===404? 'No existe la cuenta '+correo+' en Entra ID.' : e.message);
+    }
   }
   const gs=a.grupoSitio.id, gaId=a.grupoAdmins&&a.grupoAdmins.id, pasos=[];
   const alta=(g,rel)=>{ if(g) pasos.push({tipo:'alta',g:g,rel:rel}); };
@@ -8410,17 +8438,41 @@ async function accCambiarRol(fila,nuevo,opts){
     if(!fallos.length){
       try{
         if(accModoEntra()) await accGuardarCache();
-        else await accEscribirCatalogo(g=>{
-          const quita=l=>(l||[]).map(normCorreo).filter(c=>correos.indexOf(c)===-1);
-          g.propietarios=quita(g.propietarios); g.admins=quita(g.admins);
-          if(nuevo==='propietario') g.propietarios.push(correo);
-          if(nuevo==='administrador') g.admins.push(correo);
-        });
+        else await accAjustarCatalogo(correos,correo,nuevo);
       }catch(e){ toast('El rol cambió en Entra, pero no se pudo actualizar la copia del catálogo: '+e.message,'warn',10000); }
     }
     revisarRol();
   }
   return {antes:antes,nuevo:nuevo,hechos:hechos,fallos:fallos,detalle:detalle};
+}
+/* Pone a UNA persona en la lista que le toca del catálogo, y en ninguna otra. */
+function accAjustarCatalogo(correos,correo,nuevo){
+  return accEscribirCatalogo(g=>{
+    const quita=l=>(l||[]).map(normCorreo).filter(c=>correos.indexOf(c)===-1);
+    g.propietarios=quita(g.propietarios); g.admins=quita(g.admins);
+    if(nuevo==='propietario') g.propietarios.push(correo);
+    if(nuevo==='administrador') g.admins.push(correo);
+  });
+}
+/* Saca a alguien de las listas de propietarios y administradores del catálogo sin tocar
+   Entra. Para direcciones que no existen o que ya no deben estar. Nunca deja la lista de
+   propietarios vacía (accEscribirCatalogo se niega). */
+async function accQuitarDeLista(correos){
+  if(!esDuenoReal()||_simRol) throw new Error('Solo un propietario puede quitar a alguien de las listas.');
+  correos=(correos||[]).map(normCorreo).filter(Boolean);
+  if(!correos.length) throw new Error('Falta el correo.');
+  const quedan=catPropietarios().filter(c=>correos.indexOf(c)===-1);
+  if(!quedan.length) throw new Error('Es el único propietario del catálogo: la lista no puede quedarse vacía.');
+  const antes=rolDeLista(correos,catPropietarios(),catAdmins());
+  const ok=await accEscribirCatalogo(g=>{
+    const quita=l=>(l||[]).map(normCorreo).filter(c=>correos.indexOf(c)===-1);
+    g.propietarios=quita(g.propietarios); g.admins=quita(g.admins);
+  });
+  const detalle=correos[0]+': quitado de la lista de '+(antes==='propietario'?'propietarios':'administradores')+' del catálogo';
+  logEvent('ACCESO_QUITADO',detalle);
+  S.accExtra=(S.accExtra||[]).filter(c=>correos.indexOf(c)===-1);
+  await accLeer(); revisarRol();
+  return {antes:antes,nuevo:'operador',hechos:ok?[{tipo:'catalogo'}]:[],fallos:[],detalle:detalle};
 }
 /* Paso único de la migración: da en Entra el rol que el catálogo ya tiene. Solo sube,
    nunca baja: quitarle algo a alguien es una decisión que se toma fila por fila. */
@@ -8497,16 +8549,21 @@ async function accRevisar(){
         edita?'«'+esc(GRUPO_ADMINS)+'» puede editar Sistema/.':
         'Sin permiso de edición en Sistema/: un administrador vería los catálogos pero no podría guardarlos.');
     }
+    /* Las carpetas de Sipnology también: en vivo, Visitantes tenía lectura en Sistema, Clientes
+       y Bitacora, no solo en la carpeta de un cliente. */
     const ids=((S.cat&&S.cat.clientes)||[]).map(c=>c.id).filter(Boolean);
+    const rutas=['Sistema','Clientes','Bitacora'].concat(ids.map(c=>'Clientes/'+c));
     const conVis=[];
-    await Promise.all(ids.map(async cid=>{
-      try{ const pr=await gJson(hs,'/drives/'+id+'/root:/'+graphEncPath('Clientes/'+cid)+':/permissions');
-        if((pr.value||[]).some(p=>/visitantes/i.test(JSON.stringify(p.grantedToV2||p.grantedTo||{})))) conVis.push(cid);
+    await Promise.all(rutas.map(async ruta=>{
+      try{ const pr=await gJson(hs,'/drives/'+id+'/root:/'+graphEncPath(ruta)+':/permissions');
+        if((pr.value||[]).some(p=>/visitantes/i.test(JSON.stringify(p.grantedToV2||p.grantedTo||{})))) conVis.push(ruta);
       }catch(e){}
     }));
+    conVis.sort((x,y)=>rutas.indexOf(x)-rutas.indexOf(y));
     it(conVis.length?'aviso':'ok','Grupo «Visitantes»',
-      conVis.length? 'Sigue con acceso a: '+esc(conVis.join(', '))+'. No lo usa la plataforma; puedes quitarlo.'
-                   : 'Sin acceso a las carpetas de clientes.');
+      conVis.length? 'Sigue con lectura en: '+esc(conVis.join(', '))+'. No lo usa la plataforma, y quien entrara '+
+                     'en él vería lo de todos los clientes: conviene quitarlo.'
+                   : 'Sin acceso a las carpetas del sistema.');
   }catch(e){ it('aviso','Permisos de carpetas','No se pudieron leer: '+esc(e.message)); }
   it('manual','Operadores',
     'Toda cuenta de Sipnology es operador si «Todos excepto los usuarios externos» está en '+
@@ -8551,7 +8608,10 @@ function renderAccesos(box){
       '<th>Persona</th><th>En el catálogo</th><th>En Entra ID</th><th>'+(puede?'Cambiar a':'')+'</th></tr></thead><tbody>'+
       filas.map((f,i)=>{
         const dif=conectado&&f.rolCat!==f.rolEntra;
-        const inc=conectado&&!accCompleto(f.correos,f.rolEntra);
+        /* «Completar» solo cuando los dos lados coinciden en el rol: con una diferencia de por
+           medio, «completar» el rol de Entra podría QUITARLE algo a quien el catálogo va a subir
+           (visto en vivo: Leonardo, dueño de administradores pero aún no del sitio). */
+        const inc=conectado&&!dif&&!accCompleto(f.correos,f.rolEntra);
         const soyYo=f.correos.some(c=>yo.indexOf(c)!==-1);
         return '<tr'+(dif?' style="background:rgba(214,158,46,.10)"':'')+'>'+
           '<td>'+(f.nombre?'<b>'+esc(f.nombre)+'</b><br>':'')+'<span class="mono" style="font-size:12px">'+esc(f.correo)+'</span>'+
@@ -8559,8 +8619,12 @@ function renderAccesos(box){
           '<td>'+chip(f.rolCat)+'</td><td>'+chip(f.rolEntra)+(dif?' <b style="color:var(--warn)">≠</b>':'')+
             (inc? '<div style="font-size:11.5px;color:var(--warn);margin-top:4px">Incompleto en Entra'+
                (puede?' <button class="btn sec" data-completar="'+i+'" style="padding:2px 8px">Completar</button>':'')+'</div>':'')+'</td>'+
-          '<td>'+(puede? '<select data-acc="'+i+'">'+ROLES_ACC.map(r=>'<option value="'+r+'"'+
-             (r===f.rolEntra?' selected':'')+'>'+ROL_TXT[r]+'</option>').join('')+'</select>' : '')+'</td></tr>';
+          '<td>'+(f.noExiste? '<div style="font-size:11.5px;color:var(--p1);margin-bottom:4px">No existe en Entra ID</div>'+
+               (soyDueno? '<button class="btn sec" data-acc-quitar="'+i+'" style="padding:3px 10px">Quitar de la lista</button>':'')
+             : puede? '<select data-acc="'+i+'">'+ROLES_ACC.map(r=>'<option value="'+r+'"'+
+             (r===f.rolEntra?' selected':'')+'>'+ROL_TXT[r]+'</option>').join('')+'</select>'+
+             (f.rolEntra!=='operador'||f.rolCat!=='operador'? ' <button class="btn sec" data-acc-quitar="'+i+'" title="Le quita todo rol: queda como operador" style="padding:3px 10px">Quitar</button>':'')
+             : '')+'</td></tr>';
       }).join('')+
     '</tbody></table></div>'+
     (puede? '<div class="f" style="margin-top:12px"><label>Asignar rol a otra persona de Sipnology</label>'+
@@ -8615,6 +8679,23 @@ function renderAccesos(box){
       const f=filas[+sel.dataset.acc];
       await aplicar(f,sel.value,sel);
       renderAccesos(box);
+    };
+  });
+  /* «Quitar»: deja a la persona como operador y la saca de las listas. Si la cuenta no
+     existe en Entra, solo se limpia el catálogo. */
+  box.querySelectorAll('[data-acc-quitar]').forEach(b=>{
+    b.onclick=async()=>{
+      const f=filas[+b.dataset.accQuitar];
+      if(f.noExiste){
+        if(!confirm(f.correo+'\n\nEsta cuenta no existe en Entra ID. Se quitará de la lista de '+
+            (f.rolCat==='propietario'?'propietarios':'administradores')+' del catálogo.\n\n¿Continuar?')) return;
+        busy(b,true);
+        try{ await accQuitarDeLista(f.correos); toast(f.correo+' ya no está en la lista.',null,6000); }
+        catch(e){ toast(e.message,'err',12000); }
+        finally{ renderAccesos(box); }
+        return;
+      }
+      await aplicar(f,'operador',b); renderAccesos(box);
     };
   });
   box.querySelectorAll('[data-completar]').forEach(b=>{
@@ -13075,7 +13156,9 @@ const AYUDA=[
   a:'En <b>Administración → Accesos y roles</b>. Toda cuenta de Sipnology entra ya como '+
     '<b>operador</b>; ahí eliges quién sube a <b>administrador</b> o a <b>propietario</b>, y el '+
     'sistema lo cambia en Entra ID al momento, con el permiso de SharePoint que le toca. Para '+
-    'bajarle el rol a alguien se hace igual.'+
+    'bajarle el rol a alguien se hace igual, y el botón <b>Quitar</b> lo deja como operador y lo saca '+
+    'de las listas. Si una dirección no existe en Entra ID (mal escrita, por ejemplo), la tabla lo '+
+    'marca y ofrece <b>Quitar de la lista</b>.'+
     '<div class="avi">Lo pueden hacer solo los propietarios. No se puede dejar el sistema sin '+
     'propietarios, y si te quitas el rol a ti mismo te lo pide confirmar, porque después tendría '+
     'que devolvértelo otro propietario.</div>'},
@@ -13273,7 +13356,7 @@ window.SIP={S:S,esc:esc,
   accLeer:accLeer,accCambiarRol:accCambiarRol,accSincronizar:accSincronizar,accCambiarModo:accCambiarModo,
   accPersonas:accPersonas,accDiferencias:accDiferencias,accRevisar:accRevisar,accEntraManda:accEntraManda,
   accGuardarCache:accGuardarCache,rolDeLista:rolDeLista,scopesDeToken:scopesDeToken,renderAccesos:renderAccesos,
-  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
+  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,accQuitarDeLista:accQuitarDeLista,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   ORDENABLES:ORDENABLES,ordenarSeg:ordenarSeg,alternarOrden:alternarOrden,orden:()=>_segOrden,flechaOrden:flechaOrden,
