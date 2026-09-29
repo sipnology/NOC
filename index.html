@@ -1293,7 +1293,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r131';
+const APP_VER = '2026-09-29 · r132';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -6902,9 +6902,9 @@ const CAT_AREAS=[
   {id:'admin', nombre:'Administración', icono:'⚙️', secciones:[
     ['clientes','Clientes','Alta, módulos visibles y logo'],
     ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
-    ['accesos','Accesos y roles','Quién es propietario, administrador u operador, de verdad'],
-    ['propietarios','Propietarios','Quién puede borrar y restaurar'],
-    ['admins','Administradores','Quién puede modificar los catálogos'],
+    /* Desde r132 es la ÚNICA pantalla de roles: Propietarios y Administradores se retiraron
+       porque, con los roles en Entra ID, solo repetían una copia que no se podía editar. */
+    ['accesos','Accesos y roles','Quién es propietario o administrador; todos los demás son operadores'],
     ['alertas','Alertas','Avisos automáticos de SLA y bloqueo de correo'],
     ['diagnostico','Diagnóstico','Ver qué falla por dentro cuando algo no cuadra'],
     ['respaldo','Respaldo y Restauración','Generar respaldos, restaurarlos y dar de baja'],
@@ -7672,12 +7672,10 @@ function renderCat(){
   if(k==='clientes') return renderClientes(box,ro);
   if(ESQUEMAS[k]){ const r=k==='equipos'?!puedeEditarInventario():ro;
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
-  /* Propietarios va ANTES del dibujo genérico de listas: si cayera ahí, un
-     administrador vería el campo editable y solo descubriría que no puede al guardar. */
+  /* Accesos va ANTES del dibujo genérico de listas: si una sección de roles cayera ahí, un
+     administrador vería un campo editable y solo descubriría que no puede al guardar. */
   if(k==='accesos') return renderAccesos(box);
-  if(k==='propietarios') return renderPropietarios(box);
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
-  if(k==='admins') return renderAdmins(box,ro);
   if(k==='diagnostico') return renderDiagnostico(box,ro);
   if(k==='alertas') return renderAlertas(box,ro);
   if(k==='respaldo') return renderRespaldo(box);
@@ -8022,114 +8020,11 @@ async function borrarExpedientesCliente(cli,avisar){
    podía guardar nada, con un 403 críptico al primer intento—. Ahora la pantalla lo dice,
    con el enlace para hacerlo de una vez. */
 const URL_GRUPOS_SP='https://sipnologysacv.sharepoint.com/sites/NOC/_layouts/15/people.aspx?MembershipGroupId=0';
-/* Con el mando en Entra estas dos listas son la copia de respaldo: se ven, no se editan,
-   y se dice dónde se cambian. Editarlas aquí sería cambiar una copia que se sobrescribe. */
-function notaModoEntra(){
-  return accModoEntra()? '<div class="note" style="border-left-color:var(--brand2);margin-bottom:10px">'+
-    '<b>Esta lista ya no se edita aquí.</b> Los roles se asignan en '+
-    '<a href="#" data-ir-accesos>Administración → Accesos y roles</a>, que los cambia directamente en '+
-    'Entra ID. Lo que ves es la copia que usa el sistema si Entra no responde.</div>' : '';
-}
-function enlazarAccesos(box){
-  const l=box.querySelector('[data-ir-accesos]');
-  if(l) l.onclick=e=>{ e.preventDefault(); S._catSec='accesos'; renderCat(); };
-}
-function renderAdmins(box,ro){
-  if(accModoEntra()) ro=true;
-  const lista=listaAdmins(), props=listaPropietarios();
-  const soloAdmins=lista.filter(a=>props.indexOf(a)===-1);
-  box.innerHTML=notaModoEntra()+
-    '<div class="note"><b>Un administrador puede cambiar los catálogos, ver la bitácora y '+
-      'configurar las alertas.</b> No puede borrar tickets ni restaurar respaldos: eso es de los '+
-      'propietarios. Todo propietario es ya administrador, así que no hace falta repetirlo aquí.</div>'+
-    '<div class="f" style="margin-top:12px"><label>Administradores</label>'+
-      campoCorreos('txtAdmins',lista,ro)+'</div>'+
-    (accModoEntra()? '' : '<div class="note" style="border-left-color:var(--warn);margin-top:12px">'+
-      '<b>Falta un paso fuera del sistema, y es el que se olvida.</b> Con darlo de alta aquí ya '+
-      'entra y ve los catálogos, pero para <b>guardar</b> cambios necesita permiso de escritura en '+
-      'SharePoint. Si no lo tiene, al guardar recibirá un error de permisos que no dice de qué va.<br><br>'+
-      'Se arregla una sola vez, en un sitio: añadirlo al grupo <b>Integrantes de la NOC</b> '+
-      '(nivel «Editar») en '+
-      '<a href="'+URL_GRUPOS_SP+'" target="_blank" rel="noopener">los grupos del sitio de SharePoint</a>. '+
-      'No hace falta tocar Entra ID: cualquier cuenta de Sipnology ya entra al sistema como operador; '+
-      'lo único que cambia aquí es qué puede hacer dentro. O mejor: asígnalo desde '+
-      '<b>Accesos y roles</b>, que da los dos permisos de una vez.</div>')+
-    (soloAdmins.length&&!accModoEntra()? '<div class="note" style="margin-top:10px">Administradores que no son '+
-      'propietarios y por tanto necesitan ese permiso: <b>'+esc(soloAdmins.join(', '))+'</b>.</div>' : '')+
-    (ro? '<div class="note" style="margin-top:10px"><b>Tu perfil es de solo lectura.</b></div>':'');
-  enlazarAccesos(box);
-  const t=box.querySelector('#txtAdmins');
-  if(t) pintarRevision('txtAdmins',t.value);
-  if(ro||!t) return;
-  t.oninput=function(){ pintarRevision('txtAdmins',this.value); };
-  t.onchange=async function(){
-    const antes=listaAdmins().slice();
-    const r=pintarRevision('txtAdmins',this.value);
-    if(r.malos.length) toast('Estas no parecen correos y quedaron fuera: '+
-      r.malos.slice(0,3).join(', ')+'.','warn',9000);
-    /* Quitarse a uno mismo de administradores se puede, pero no a ciegas: si además no
-       eres propietario, pierdes el acceso a esta pantalla en cuanto se guarde. */
-    const yo=currentUserEmails();
-    const meQuito=antes.some(a=>yo.indexOf(a)!==-1) && !r.buenos.some(a=>yo.indexOf(a)!==-1);
-    if(meQuito && !esDuenoReal() &&
-       !confirm('Te estás quitando a ti mismo de la lista de administradores.\n\n'+
-                'No eres propietario, así que al guardar perderás el acceso a Catálogos y a la '+
-                'Bitácora, y tendrá que volver a darte de alta otra persona.\n\n¿Continuar?')){
-      this.value=antes.join('\n'); pintarRevision('txtAdmins',this.value); return;
-    }
-    S.cat.admins=r.buenos;
-    try{
-      if(await catalogoPush()!==false){
-        logEvent('ADMINS',r.buenos.join(', ')||'(ninguno)');
-        toast(r.buenos.length+' administrador(es) guardados.');
-        this.value=r.buenos.join('\n');
-        renderAdmins(box,ro);
-      }
-    }catch(e){ S.cat.admins=antes; toast('No se pudo guardar: '+e.message,'err',9000); }
-  };
-}
-function renderPropietarios(box){
-  const soyDueno=esDueno()&&!accModoEntra();
-  const lista=listaPropietarios();
-  box.innerHTML=notaModoEntra()+
-    '<div class="note"><b>Los propietarios pueden borrar y restaurar.</b> Son los únicos que pueden '+
-      'archivar o dar de baja un cliente, restaurar un respaldo, borrar respaldos, eliminar datos en bloque '+
-      'y borrar tickets. Todo propietario es además administrador, así que no hace falta darlo de alta dos '+
-      'veces.</div>'+
-    '<div class="note" style="border-left-color:'+(soyDueno?'var(--ok)':'var(--warn)')+';margin-top:10px">'+
-      (soyDueno? 'Puedes editar esta lista porque eres propietario. Los cambios se aplican al guardar.'
-               : accModoEntra()? 'Los propietarios son los dueños del grupo del sitio en Entra ID.'
-               : 'Solo un propietario puede editar esta lista. Puedes verla, pero no cambiarla.')+
-      '</div>'+
-    '<div class="f" style="margin-top:12px"><label>Propietarios</label>'+
-      campoCorreos('txtDuenos',lista,!soyDueno)+'</div>'+
-    '<div class="note" style="margin-top:10px">La lista <b>no puede quedarse vacía</b>. Si la borras entera, '+
-      'el sistema vuelve a la de fábrica: quedarse sin propietarios significaría que nadie puede restaurar un '+
-      'respaldo nunca más.</div>';
-  enlazarAccesos(box);
-  const t=box.querySelector('#txtDuenos');
-  if(t) pintarRevision('txtDuenos',t.value);
-  if(!soyDueno||!t) return;
-  t.oninput=function(){ pintarRevision('txtDuenos',this.value); };
-  t.onchange=()=>{
-    const r=pintarRevision('txtDuenos',t.value);
-    if(r.malos.length) toast('Estas no parecen correos y quedaron fuera: '+
-      r.malos.slice(0,3).join(', ')+'.','warn',9000);
-    const nueva=r.buenos;
-    if(!nueva.length){
-      toast('La lista de propietarios no puede quedarse vacía. Se conserva la anterior.','err',9000);
-      t.value=listaPropietarios().join('\n'); return;
-    }
-    if(nueva.indexOf(normCorreo(S.me.mail))===-1 &&
-       !confirm('Te estás quitando a ti mismo de la lista de propietarios.\n\n'+
-                'Perderás la capacidad de restaurar y borrar en cuanto se guarde.\n\n¿Seguro?')){
-      t.value=listaPropietarios().join('\n'); return;
-    }
-    S.cat.propietarios=nueva;
-    logEvent('PROPIETARIOS_EDITADOS',nueva.length+' cuenta(s): '+nueva.join(', '));
-  };
-}
-
+/* Las pantallas «Propietarios» y «Administradores» se retiraron en r132: con los roles en
+   Entra ID eran una copia de solo consulta, y todo lo que hacían (dar y quitar el rol, no
+   dejar el sistema sin propietarios, preguntar antes de quitarse a uno mismo, avisar del
+   permiso de SharePoint) lo hace ya «Accesos y roles», de verdad y en los dos lados. Las
+   listas siguen en el catálogo como copia de respaldo y catalogoPush las sigue defendiendo. */
 /* ======================= ACCESOS Y ROLES =======================
    Hasta r128 el rol vivía solo en el catálogo, y darle a alguien el permiso de verdad en
    SharePoint era un segundo paso a mano que se olvidaba. Ahora el rol ES la pertenencia a
@@ -8489,6 +8384,15 @@ async function accSincronizar(){
   logEvent('ACCESOS_SINCRONIZADOS',res.map(x=>x.correo+'→'+x.rol+(x.ok?'':' (falló)')).join(', ')||'(nada que subir)');
   return res;
 }
+async function accActualizar(){
+  S.acc=null;
+  const a=await accLeer();
+  if(a.estado!=='ok') throw new Error('No se pudieron leer los grupos de Microsoft: '+(a.error||a.estado));
+  if(accModoEntra()&&esDuenoReal()) await accGuardarCache();
+  revisarRol();
+  logEvent('ACCESOS_ACTUALIZADOS','Grupos de Microsoft leídos de nuevo a petición');
+  return a;
+}
 /* Diferencias que impiden pasar a modo Entra: si alguien tuviera un rol distinto en cada
    lado, al activar cambiaría de perfil sin que nadie lo decidiera. */
 function accDiferencias(){ return accPersonas().filter(f=>f.rolEntra&&f.rolCat!==f.rolEntra); }
@@ -8587,11 +8491,25 @@ function renderAccesos(box){
   const difs=conectado? filas.filter(f=>f.rolCat!==f.rolEntra) : [];
   const chip=r=>r? '<span class="chip">'+esc(ROL_TXT[r])+'</span>' : '<span style="color:var(--muted)">—</span>';
   const yo=currentUserEmails();
+  const leido=conectado&&a.cuando? new Date(a.cuando).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '';
   box.innerHTML=
-    '<div class="note"><b>Toda cuenta de Sipnology entra como Operador.</b> Aquí se decide quién es '+
-      '<b>Administrador</b> (catálogos, bitácora, alertas; edición en Sistema/) y quién es <b>Propietario</b> '+
-      '(además borra, restaura y asigna roles; control total del sitio). Cambiar un rol aquí cambia su '+
-      'grupo en Entra ID al momento: ya no hay un segundo paso en SharePoint.</div>'+
+    '<div class="note"><b>Toda cuenta de Sipnology entra como Operador</b>; aquí solo se da de alta a quien '+
+      'sube de nivel. Cambiar un rol aquí cambia su grupo en Microsoft al momento: no hay un segundo paso en SharePoint.'+
+      '<table style="margin-top:10px;font-size:12.5px"><tbody>'+
+      '<tr><td style="white-space:nowrap"><b>Propietario</b></td><td>Todo lo del administrador, y además borra tickets, '+
+        'restaura y borra respaldos, da de baja clientes, elimina datos en bloque y asigna roles. '+
+        '<span style="color:var(--muted)">Dueño del grupo de Microsoft 365 del sitio (control total).</span></td></tr>'+
+      '<tr><td style="white-space:nowrap"><b>Administrador</b></td><td>Todo lo del operador, y además catálogos, usuarios '+
+        'cliente, bitácora, alertas y diagnóstico. <span style="color:var(--muted)">Integrante de «'+esc(GRUPO_ADMINS)+
+        '» (edición en Sistema/).</span></td></tr>'+
+      '<tr><td style="white-space:nowrap"><b>Operador</b></td><td>Tickets, CRQ, SIT, casos, RMA, inventario, proyectos y '+
+        'reportes. <span style="color:var(--muted)">Cualquier cuenta de Sipnology; no se da de alta.</span></td></tr>'+
+      '</tbody></table></div>'+
+    (conectado? '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">'+
+      '<button class="btn sec" id="accActualizar" title="Vuelve a leer los grupos de Microsoft: sirve si alguien '+
+        'cambió un grupo desde el portal de Microsoft">↻ Actualizar desde Microsoft</button>'+
+      '<span style="color:var(--muted);font-size:12.5px">Grupos leídos a las '+esc(leido)+'. '+
+        'Se leen solos al entrar; usa el botón si alguien los cambió desde el portal de Microsoft.</span></div>' : '')+
     '<div class="note" style="margin-top:10px;border-left-color:'+(entra?'var(--p3)':'var(--warn)')+'">'+
       /* «Quién manda» no se entendía (lo dijo Fernando al verlo): se explica qué lee el sistema. */
       (entra? '<b>Los roles se leen de los grupos de Microsoft (Entra ID).</b> Quien esté en un grupo tiene su '+
@@ -8657,6 +8575,15 @@ function renderAccesos(box){
       items.map(x=>'<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)">'+
         '<b style="color:'+col[x.estado]+';width:16px">'+ico[x.estado]+'</b><div><b>'+x.titulo+'</b> — '+x.texto+'</div></div>').join('');
   }).catch(e=>{ rev.innerHTML='<div class="note" style="border-left-color:var(--warn)">No se pudo revisar la configuración: '+esc(e.message)+'</div>'; });
+  /* Volver a leer los grupos ahora mismo. Con los roles en Entra, esto es «sincronizar»:
+     el perfil de quien está conectado y la copia del catálogo se ponen al día con lo leído. */
+  const actualizar=box.querySelector('#accActualizar');
+  if(actualizar) actualizar.onclick=async()=>{ busy(actualizar,true);
+    try{
+      await accActualizar();
+      toast('Grupos de Microsoft leídos de nuevo.',null,5000);
+    }catch(e){ toast(e.message,'err',10000); }
+    finally{ renderAccesos(box); } };
   const conectar=box.querySelector('#accConectar');
   if(conectar) conectar.onclick=async()=>{ busy(conectar,true);
     try{ await accLeer(true); revisarRol(); }finally{ renderAccesos(box); } };
@@ -13168,11 +13095,10 @@ const AYUDA=[
     'propietarios, y si te quitas el rol a ti mismo te lo pide confirmar, porque después tendría '+
     'que devolvértelo otro propietario.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
-  q:'¿Por qué no puedo editar la lista de administradores?',
-  a:'Porque los roles ya se llevan en <b>Entra ID</b> y se asignan desde <b>Administración → '+
-    'Accesos y roles</b>. Las pantallas de Propietarios y Administradores quedan como consulta: '+
-    'enseñan la copia que usa el sistema si Entra no respondiera.'+
-    '<div class="avi">Si necesitas un cambio de rol, pídeselo a un propietario.</div>'},
+  q:'¿Dónde veo quién es administrador o propietario?',
+  a:'En <b>Administración → Accesos y roles</b>. Ahí está cada persona con su rol y lo que puede hacer '+
+    'cada nivel. Todas las demás cuentas de Sipnology son operadores.'+
+    '<div class="avi">Solo un propietario cambia roles. Si necesitas uno, pídeselo a un propietario.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
   q:'¿Cómo cambio quién recibe las alertas de SLA?',
   a:'En <b>Administración → Alertas</b>, en «A quién se avisa de los SLA». Escribe las '+
@@ -13361,7 +13287,7 @@ window.SIP={S:S,esc:esc,
   accLeer:accLeer,accCambiarRol:accCambiarRol,accSincronizar:accSincronizar,accCambiarModo:accCambiarModo,
   accPersonas:accPersonas,accDiferencias:accDiferencias,accRevisar:accRevisar,accEntraManda:accEntraManda,
   accGuardarCache:accGuardarCache,rolDeLista:rolDeLista,scopesDeToken:scopesDeToken,renderAccesos:renderAccesos,
-  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,accQuitarDeLista:accQuitarDeLista,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
+  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,accQuitarDeLista:accQuitarDeLista,accActualizar:accActualizar,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   ORDENABLES:ORDENABLES,ordenarSeg:ordenarSeg,alternarOrden:alternarOrden,orden:()=>_segOrden,flechaOrden:flechaOrden,
@@ -13415,7 +13341,7 @@ window.SIP={S:S,esc:esc,
   actividadInvitado:actividadInvitado,LISTA_ACT:LISTA_ACT,diagActivo:diagActivo,diagFallo:diagFallo,diagCuenta:diagCuenta,diagRefrescar:diagRefrescar,SITE_ID_NOC:SITE_ID_NOC,LISTA_ACT_ID:LISTA_ACT_ID,
   leerActividadInvitados:leerActividadInvitados,
   listaPropietarios:listaPropietarios,esDueno:esDueno,esDuenoReal:esDuenoReal,isAdmin:isAdmin,
-  renderPropietarios:renderPropietarios,listaAdmins:listaAdmins,
+  listaAdmins:listaAdmins,
   pistaCliente:pistaCliente,PREF_INVITADO:PREF_INVITADO,
   cfgAlertas:cfgAlertas,alertasActivas:alertasActivas,correoBloqueado:correoBloqueado,partirCorreos:partirCorreos,correoValido:correoValido,revisarCorreos:revisarCorreos,campoCorreos:campoCorreos,pintarRevision:pintarRevision,correoAlertasSLA:correoAlertasSLA,enviarAvisoSistema:enviarAvisoSistema,ALERTA_REPETIR_MIN:ALERTA_REPETIR_MIN,alertaPendiente:alertaPendiente,marcarAlertaEnviada:marcarAlertaEnviada,
   logNavegacion:logNavegacion,NAV_REPETIDA_MS:NAV_REPETIDA_MS,tituloDim:tituloDim,
@@ -13450,7 +13376,7 @@ window.SIP={S:S,esc:esc,
   catCliVacio:catCliVacio,componerCat:componerCat,
   MODULOS:MODULOS,ETIQ_MOD:ETIQ_MOD,mergeClientes:mergeClientes,DATASETS:DATASETS,
   TIPOS_GRAF:TIPOS_GRAF,tipoGraf:tipoGraf,setTipoGraf:setTipoGraf,configGrafica:configGrafica,
-  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,coloresPara:coloresPara,procesando:procesando,conProceso:conProceso,degradado:degradado,degradadoRadial:degradadoRadial,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,renderAdmins:renderAdmins,URL_GRUPOS_SP:URL_GRUPOS_SP,
+  colorTextoSobre:colorTextoSobre,etiquetaValor:etiquetaValor,PLUGIN_VALORES:PLUGIN_VALORES,PALETA:PALETA,COLOR_SEMANTICO:COLOR_SEMANTICO,colorDe:colorDe,coloresPara:coloresPara,procesando:procesando,conProceso:conProceso,degradado:degradado,degradadoRadial:degradadoRadial,prefiereQuieto:prefiereQuieto,renderDiagnostico:renderDiagnostico,cfgDiag:cfgDiag,URL_GRUPOS_SP:URL_GRUPOS_SP,
   medirPng:medirPng,pesoLegible:pesoLegible,nombreCliente:nombreCliente,
   AUTH_TTL:AUTH_TTL,AUTH_CLAVE:AUTH_CLAVE,MFA_ESTRICTO:MFA_ESTRICTO,CLAIMS_MFA:CLAIMS_MFA,
   normCorreo:normCorreo,listaAdmins:listaAdmins,resolverRol:resolverRol,
