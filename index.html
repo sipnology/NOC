@@ -12,6 +12,7 @@
   --brand:#e9662d;      /* naranja del logo Sipnology  rgb(233,102,45) */
   --brand2:#3b82f6;     /* azul de accion, igual que el Cotizador */
   --p1:#ef4444; --p2:#f59e0b; --p3:#22c55e; --warn:#f59e0b;
+  --ok:#22c55e; --err:#ef4444;   /* se usaban sin estar definidos: el borde salía del color por defecto */
   --radius:10px; --sh:0 6px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -1276,11 +1277,23 @@ const cfg = {
   sitePath : '/sites/NOC',                              // sitio de SharePoint "NOC"
   library  : 'Tickets',                                 // biblioteca de documentos dentro del sitio NOC
   scopes   : ['Sites.ReadWrite.All','Mail.Send','User.Read'],
+  /* Para asignar roles de verdad. Van APARTE a propósito: si se añadieran a «scopes»,
+     cada inicio de sesión exigiría un consentimiento que un administrador del tenant tiene
+     que aprobar primero, y hasta entonces nadie podría entrar. Se piden solo al leer o
+     cambiar roles, y si no están aprobados la plataforma sigue funcionando como antes.
+     Son delegados: la aplicación actúa como la persona conectada, con SUS derechos. Un
+     operador que intente hacer propietario a alguien recibe un rechazo de Microsoft,
+     porque él no es dueño del grupo.
+     Group.ReadWrite.All y no GroupMember.ReadWrite.All: Microsoft solo deja añadir o quitar
+     DUEÑOS de un grupo con el primero (ver «Add owners» en la documentación de Graph), y
+     ser propietario aquí es ser dueño del grupo del sitio. Con el segundo solo se podrían
+     mover administradores. */
+  scopesGrupos : ['Group.ReadWrite.All','User.ReadBasic.All'],
   remitenteNotif : 'noc@sipnology.com.mx'               // solo informativo para pie de correo
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r128';
+const APP_VER = '2026-09-29 · r129';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1710,11 +1723,20 @@ function currentUserEmails(){
   return [a.username,c.preferred_username,c.email,c.upn].filter(Boolean).map(normCorreo);
 }
 function normCorreo(x){ return String(x==null?'':x).replace(/[<>\s]/g,'').trim().toLowerCase(); }
+/* ---- De dónde salen los roles ----
+   Con los accesos en modo Entra, la verdad es la que tiene Microsoft: quién es dueño del
+   grupo del sitio y quién está en «NOC · Administradores». Las listas del catálogo pasan a
+   ser una copia que se mantiene al día y que se usa si Entra no responde, para que un
+   corte momentáneo no deje a nadie sin su perfil. Mientras el modo no se active, todo
+   funciona exactamente como antes: manda el catálogo. */
+function accEntraManda(){
+  const a=S.acc||{};
+  return !!(S.cat&&S.cat.accesos&&S.cat.accesos.modo==='entra') && a.estado==='ok' && (a.duenos||[]).length>0;
+}
 function listaAdmins(){
-  const rem=(S.cat&&Array.isArray(S.cat.admins))?S.cat.admins:null;
+  if(accEntraManda()) return S.acc.admins.map(normCorreo).filter(Boolean);
   /* Si el catálogo remoto todavía no llega, se usa la lista de arranque: nunca una lista vacía. */
-  const l=(rem&&rem.length)?rem:(CAT_DEFAULT.admins||[]);
-  return l.map(normCorreo).filter(Boolean);
+  return catAdmins();
 }
 function isAdmin(){
   /* «soloadmin» es la vista de un administrador que no es propietario: sigue administrando,
@@ -1740,11 +1762,10 @@ let _simRol=null;
    una lista que se administra desde la propia aplicación, con dos seguros: solo un
    propietario puede tocarla, y no se puede dejar vacía. */
 function listaPropietarios(){
-  const rem=(S.cat&&Array.isArray(S.cat.propietarios))?S.cat.propietarios:null;
+  if(accEntraManda()) return S.acc.duenos.map(normCorreo).filter(Boolean);
   /* Si el catálogo aún no llegó, o alguien la dejó vacía, se usa la de arranque: quedarse
      sin propietarios significaría que nadie puede restaurar un respaldo nunca más. */
-  const l=(rem&&rem.length)?rem:(CAT_DEFAULT.propietarios||[DUENO]);
-  return l.map(normCorreo).filter(Boolean);
+  return catPropietarios();
 }
 function esDueno(){
   if(_simRol) return false;   // con vista simulada nadie es propietario, ni el propietario
@@ -1925,7 +1946,7 @@ function censoSedes(cat){
 const SEC_CLIENTE=['localidades','categorias','tipos','prioridades','tiposDispositivo',
   'imputables','aliasSedes','clientesExternos','catsConTiempos','estadosCRQ',
   'estadosFab','estadosRMA','estatus'];
-const SEC_GLOBAL=['admins','propietarios','logoOperador','alertas','diagnostico'];
+const SEC_GLOBAL=['admins','propietarios','logoOperador','alertas','diagnostico','accesos'];
 const pInv  =c=>pCli(c)+D_INV+'/inventario.json';
 const pCrq  =c=>pCli(c)+D_CRQ+'/crq.json';
 const pSit  =c=>pCli(c)+D_SIT+'/sit.json';
@@ -2315,6 +2336,10 @@ async function catalogoPull(silent){
         S.sobrantesSistema.join(', ')+'). Se ignoran, pero conviene limpiarlas.','warn',14000);
     poblarCatalogosUI();
     revisarRol();
+    /* Los roles reales se leen de Entra en segundo plano: no retrasan el arranque, y si
+       cambian respecto a la copia del catálogo, revisarRol() ajusta el perfil al vuelo. */
+    accLeer().then(()=>{ revisarRol();
+      if(S._catSec==='accesos'&&$('#vCatalogos')&&$('#vCatalogos').classList.contains('on')) renderCat(); }).catch(e=>diagFallo('accesos: lectura de Entra',e&&e.message));
     if(!silent) toast('Catálogo actualizado.');
   }catch(e){
     if(!S.cat) S.cat=JSON.parse(JSON.stringify(CAT_DEFAULT));
@@ -2358,6 +2383,12 @@ async function catalogoPush(){
     if(JSON.stringify(S.catGlobal[k])===JSON.stringify(S.cat[k])) return;
     /* La lista de propietarios se defiende aquí también, no solo en la pantalla: si no,
        bastaría con saltarse la interfaz para concederse el borrado definitivo. */
+    /* Quién manda en los roles lo decide un propietario, igual que la lista de propietarios. */
+    if(k==='accesos' && !esDuenoReal()){
+      toast('Solo un propietario puede cambiar cómo se administran los accesos. Ese cambio no se guardó.','err',10000);
+      S.cat.accesos=clon(S.catGlobal.accesos||{modo:'catalogo'});
+      return;
+    }
     if(k==='propietarios'){
       if(!esDuenoReal()){
         toast('Solo un propietario puede cambiar la lista de propietarios. Ese cambio no se guardó.','err',10000);
@@ -6871,6 +6902,7 @@ const CAT_AREAS=[
   {id:'admin', nombre:'Administración', icono:'⚙️', secciones:[
     ['clientes','Clientes','Alta, módulos visibles y logo'],
     ['clientesExternos','Usuarios cliente','Invitados con acceso a su propia información'],
+    ['accesos','Accesos y roles','Quién es propietario, administrador u operador, de verdad'],
     ['propietarios','Propietarios','Quién puede borrar y restaurar'],
     ['admins','Administradores','Quién puede modificar los catálogos'],
     ['alertas','Alertas','Avisos automáticos de SLA y bloqueo de correo'],
@@ -7642,6 +7674,7 @@ function renderCat(){
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   /* Propietarios va ANTES del dibujo genérico de listas: si cayera ahí, un
      administrador vería el campo editable y solo descubriría que no puede al guardar. */
+  if(k==='accesos') return renderAccesos(box);
   if(k==='propietarios') return renderPropietarios(box);
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='admins') return renderAdmins(box,ro);
@@ -7989,16 +8022,29 @@ async function borrarExpedientesCliente(cli,avisar){
    podía guardar nada, con un 403 críptico al primer intento—. Ahora la pantalla lo dice,
    con el enlace para hacerlo de una vez. */
 const URL_GRUPOS_SP='https://sipnologysacv.sharepoint.com/sites/NOC/_layouts/15/people.aspx?MembershipGroupId=0';
+/* Con el mando en Entra estas dos listas son la copia de respaldo: se ven, no se editan,
+   y se dice dónde se cambian. Editarlas aquí sería cambiar una copia que se sobrescribe. */
+function notaModoEntra(){
+  return accModoEntra()? '<div class="note" style="border-left-color:var(--brand2);margin-bottom:10px">'+
+    '<b>Esta lista ya no se edita aquí.</b> Los roles se asignan en '+
+    '<a href="#" data-ir-accesos>Administración → Accesos y roles</a>, que los cambia directamente en '+
+    'Entra ID. Lo que ves es la copia que usa el sistema si Entra no responde.</div>' : '';
+}
+function enlazarAccesos(box){
+  const l=box.querySelector('[data-ir-accesos]');
+  if(l) l.onclick=e=>{ e.preventDefault(); S._catSec='accesos'; renderCat(); };
+}
 function renderAdmins(box,ro){
+  if(accModoEntra()) ro=true;
   const lista=listaAdmins(), props=listaPropietarios();
   const soloAdmins=lista.filter(a=>props.indexOf(a)===-1);
-  box.innerHTML=
+  box.innerHTML=notaModoEntra()+
     '<div class="note"><b>Un administrador puede cambiar los catálogos, ver la bitácora y '+
       'configurar las alertas.</b> No puede borrar tickets ni restaurar respaldos: eso es de los '+
       'propietarios. Todo propietario es ya administrador, así que no hace falta repetirlo aquí.</div>'+
     '<div class="f" style="margin-top:12px"><label>Administradores</label>'+
       campoCorreos('txtAdmins',lista,ro)+'</div>'+
-    '<div class="note" style="border-left-color:var(--warn);margin-top:12px">'+
+    (accModoEntra()? '' : '<div class="note" style="border-left-color:var(--warn);margin-top:12px">'+
       '<b>Falta un paso fuera del sistema, y es el que se olvida.</b> Con darlo de alta aquí ya '+
       'entra y ve los catálogos, pero para <b>guardar</b> cambios necesita permiso de escritura en '+
       'SharePoint. Si no lo tiene, al guardar recibirá un error de permisos que no dice de qué va.<br><br>'+
@@ -8006,10 +8052,12 @@ function renderAdmins(box,ro){
       '(nivel «Editar») en '+
       '<a href="'+URL_GRUPOS_SP+'" target="_blank" rel="noopener">los grupos del sitio de SharePoint</a>. '+
       'No hace falta tocar Entra ID: cualquier cuenta de Sipnology ya entra al sistema como operador; '+
-      'lo único que cambia aquí es qué puede hacer dentro.</div>'+
-    (soloAdmins.length? '<div class="note" style="margin-top:10px">Administradores que no son '+
+      'lo único que cambia aquí es qué puede hacer dentro. O mejor: asígnalo desde '+
+      '<b>Accesos y roles</b>, que da los dos permisos de una vez.</div>')+
+    (soloAdmins.length&&!accModoEntra()? '<div class="note" style="margin-top:10px">Administradores que no son '+
       'propietarios y por tanto necesitan ese permiso: <b>'+esc(soloAdmins.join(', '))+'</b>.</div>' : '')+
     (ro? '<div class="note" style="margin-top:10px"><b>Tu perfil es de solo lectura.</b></div>':'');
+  enlazarAccesos(box);
   const t=box.querySelector('#txtAdmins');
   if(t) pintarRevision('txtAdmins',t.value);
   if(ro||!t) return;
@@ -8041,15 +8089,16 @@ function renderAdmins(box,ro){
   };
 }
 function renderPropietarios(box){
-  const soyDueno=esDueno();
+  const soyDueno=esDueno()&&!accModoEntra();
   const lista=listaPropietarios();
-  box.innerHTML=
+  box.innerHTML=notaModoEntra()+
     '<div class="note"><b>Los propietarios pueden borrar y restaurar.</b> Son los únicos que pueden '+
       'archivar o dar de baja un cliente, restaurar un respaldo, borrar respaldos, eliminar datos en bloque '+
       'y borrar tickets. Todo propietario es además administrador, así que no hace falta darlo de alta dos '+
       'veces.</div>'+
     '<div class="note" style="border-left-color:'+(soyDueno?'var(--ok)':'var(--warn)')+';margin-top:10px">'+
       (soyDueno? 'Puedes editar esta lista porque eres propietario. Los cambios se aplican al guardar.'
+               : accModoEntra()? 'Los propietarios son los dueños del grupo del sitio en Entra ID.'
                : 'Solo un propietario puede editar esta lista. Puedes verla, pero no cambiarla.')+
       '</div>'+
     '<div class="f" style="margin-top:12px"><label>Propietarios</label>'+
@@ -8057,6 +8106,7 @@ function renderPropietarios(box){
     '<div class="note" style="margin-top:10px">La lista <b>no puede quedarse vacía</b>. Si la borras entera, '+
       'el sistema vuelve a la de fábrica: quedarse sin propietarios significaría que nadie puede restaurar un '+
       'respaldo nunca más.</div>';
+  enlazarAccesos(box);
   const t=box.querySelector('#txtDuenos');
   if(t) pintarRevision('txtDuenos',t.value);
   if(!soyDueno||!t) return;
@@ -8077,6 +8127,538 @@ function renderPropietarios(box){
     }
     S.cat.propietarios=nueva;
     logEvent('PROPIETARIOS_EDITADOS',nueva.length+' cuenta(s): '+nueva.join(', '));
+  };
+}
+
+/* ======================= ACCESOS Y ROLES =======================
+   Hasta r128 el rol vivía solo en el catálogo, y darle a alguien el permiso de verdad en
+   SharePoint era un segundo paso a mano que se olvidaba. Ahora el rol ES la pertenencia a
+   un grupo de Entra, y cambiarlo aquí cambia el grupo:
+     · Propietario   = dueño del grupo de Microsoft 365 del sitio (control total) y dueño de
+                       «NOC · Administradores» (para poder asignar administradores).
+     · Administrador = integrante de «NOC · Administradores», que tiene edición en Sistema/.
+     · Operador      = cualquier cuenta de Sipnology. No hay que darla de alta en ningún lado.
+   Todo es DELEGADO: la aplicación actúa con los derechos de quien está conectado. Aunque el
+   permiso esté aprobado para la organización, un operador que intentara hacer propietario a
+   alguien recibiría un rechazo de Microsoft, porque no es dueño del grupo. */
+const GRAPH='https://graph.microsoft.com/v1.0';
+const GRUPO_ADMINS='NOC · Administradores';
+const DOMINIO_INTERNO='@sipnology.com.mx';
+const ROLES_ACC=['propietario','administrador','operador'];
+const ROL_TXT={propietario:'Propietario',administrador:'Administrador',operador:'Operador'};
+/* El nombre se compara sin puntos, guiones ni mayúsculas: «NOC - Administradores» y
+   «NOC · Administradores» son el mismo grupo para una persona, y deben serlo aquí. */
+const nomGrupo=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g,'');
+function accModoEntra(){ return !!(S.cat&&S.cat.accesos&&S.cat.accesos.modo==='entra'); }
+/* Las listas del catálogo tal como están, sin mirar a Entra. En modo Entra son la copia de
+   respaldo; en modo catálogo, la verdad. */
+function catPropietarios(){
+  const rem=(S.cat&&Array.isArray(S.cat.propietarios))?S.cat.propietarios:null;
+  return ((rem&&rem.length)?rem:(CAT_DEFAULT.propietarios||[DUENO])).map(normCorreo).filter(Boolean);
+}
+function catAdmins(){
+  const rem=(S.cat&&Array.isArray(S.cat.admins))?S.cat.admins:null;
+  return ((rem&&rem.length)?rem:(CAT_DEFAULT.admins||[])).map(normCorreo).filter(Boolean);
+}
+function rolDeLista(correos,duenos,admins){
+  correos=(correos||[]).map(normCorreo);
+  if(correos.some(c=>(duenos||[]).indexOf(c)!==-1)) return 'propietario';
+  if(correos.some(c=>(admins||[]).indexOf(c)!==-1)) return 'administrador';
+  return 'operador';
+}
+/* Token aparte para los grupos. En silencio si ya está aprobado; con ventana solo cuando
+   la persona lo pide con un botón. Si no está aprobado devuelve null y NADA se rompe:
+   el sistema sigue con el catálogo, como hasta r128. */
+async function tokenGrupos(interactivo){
+  try{
+    const app=msalApp(); await app.initialize();
+    const acc=app.getAllAccounts()[0]; if(!acc) return null;
+    try{ return (await app.acquireTokenSilent({account:acc,scopes:cfg.scopesGrupos})).accessToken; }
+    catch(e){
+      if(!interactivo) return null;
+      return (await app.acquireTokenPopup({account:acc,scopes:cfg.scopesGrupos})).accessToken;
+    }
+  }catch(e){ return null; }
+}
+/* Qué permisos trae de verdad el token: la forma de saber si el consentimiento se dio
+   completo sin tener que adivinarlo por el error del primer intento. */
+function scopesDeToken(t){
+  try{
+    const b=String(t).split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const p=JSON.parse(decodeURIComponent(escape(atob(b+'==='.slice((b.length+3)%4)))));
+    return String(p.scp||'').split(' ').filter(Boolean);
+  }catch(e){ return []; }
+}
+function accPuedeEscribir(){
+  const s=(S.acc&&S.acc.scopes)||[];
+  return s.indexOf('Group.ReadWrite.All')!==-1 || s.indexOf('Directory.ReadWrite.All')!==-1;
+}
+async function gJson(h,url){
+  const r=await fetch(GRAPH+url,{headers:h});
+  if(!r.ok){ const e=new Error('Graph '+r.status+' · '+url.split('?')[0]); e.status=r.status; throw e; }
+  return r.json();
+}
+function msgGraph(txt){
+  try{ const j=JSON.parse(txt); return (j.error&&j.error.message)||txt; }catch(e){ return String(txt||'').slice(0,200); }
+}
+function personasDe(lista){
+  return (lista||[]).filter(o=>!o['@odata.type']||o['@odata.type']==='#microsoft.graph.user')
+    .map(o=>{ const cs=[];
+      [o.mail,o.userPrincipalName].map(normCorreo).filter(Boolean).forEach(c=>{ if(cs.indexOf(c)===-1) cs.push(c); });
+      return {id:o.id,nombre:o.displayName||'',correos:cs}; });
+}
+/* Lee quién es quién en Entra. Una sola lectura en curso a la vez: el arranque y la
+   pantalla de Accesos la piden casi al mismo tiempo. */
+let _accLeyendo=null;
+const ACC_REINTENTO=10*60*1000;
+function accLeer(interactivo){
+  /* Un invitado de cliente no tiene roles de Sipnology: ni se pregunta. */
+  if(!esInterno()){ S.acc={estado:'no-aplica',cuando:Date.now()}; return Promise.resolve(S.acc); }
+  /* Mientras el permiso no esté aprobado, no se vuelve a preguntar a Microsoft en cada
+     refresco: una vez cada diez minutos basta, y el botón «Conectar» fuerza la pregunta. */
+  if(!interactivo&&S.acc&&S.acc.estado==='sin-permiso'&&Date.now()-S.acc.cuando<ACC_REINTENTO)
+    return Promise.resolve(S.acc);
+  if(_accLeyendo&&!interactivo) return _accLeyendo;
+  const p=_accLeer(!!interactivo);
+  _accLeyendo=p; p.then(()=>{ if(_accLeyendo===p) _accLeyendo=null; },()=>{ if(_accLeyendo===p) _accLeyendo=null; });
+  return p;
+}
+async function _accLeer(interactivo){
+  const t=await tokenGrupos(interactivo);
+  if(!t){ S.acc={estado:'sin-permiso',cuando:Date.now()}; return S.acc; }
+  const h={Authorization:'Bearer '+t};
+  const a={estado:'ok',scopes:scopesDeToken(t),duenosObj:[],adminsObj:[],duenosAdminsObj:[],
+           anidados:0,grupoSitio:null,grupoAdmins:null,gruposAdmins:0,cuando:Date.now()};
+  try{
+    const conf=(S.cat&&S.cat.accesos)||{};
+    /* El grupo del sitio se deduce de la propia biblioteca: es su dueño. Así no depende de
+       un identificador escrito a mano ni de cómo se llame el grupo. */
+    let gid=conf.grupoSitioId||'';
+    if(!gid){
+      const hs=await H();
+      const d=await gJson(hs,'/drives/'+(await driveId(hs))+'?$select=owner');
+      gid=(d&&d.owner&&d.owner.group&&d.owner.group.id)||'';
+    }
+    if(!gid) throw new Error('La biblioteca no pertenece a un grupo de Microsoft 365: no hay de dónde leer los propietarios.');
+    const sel='$select=id,displayName,mail,userPrincipalName&$top=999';
+    const [g,own]=await Promise.all([gJson(h,'/groups/'+gid+'?$select=id,displayName'),
+                                     gJson(h,'/groups/'+gid+'/owners?'+sel)]);
+    a.grupoSitio={id:g.id,nombre:g.displayName||''};
+    a.duenosObj=personasDe(own.value);
+    let ga=null;
+    if(conf.grupoAdminsId){
+      try{ ga=await gJson(h,'/groups/'+conf.grupoAdminsId+'?$select=id,displayName,securityEnabled'); a.gruposAdmins=1; }
+      catch(e){ if(e.status!==404) throw e; }
+    }
+    if(!ga){
+      const q=await gJson(h,'/groups?$filter='+encodeURIComponent("startswith(displayName,'NOC')")+
+                            '&$select=id,displayName,securityEnabled&$top=999');
+      const c=(q.value||[]).filter(x=>nomGrupo(x.displayName)===nomGrupo(GRUPO_ADMINS));
+      a.gruposAdmins=c.length; ga=c[0]||null;
+    }
+    if(ga){
+      a.grupoAdmins={id:ga.id,nombre:ga.displayName||'',seguridad:!!ga.securityEnabled};
+      const [m,o]=await Promise.all([gJson(h,'/groups/'+ga.id+'/members?'+sel),
+                                     gJson(h,'/groups/'+ga.id+'/owners?'+sel)]);
+      /* Un grupo metido dentro de otro no se ve aquí persona por persona: se avisa. */
+      a.anidados=(m.value||[]).filter(x=>x['@odata.type']&&x['@odata.type']!=='#microsoft.graph.user').length;
+      a.adminsObj=personasDe(m.value); a.duenosAdminsObj=personasDe(o.value);
+    }
+  }catch(e){
+    S.acc={estado:(e.status===401||e.status===403)?'sin-permiso':'error',error:e.message,
+           scopes:a.scopes,cuando:Date.now()};
+    return S.acc;
+  }
+  a.duenos=[]; a.duenosObj.forEach(p=>p.correos.forEach(c=>a.duenos.push(c)));
+  a.admins=[]; a.adminsObj.forEach(p=>p.correos.forEach(c=>a.admins.push(c)));
+  S.acc=a;
+  /* En modo Entra, un propietario mantiene al día la copia del catálogo. Solo escribe si
+     algo cambió, así que en el día a día no cuesta nada. */
+  if(accEntraManda()&&esDuenoReal()) accGuardarCache().catch(e=>diagFallo('accesos: copia en el catálogo',e&&e.message));
+  return a;
+}
+/* Escribe en el catálogo de Sistema SOLO propietarios, administradores y accesos, sobre
+   una relectura fresca: nunca pisa otra sección ni lo que alguien acabe de guardar. */
+async function accEscribirCatalogo(mutar){
+  if(!esDuenoReal()) return false;
+  const hs=await H();
+  const r=await gActualizarJson(hs,P_CAT,g=>{
+    if(!g) return undefined;                       // sin catálogo legible no se inventa uno
+    const antes=JSON.stringify([g.propietarios,g.admins,g.accesos]);
+    mutar(g);
+    if(!(g.propietarios||[]).length) return undefined;
+    if(JSON.stringify([g.propietarios,g.admins,g.accesos])===antes) return undefined;
+    g.version=(g.version||0)+1;
+    g.actualizado={por:S.me.mail,cuando:new Date().toISOString(),origen:'accesos'};
+    return soloGlobal(g);
+  });
+  if(r.escrito){
+    S.catGlobal=r.datos;
+    ['propietarios','admins','accesos'].forEach(k=>{ if(r.datos[k]!==undefined) S.cat[k]=clon(r.datos[k]); });
+  }
+  return r.escrito;
+}
+const correoPrincipal=p=>(p.correos||[]).find(c=>c.endsWith(DOMINIO_INTERNO))||(p.correos||[])[0]||'';
+function accListasDesdeEntra(){
+  const a=S.acc;
+  const props=a.duenosObj.map(correoPrincipal).filter(Boolean);
+  const adm=a.adminsObj.filter(p=>!p.correos.some(c=>a.duenos.indexOf(c)!==-1)).map(correoPrincipal).filter(Boolean);
+  return {props:props,adm:adm};
+}
+async function accGuardarCache(){
+  if(!S.acc||S.acc.estado!=='ok'||!(S.acc.duenosObj||[]).length) return false;
+  const l=accListasDesdeEntra();
+  return accEscribirCatalogo(g=>{ g.propietarios=l.props; g.admins=l.adm; });
+}
+/* La lista de personas que se enseña: todo el que tiene un rol en Entra o en el catálogo,
+   más quien se acabe de escribir para asignarle uno. Una fila por persona, aunque tenga
+   correo y nombre de usuario distintos. */
+function accPersonas(){
+  const a=S.acc||{}, filas=[];
+  const add=(correos,nombre,id)=>{
+    correos=(correos||[]).map(normCorreo).filter(Boolean); if(!correos.length) return;
+    let f=filas.find(x=>x.correos.some(c=>correos.indexOf(c)!==-1));
+    if(!f){ f={id:'',nombre:'',correos:[]}; filas.push(f); }
+    correos.forEach(c=>{ if(f.correos.indexOf(c)===-1) f.correos.push(c); });
+    if(id&&!f.id) f.id=id; if(nombre&&!f.nombre) f.nombre=nombre;
+  };
+  (a.duenosObj||[]).forEach(p=>add(p.correos,p.nombre,p.id));
+  (a.adminsObj||[]).forEach(p=>add(p.correos,p.nombre,p.id));
+  catPropietarios().forEach(c=>add([c])); catAdmins().forEach(c=>add([c]));
+  (S.accExtra||[]).forEach(c=>add([c]));
+  const cp=catPropietarios(), ca=catAdmins(), ok=a.estado==='ok';
+  filas.forEach(f=>{
+    f.correo=correoPrincipal(f);
+    f.rolCat=rolDeLista(f.correos,cp,ca);
+    f.rolEntra=ok? rolDeLista(f.correos,a.duenos,a.admins) : '';
+  });
+  const orden={propietario:0,administrador:1,operador:2};
+  return filas.sort((x,y)=>(orden[x.rolEntra||x.rolCat]-orden[y.rolEntra||y.rolCat])||x.correo.localeCompare(y.correo));
+}
+/* ¿Tiene esta persona exactamente lo que su rol pide, ni más ni menos? */
+function accCompleto(correos,rol){
+  const a=S.acc||{}, en=l=>(l||[]).some(p=>p.correos.some(c=>correos.indexOf(c)!==-1));
+  const dS=en(a.duenosObj), dA=en(a.duenosAdminsObj), mA=en(a.adminsObj), hayA=!!a.grupoAdmins;
+  if(rol==='propietario') return dS && (!hayA || (dA && !mA));
+  if(rol==='administrador') return mA && !dA && !dS;
+  return !dS && !dA && !mA;
+}
+/* Cambia el rol de UNA persona en Entra. Primero se dan los permisos nuevos y después se
+   quitan los viejos: si algo falla a medias, la persona se queda con más acceso del que
+   debía —visible en la tabla y fácil de corregir—, nunca sin el que necesitaba.
+   Cada paso tolera que ya estuviera hecho, así que repetirlo no rompe nada. */
+async function accCambiarRol(fila,nuevo,opts){
+  opts=opts||{};
+  if(!esDuenoReal()||_simRol) throw new Error('Solo un propietario puede asignar roles.');
+  if(ROLES_ACC.indexOf(nuevo)===-1) throw new Error('Rol desconocido: '+nuevo);
+  const a=S.acc||{};
+  if(a.estado!=='ok') throw new Error('No hay conexión con Entra ID. Pulsa «Conectar con Entra» y vuelve a intentarlo.');
+  if(!accPuedeEscribir()) throw new Error('El permiso aprobado en Entra no permite cambiar dueños de grupos (falta Group.ReadWrite.All).');
+  const correos=(fila.correos&&fila.correos.length? fila.correos : [fila.correo]).map(normCorreo).filter(Boolean);
+  const correo=correoPrincipal({correos:correos});
+  if(!correo) throw new Error('Falta el correo.');
+  /* Un invitado de un cliente nunca administra: el aislamiento entre clientes depende de ello. */
+  if(nuevo!=='operador' && !correos.some(c=>c.endsWith(DOMINIO_INTERNO)))
+    throw new Error('Solo una cuenta de Sipnology puede ser propietario o administrador. '+
+      'La gente del cliente se da de alta en «Usuarios cliente».');
+  const antes=rolDeLista(correos,a.duenos,a.admins);
+  /* Mismo rol no significa «nada que hacer»: si un intento anterior quedó a medias (dueño
+     del sitio pero no de administradores, por ejemplo), volver a asignarlo lo completa. */
+  if(antes===nuevo && accCompleto(correos,nuevo)) return {antes:antes,nuevo:nuevo,hechos:[],fallos:[]};
+  if(antes==='propietario' && (a.duenosObj||[]).length<=1)
+    throw new Error('Es el único propietario. Nombra a otro antes de quitarle el rol: sin propietarios nadie podría restaurar ni asignar roles.');
+  if(nuevo==='administrador' && !a.grupoAdmins)
+    throw new Error('Todavía no existe el grupo «'+GRUPO_ADMINS+'» en Entra ID.');
+  const t=await tokenGrupos(false);
+  if(!t) throw new Error('No se pudo obtener permiso de Entra. Vuelve a conectar.');
+  const h={Authorization:'Bearer '+t,'Content-Type':'application/json'};
+  let id=fila.id;
+  if(!id){
+    try{ id=(await gJson(h,'/users/'+encodeURIComponent(correo)+'?$select=id')).id; }
+    catch(e){ throw new Error(e.status===404? 'No existe la cuenta '+correo+' en Entra ID.' : e.message); }
+  }
+  const gs=a.grupoSitio.id, gaId=a.grupoAdmins&&a.grupoAdmins.id, pasos=[];
+  const alta=(g,rel)=>{ if(g) pasos.push({tipo:'alta',g:g,rel:rel}); };
+  const baja=(g,rel)=>{ if(g) pasos.push({tipo:'baja',g:g,rel:rel}); };
+  if(nuevo==='propietario'){ alta(gs,'owners'); alta(gaId,'owners'); baja(gaId,'members'); }
+  if(nuevo==='administrador'){ alta(gaId,'members'); baja(gaId,'owners'); baja(gs,'owners'); }
+  if(nuevo==='operador'){ baja(gaId,'members'); baja(gaId,'owners'); baja(gs,'owners'); }
+  const hechos=[], fallos=[];
+  for(const p of pasos){
+    const url=GRAPH+'/groups/'+p.g+'/'+p.rel+(p.tipo==='alta'? '/$ref' : '/'+id+'/$ref');
+    const r=await fetch(url, p.tipo==='alta'
+      ? {method:'POST',headers:h,body:JSON.stringify({'@odata.id':GRAPH+'/directoryObjects/'+id})}
+      : {method:'DELETE',headers:{Authorization:h.Authorization}});
+    if(!r.ok){
+      const txt=await r.text().catch(()=>'');
+      const yaEstaba = p.tipo==='alta' && r.status===400 && /already exist/i.test(txt);
+      const yaNoEstaba = p.tipo==='baja' && r.status===404;
+      if(!yaEstaba&&!yaNoEstaba){ fallos.push({paso:p,status:r.status,error:msgGraph(txt)}); break; }
+    }
+    hechos.push(p);
+  }
+  const nomG=g=>g===gs? (a.grupoSitio.nombre||'grupo del sitio') : (a.grupoAdmins? a.grupoAdmins.nombre : GRUPO_ADMINS);
+  const detalle=correo+': '+ROL_TXT[antes]+' → '+ROL_TXT[nuevo]+
+    (fallos.length? ' · INCOMPLETO: '+(fallos[0].paso.tipo==='alta'?'alta':'baja')+' en '+
+       (fallos[0].paso.rel==='owners'?'dueños':'integrantes')+' de «'+nomG(fallos[0].paso.g)+'» ('+
+       fallos[0].status+' '+fallos[0].error+')' : '');
+  logEvent(fallos.length?'ACCESO_ROL_FALLO':'ACCESO_ROL',detalle);
+  if(!opts.sinReleer){
+    await accLeer();
+    /* La copia del catálogo sigue a Entra: en modo catálogo se ajusta SOLO esta persona,
+       para no arrastrar diferencias de otras que el propietario todavía no ha revisado. */
+    if(!fallos.length){
+      try{
+        if(accModoEntra()) await accGuardarCache();
+        else await accEscribirCatalogo(g=>{
+          const quita=l=>(l||[]).map(normCorreo).filter(c=>correos.indexOf(c)===-1);
+          g.propietarios=quita(g.propietarios); g.admins=quita(g.admins);
+          if(nuevo==='propietario') g.propietarios.push(correo);
+          if(nuevo==='administrador') g.admins.push(correo);
+        });
+      }catch(e){ toast('El rol cambió en Entra, pero no se pudo actualizar la copia del catálogo: '+e.message,'warn',10000); }
+    }
+    revisarRol();
+  }
+  return {antes:antes,nuevo:nuevo,hechos:hechos,fallos:fallos,detalle:detalle};
+}
+/* Paso único de la migración: da en Entra el rol que el catálogo ya tiene. Solo sube,
+   nunca baja: quitarle algo a alguien es una decisión que se toma fila por fila. */
+async function accSincronizar(){
+  const res=[];
+  for(const f of accPersonas()){
+    if(!f.rolEntra) continue;
+    const rango={propietario:0,administrador:1,operador:2};
+    if(rango[f.rolCat]>=rango[f.rolEntra]) continue;
+    try{ const r=await accCambiarRol(f,f.rolCat,{sinReleer:true}); res.push({correo:f.correo,rol:f.rolCat,ok:!r.fallos.length,error:r.fallos.length?r.detalle:''}); }
+    catch(e){ res.push({correo:f.correo,rol:f.rolCat,ok:false,error:e.message}); }
+  }
+  await accLeer(); revisarRol();
+  logEvent('ACCESOS_SINCRONIZADOS',res.map(x=>x.correo+'→'+x.rol+(x.ok?'':' (falló)')).join(', ')||'(nada que subir)');
+  return res;
+}
+/* Diferencias que impiden pasar a modo Entra: si alguien tuviera un rol distinto en cada
+   lado, al activar cambiaría de perfil sin que nadie lo decidiera. */
+function accDiferencias(){ return accPersonas().filter(f=>f.rolEntra&&f.rolCat!==f.rolEntra); }
+async function accCambiarModo(modo){
+  if(!esDuenoReal()||_simRol) throw new Error('Solo un propietario puede cambiar quién manda en los roles.');
+  const a=S.acc||{};
+  if(modo==='entra'){
+    if(a.estado!=='ok') throw new Error('No hay conexión con Entra ID.');
+    if(!(a.duenosObj||[]).length) throw new Error('El grupo del sitio no tiene dueños.');
+    const d=accDiferencias();
+    if(d.length) throw new Error('Hay '+d.length+' persona(s) con un rol distinto en el catálogo y en Entra. Resuélvelas antes de activar.');
+  }
+  const acc={modo:modo==='entra'?'entra':'catalogo',
+    grupoSitioId:(a.grupoSitio&&a.grupoSitio.id)||'', grupoAdminsId:(a.grupoAdmins&&a.grupoAdmins.id)||'',
+    cambiado:{por:S.me.mail,cuando:new Date().toISOString()}};
+  const l=modo==='entra'? accListasDesdeEntra() : null;
+  const ok=await accEscribirCatalogo(g=>{ g.accesos=acc; if(l){ g.propietarios=l.props; g.admins=l.adm; } });
+  if(!ok && JSON.stringify((S.catGlobal||{}).accesos||{})!==JSON.stringify(acc))
+    throw new Error('No se pudo guardar el cambio en el catálogo de Sistema.');
+  logEvent('ACCESOS_MODO',modo==='entra'?'Manda Entra ID':'Manda el catálogo');
+  revisarRol();
+  return true;
+}
+/* Revisión de la configuración de Microsoft que el sistema necesita. Lo que se puede
+   comprobar desde aquí se comprueba; lo que no, se dice y se enlaza. */
+async function accRevisar(){
+  const a=S.acc||{}, out=[];
+  const it=(estado,titulo,texto)=>out.push({estado:estado,titulo:titulo,texto:texto});
+  const s=a.scopes||[];
+  if(a.estado!=='ok') it('mal','Permiso de la aplicación en Entra ID',
+    'No aprobado todavía, o no se pudo leer ('+esc(a.error||a.estado||'sin datos')+').');
+  else it(accPuedeEscribir()&&s.indexOf('User.ReadBasic.All')!==-1?'ok':'mal','Permiso de la aplicación en Entra ID',
+    'Aprobado: '+esc(s.filter(x=>/Group|User\.ReadBasic|Directory/.test(x)).join(', ')||'—'));
+  if(a.estado==='ok'){
+    const ng=a.grupoSitio.nombre||'';
+    it(/propietario/i.test(ng)?'aviso':'ok','Grupo de Microsoft 365 del sitio',
+      '«'+esc(ng)+'» · '+a.duenosObj.length+' dueño(s).'+(/propietario/i.test(ng)?
+        ' Su nombre confunde: sus dueños son los propietarios, pero sus integrantes no. '+
+        '<b>Renómbralo, no lo borres</b>: borrarlo borra el sitio completo.':''));
+    if(!a.grupoAdmins) it('mal','Grupo «'+esc(GRUPO_ADMINS)+'»','No existe todavía.');
+    else it(a.gruposAdmins>1||!a.grupoAdmins.seguridad||a.anidados?'aviso':'ok','Grupo «'+esc(GRUPO_ADMINS)+'»',
+      a.adminsObj.length+' integrante(s), '+a.duenosAdminsObj.length+' dueño(s).'+
+      (a.gruposAdmins>1?' <b>Hay '+a.gruposAdmins+' grupos con ese nombre</b>: deja uno.':'')+
+      (!a.grupoAdmins.seguridad?' No es de seguridad: SharePoint no podrá darle permisos.':'')+
+      (a.anidados?' Tiene '+a.anidados+' grupo(s) dentro: sus personas no se ven aquí.':''));
+    const faltanDuenos=a.grupoAdmins? a.duenosObj.filter(p=>!a.duenosAdminsObj.some(q=>q.id===p.id)) : [];
+    if(faltanDuenos.length) it('aviso','Propietarios sin control de los administradores',
+      esc(faltanDuenos.map(correoPrincipal).join(', '))+' no son dueños de «'+esc(GRUPO_ADMINS)+
+      '», así que no podrán nombrar administradores. Pulsa «Completar» en su fila y se corrige.');
+  }
+  try{
+    const hs=await H(), id=await driveId(hs);
+    if(a.grupoAdmins){
+      const pr=await gJson(hs,'/drives/'+id+'/root:/'+graphEncPath('Sistema')+':/permissions');
+      const suyo=(pr.value||[]).filter(p=>JSON.stringify(p).toLowerCase().indexOf(a.grupoAdmins.id.toLowerCase())!==-1);
+      const edita=suyo.some(p=>(p.roles||[]).some(r=>/write|owner/i.test(r)));
+      it(edita?'ok':'mal','Edición de los administradores en Sistema/',
+        edita?'«'+esc(GRUPO_ADMINS)+'» puede editar Sistema/.':
+        'Sin permiso de edición en Sistema/: un administrador vería los catálogos pero no podría guardarlos.');
+    }
+    const ids=((S.cat&&S.cat.clientes)||[]).map(c=>c.id).filter(Boolean);
+    const conVis=[];
+    await Promise.all(ids.map(async cid=>{
+      try{ const pr=await gJson(hs,'/drives/'+id+'/root:/'+graphEncPath('Clientes/'+cid)+':/permissions');
+        if((pr.value||[]).some(p=>/visitantes/i.test(JSON.stringify(p.grantedToV2||p.grantedTo||{})))) conVis.push(cid);
+      }catch(e){}
+    }));
+    it(conVis.length?'aviso':'ok','Grupo «Visitantes»',
+      conVis.length? 'Sigue con acceso a: '+esc(conVis.join(', '))+'. No lo usa la plataforma; puedes quitarlo.'
+                   : 'Sin acceso a las carpetas de clientes.');
+  }catch(e){ it('aviso','Permisos de carpetas','No se pudieron leer: '+esc(e.message)); }
+  it('manual','Operadores',
+    'Toda cuenta de Sipnology es operador si «Todos excepto los usuarios externos» está en '+
+    '<b>Integrantes de la NOC</b>. Esto no se puede leer desde aquí: compruébalo en '+
+    '<a href="'+URL_GRUPOS_SP+'" target="_blank" rel="noopener">los grupos del sitio</a>.');
+  return out;
+}
+function renderAccesos(box){
+  const bs=$('#btnCatSave'); if(bs) bs.disabled=true;   // aquí cada cambio se aplica al momento
+  /* Si todavía no se leyó Entra, se lee y se vuelve a pintar. Solo una vez: al volver,
+     S.acc ya existe y no hay bucle. */
+  if(!S.acc) accLeer().then(()=>{ if(S._catSec==='accesos') renderAccesos(box); },
+                          e=>diagFallo('accesos: lectura de Entra',e&&e.message));
+  const a=S.acc||{estado:'pendiente'};
+  const soyDueno=esDuenoReal()&&!_simRol;
+  const conectado=a.estado==='ok';
+  const puede=soyDueno&&conectado&&accPuedeEscribir();
+  const entra=accModoEntra();
+  const filas=accPersonas();
+  const difs=conectado? filas.filter(f=>f.rolCat!==f.rolEntra) : [];
+  const chip=r=>r? '<span class="chip">'+esc(ROL_TXT[r])+'</span>' : '<span style="color:var(--muted)">—</span>';
+  const yo=currentUserEmails();
+  box.innerHTML=
+    '<div class="note"><b>Toda cuenta de Sipnology entra como Operador.</b> Aquí se decide quién es '+
+      '<b>Administrador</b> (catálogos, bitácora, alertas; edición en Sistema/) y quién es <b>Propietario</b> '+
+      '(además borra, restaura y asigna roles; control total del sitio). Cambiar un rol aquí cambia su '+
+      'grupo en Entra ID al momento: ya no hay un segundo paso en SharePoint.</div>'+
+    '<div class="note" style="margin-top:10px;border-left-color:'+(entra?'var(--p3)':'var(--warn)')+'">'+
+      (entra? '<b>Manda Entra ID.</b> El rol de cada persona es el de su grupo. Las listas de Propietarios y '+
+               'Administradores quedan como copia de respaldo por si Entra no responde.'
+            : '<b>Todavía manda el catálogo.</b> Mientras tanto, cada cambio que hagas aquí se aplica en los dos '+
+               'lados. Cuando no queden diferencias podrás pasar el mando a Entra ID.')+'</div>'+
+    (!conectado? '<div class="note" style="margin-top:10px;border-left-color:var(--p1)">'+
+      (a.estado==='pendiente'? 'Leyendo los grupos de Entra ID…' :
+       a.estado==='sin-permiso'? '<b>Sin permiso para leer los grupos.</b> Falta aprobar el permiso de la '+
+          'aplicación en Entra ID, o tu sesión todavía no lo tiene.' :
+       '<b>No se pudo leer Entra ID:</b> '+esc(a.error||''))+
+      (soyDueno&&a.estado!=='pendiente'? ' <button class="btn sec" id="accConectar" style="margin-left:8px">Conectar con Entra</button>':'')+
+      '</div>' : '')+
+    '<div id="accRevision" style="margin-top:12px"></div>'+
+    '<div class="tw" style="margin-top:12px"><table><thead><tr>'+
+      '<th>Persona</th><th>En el catálogo</th><th>En Entra ID</th><th>'+(puede?'Cambiar a':'')+'</th></tr></thead><tbody>'+
+      filas.map((f,i)=>{
+        const dif=conectado&&f.rolCat!==f.rolEntra;
+        const inc=conectado&&!accCompleto(f.correos,f.rolEntra);
+        const soyYo=f.correos.some(c=>yo.indexOf(c)!==-1);
+        return '<tr'+(dif?' style="background:rgba(214,158,46,.10)"':'')+'>'+
+          '<td>'+(f.nombre?'<b>'+esc(f.nombre)+'</b><br>':'')+'<span class="mono" style="font-size:12px">'+esc(f.correo)+'</span>'+
+            (soyYo?' <span style="color:var(--muted)">(tú)</span>':'')+'</td>'+
+          '<td>'+chip(f.rolCat)+'</td><td>'+chip(f.rolEntra)+(dif?' <b style="color:var(--warn)">≠</b>':'')+
+            (inc? '<div style="font-size:11.5px;color:var(--warn);margin-top:4px">Incompleto en Entra'+
+               (puede?' <button class="btn sec" data-completar="'+i+'" style="padding:2px 8px">Completar</button>':'')+'</div>':'')+'</td>'+
+          '<td>'+(puede? '<select data-acc="'+i+'">'+ROLES_ACC.map(r=>'<option value="'+r+'"'+
+             (r===f.rolEntra?' selected':'')+'>'+ROL_TXT[r]+'</option>').join('')+'</select>' : '')+'</td></tr>';
+      }).join('')+
+    '</tbody></table></div>'+
+    (puede? '<div class="f" style="margin-top:12px"><label>Asignar rol a otra persona de Sipnology</label>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><input id="accNuevo" placeholder="nombre.apellido'+DOMINIO_INTERNO+'" style="flex:1;min-width:240px">'+
+      '<select id="accNuevoRol"><option value="administrador">Administrador</option><option value="propietario">Propietario</option></select>'+
+      '<button class="btn" id="accAsignar">Asignar</button></div></div>' : '')+
+    (soyDueno&&conectado? '<div class="note" style="margin-top:14px">'+
+      (entra? 'Si Entra ID dejara de responder de forma prolongada puedes <button class="btn sec" id="accModoCat">devolver el mando al catálogo</button>. '+
+              'Los grupos de Entra no se tocan.'
+            : '<b>Paso a Entra ID.</b> '+
+              (difs.length? difs.length+' persona(s) tienen un rol distinto en cada lado. '+
+                 (difs.some(f=>({propietario:0,administrador:1,operador:2})[f.rolCat]<({propietario:0,administrador:1,operador:2})[f.rolEntra])?
+                   '<button class="btn sec" id="accSync">Dar en Entra el rol del catálogo</button> sube a quien le falte (no le quita nada a nadie). ':'')+
+                 'Lo que sobre en Entra resuélvelo fila por fila.'
+               : 'No hay diferencias. ')+
+              '<button class="btn" id="accModoEntra"'+(difs.length?' disabled':'')+'>Que mande Entra ID</button>')+
+      '</div>' : '')+
+    (!soyDueno? '<div class="note" style="margin-top:10px"><b>Solo un propietario asigna roles.</b> Puedes ver quién tiene cada uno.</div>':'');
+
+  const rev=box.querySelector('#accRevision');
+  if(rev&&soyDueno) accRevisar().then(items=>{
+    const col={ok:'var(--p3)',aviso:'var(--warn)',mal:'var(--p1)',manual:'var(--muted)'};
+    const ico={ok:'✓',aviso:'!',mal:'✗',manual:'?'};
+    rev.innerHTML='<div style="font-weight:600;margin-bottom:6px">Configuración en Microsoft</div>'+
+      items.map(x=>'<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)">'+
+        '<b style="color:'+col[x.estado]+';width:16px">'+ico[x.estado]+'</b><div><b>'+x.titulo+'</b> — '+x.texto+'</div></div>').join('');
+  }).catch(e=>{ rev.innerHTML='<div class="note" style="border-left-color:var(--warn)">No se pudo revisar la configuración: '+esc(e.message)+'</div>'; });
+  const conectar=box.querySelector('#accConectar');
+  if(conectar) conectar.onclick=async()=>{ busy(conectar,true);
+    try{ await accLeer(true); revisarRol(); }finally{ renderAccesos(box); } };
+  const aplicar=async(fila,rol,ctl)=>{
+    const rango={propietario:0,administrador:1,operador:2};
+    const soyYo=(fila.correos||[fila.correo]).some(c=>yo.indexOf(normCorreo(c))!==-1);
+    const antes=fila.rolEntra||'operador';
+    if(soyYo&&rango[rol]>rango[antes]&&!confirm('Te estás quitando a ti mismo el rol de '+ROL_TXT[antes]+
+        '.\n\nEn cuanto se aplique perderás lo que ese rol te permite, y tendrá que devolvértelo otro propietario.\n\n¿Continuar?')) return false;
+    if(!confirm(fila.correo+'\n\n'+(rol===antes? 'Completar en Entra ID lo que le falta a su rol de '+ROL_TXT[rol]+'.'
+        : ROL_TXT[antes]+' → '+ROL_TXT[rol])+'\n\nSe cambia en Entra ID al momento. ¿Aplicar?')) return false;
+    /* busy() es para botones: a un <select> le borraría las opciones. */
+    const esSel=ctl&&ctl.tagName==='SELECT';
+    if(esSel) ctl.disabled=true; else busy(ctl,true);
+    try{
+      const r=await accCambiarRol(fila,rol);
+      if(r.fallos.length) toast('Quedó a medias: '+r.detalle,'err',14000);
+      else toast(fila.correo+' ahora es '+ROL_TXT[rol]+'.',null,6000);
+      return true;
+    }catch(e){ toast(e.message,'err',12000); return false; }
+    finally{ if(esSel) ctl.disabled=false; else busy(ctl,false); }
+  };
+  box.querySelectorAll('select[data-acc]').forEach(sel=>{
+    sel.onchange=async()=>{
+      const f=filas[+sel.dataset.acc];
+      await aplicar(f,sel.value,sel);
+      renderAccesos(box);
+    };
+  });
+  box.querySelectorAll('[data-completar]').forEach(b=>{
+    b.onclick=async()=>{ const f=filas[+b.dataset.completar];
+      await aplicar(f,f.rolEntra,b); renderAccesos(box); };
+  });
+  const asignar=box.querySelector('#accAsignar');
+  if(asignar) asignar.onclick=async()=>{
+    const c=normCorreo(box.querySelector('#accNuevo').value);
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)){ toast('Eso no parece un correo.','err'); return; }
+    if(!c.endsWith(DOMINIO_INTERNO)){ toast('Solo cuentas de Sipnology. La gente del cliente va en «Usuarios cliente».','err',9000); return; }
+    const ya=filas.find(f=>f.correos.indexOf(c)!==-1);
+    const fila=ya||{correo:c,correos:[c],rolEntra:rolDeLista([c],a.duenos,a.admins)};
+    if(await aplicar(fila,box.querySelector('#accNuevoRol').value,asignar)){
+      S.accExtra=(S.accExtra||[]).filter(x=>x!==c); }
+    renderAccesos(box);
+  };
+  const sync=box.querySelector('#accSync');
+  if(sync) sync.onclick=async()=>{
+    const sube=difs.filter(f=>({propietario:0,administrador:1,operador:2})[f.rolCat]<({propietario:0,administrador:1,operador:2})[f.rolEntra]);
+    if(!confirm('Se dará en Entra ID este rol a '+sube.length+' persona(s):\n\n'+
+        sube.map(f=>'· '+f.correo+' → '+ROL_TXT[f.rolCat]).join('\n')+'\n\nNo se le quita nada a nadie. ¿Continuar?')) return;
+    busy(sync,true);
+    try{ const r=await accSincronizar(); const m=r.filter(x=>!x.ok);
+      toast(m.length? m.length+' no se pudieron: '+m.map(x=>x.correo+' ('+x.error+')').join(' · ') : 'Listo: '+r.length+' rol(es) dados en Entra.', m.length?'err':null, 14000);
+    }catch(e){ toast(e.message,'err',12000); }
+    finally{ renderAccesos(box); }
+  };
+  const modoE=box.querySelector('#accModoEntra');
+  if(modoE) modoE.onclick=async()=>{
+    if(!confirm('Desde ahora el rol de cada persona será el de su grupo en Entra ID.\n\n'+
+        'Las pantallas Propietarios y Administradores pasan a ser de consulta. ¿Continuar?')) return;
+    busy(modoE,true);
+    try{ await accCambiarModo('entra'); toast('Ahora manda Entra ID.'); }
+    catch(e){ toast(e.message,'err',12000); }
+    finally{ renderAccesos(box); }
+  };
+  const modoC=box.querySelector('#accModoCat');
+  if(modoC) modoC.onclick=async()=>{
+    if(!confirm('Los roles volverán a salir del catálogo (la copia actual). Los grupos de Entra no se tocan.\n\n¿Continuar?')) return;
+    busy(modoC,true);
+    try{ await accCambiarModo('catalogo'); toast('Ahora manda el catálogo.'); }
+    catch(e){ toast(e.message,'err',12000); }
+    finally{ renderAccesos(box); }
   };
 }
 
@@ -12488,6 +13070,21 @@ const AYUDA=[
     'Esa cuenta entrará con perfil CLIENTE y verá <b>solo</b> lo de ese cliente.'+
     '<div class="avi">La invitación como usuario externo en Microsoft 365 la hace un '+
     'administrador del tenant desde el portal; el sistema no la manda por ti.</div>'},
+ {c:'Administración', n:'dueno', ir:'vCatalogos',
+  q:'¿Cómo hago a alguien administrador o propietario?',
+  a:'En <b>Administración → Accesos y roles</b>. Toda cuenta de Sipnology entra ya como '+
+    '<b>operador</b>; ahí eliges quién sube a <b>administrador</b> o a <b>propietario</b>, y el '+
+    'sistema lo cambia en Entra ID al momento, con el permiso de SharePoint que le toca. Para '+
+    'bajarle el rol a alguien se hace igual.'+
+    '<div class="avi">Lo pueden hacer solo los propietarios. No se puede dejar el sistema sin '+
+    'propietarios, y si te quitas el rol a ti mismo te lo pide confirmar, porque después tendría '+
+    'que devolvértelo otro propietario.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Por qué no puedo editar la lista de administradores?',
+  a:'Porque los roles ya se llevan en <b>Entra ID</b> y se asignan desde <b>Administración → '+
+    'Accesos y roles</b>. Las pantallas de Propietarios y Administradores quedan como consulta: '+
+    'enseñan la copia que usa el sistema si Entra no respondiera.'+
+    '<div class="avi">Si necesitas un cambio de rol, pídeselo a un propietario.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
   q:'¿Cómo cambio quién recibe las alertas de SLA?',
   a:'En <b>Administración → Alertas</b>, en «A quién se avisa de los SLA». Escribe las '+
@@ -12672,7 +13269,11 @@ function abrirAyuda(){
 function cerrarAyuda(){ $('#ayudaCapa').classList.remove('on'); }
 
 /* Exponer para pruebas automatizadas (jsdom) */
-window.SIP={S:S,esc:esc,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
+window.SIP={S:S,esc:esc,
+  accLeer:accLeer,accCambiarRol:accCambiarRol,accSincronizar:accSincronizar,accCambiarModo:accCambiarModo,
+  accPersonas:accPersonas,accDiferencias:accDiferencias,accRevisar:accRevisar,accEntraManda:accEntraManda,
+  accGuardarCache:accGuardarCache,rolDeLista:rolDeLista,scopesDeToken:scopesDeToken,renderAccesos:renderAccesos,
+  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   ORDENABLES:ORDENABLES,ordenarSeg:ordenarSeg,alternarOrden:alternarOrden,orden:()=>_segOrden,flechaOrden:flechaOrden,
