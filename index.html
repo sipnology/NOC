@@ -925,8 +925,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
       <span style="flex:1"></span>
       <button class="btn sec" id="pmExpPdf" title="El tablero como imagen ligera, con resumen, para mandarlo por correo">⬇ PDF</button>
       <button class="btn sec" id="pmExpXls" title="Las tareas del tablero en Excel, con un resumen por proyecto">⬇ Excel</button>
+      <button class="btn sec" id="pmExpZip" title="PDF + Excel + los archivos de cada tarjeta, del proyecto elegido en el filtro">⬇ .zip</button>
       <button class="btn sec" id="pmRefrescar" title="Volver a leer el tablero de SharePoint">↻</button>
       <button class="btn sec pm-sip" id="pmAvisos">⚙ Avisos</button>
+      <button class="btn sec pm-sip" id="pmGestion" title="Renombrar o eliminar proyectos, y la papelera">⚙ Proyectos</button>
       <button class="btn sec pm-sip" id="pmNuevoProy">+ Proyecto</button>
       <button class="btn pm-sip" id="pmNueva">+ Nueva tarea</button>
     </div>
@@ -1031,6 +1033,10 @@ td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-s
     <div class="pm-err hide" id="pmPrErr"></div>
   </div>
   <div class="pm-pie"><button class="btn sec" data-pmcierra="pmMProy">Cancelar</button><button class="btn" id="pmPrOk">Crear</button></div>
+</div></div>
+<div class="mask" id="pmMGestion"><div class="modal" style="width:min(760px,96vw)">
+  <div class="mh"><h2>Proyectos y papelera</h2><button class="btn sec" style="margin-left:auto" data-pmcierra="pmMGestion">Cerrar</button></div>
+  <div class="mb" id="pmGesCuerpo"></div>
 </div></div>
 <div class="mask" id="pmMAvisos"><div class="modal" style="width:min(760px,96vw)">
   <div class="mh"><h2>Avisos de Proyectos · <span id="pmAvCli"></span></h2></div>
@@ -1295,7 +1301,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r134';
+const APP_VER = '2026-09-29 · r137';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -6504,13 +6510,14 @@ function cabeceraPdf(doc,W,titulo,logoOp,logoCli,alto){
   doc.setFillColor(15,23,42); doc.rect(0,0,W,h,'F');
   const hl=h>=58?20:18, cy=h/2;
   let x=30;
-  if(logoOp){ const m=medirPng(logoOp), w=hl*m.w/m.h;
-    try{ doc.addImage(logoOp,'PNG',x,cy-hl/2,w,hl,'lo','FAST'); x+=w+16; }catch(e){} }
+  /* Los logos caben en una caja (hasta 140 pt de ancho): uno muy alargado ya no se come el título. */
+  if(logoOp){ const m=medirPng(logoOp), c=cajaLogo(m,140,hl);
+    try{ doc.addImage(logoOp,'PNG',x,cy-c.h/2,c.w,c.h,'lo','FAST'); x+=c.w+16; }catch(e){} }
   doc.setTextColor(255); doc.setFontSize(h>=58?12.5:11.5);
   doc.text(String(titulo||''),x,cy+4);
   let xr=W-30;
-  if(logoCli){ const m=medirPng(logoCli), w=hl*m.w/m.h;
-    try{ doc.addImage(logoCli,'PNG',xr-w,cy-hl/2,w,hl,'lc','FAST'); xr-=w+16; }catch(e){} }
+  if(logoCli){ const m=medirPng(logoCli), c=cajaLogo(m,140,hl);
+    try{ doc.addImage(logoCli,'PNG',xr-c.w,cy-c.h/2,c.w,c.h,'lc','FAST'); xr-=c.w+16; }catch(e){} }
   doc.setFontSize(8.5); doc.setTextColor(190,202,220);
   doc.text(fechaHumana(todayISO()),xr,cy+4,{align:'right'});
 }
@@ -6551,6 +6558,13 @@ function medirPng(dataUrl){
 const XL_BANDA='FF0F172A', XL_BANDA_TXT='FFFFFFFF', XL_BANDA_SUB='FF93A0BD';
 /* Excel mide las columnas en caracteres; esta es la conversión que usa a 96 ppp. */
 const anchoPx=w=>Math.round((+w||20)*7+5);
+/* Hasta dónde se ve una hoja al abrirla en una laptop sin desplazarse: ahí va el logo del cliente. */
+const XL_VISIBLE_PX=1000;
+/* Escala un logo para que quepa en una caja de ancho × alto sin deformarlo. */
+function cajaLogo(d,maxW,maxH){
+  const w=+d.w||300, h=+d.h||90, f=Math.min(maxW/w,maxH/h);
+  return {w:Math.max(1,Math.round(w*f)),h:Math.max(1,Math.round(h*f))};
+}
 async function bandaMarcaXlsx(wb,ws,titulo,cols){
   const anchos=Array.isArray(cols)? cols.map(c=>c[2]||20)
                                   : new Array(Math.max(1,+cols||1)).fill(20);
@@ -6577,25 +6591,37 @@ async function bandaMarcaXlsx(wb,ws,titulo,cols){
   c2.value=fechaHumana(todayISO());
   c2.font={size:9,color:{argb:XL_BANDA_SUB}};
   c2.alignment={vertical:'top',horizontal:'left',indent:logoOp?14:1};
+  /* r136 · Posición exacta de los logos, en EMU (1 px = 9525 EMU) y no en «fracciones de
+     columna». Dos fallos que se veían en los reportes:
+     1. El logo del cliente se pegaba al borde derecho de la TABLA. En el reporte de tickets
+        (33 columnas) eso es a unos 5,100 px: al abrir el archivo no aparecía junto al título,
+        sino perdido al final de la banda. Ahora se pega al borde derecho de lo que se ve al
+        abrir el archivo (hasta 1,000 px), o al de la tabla si es más estrecha.
+     2. ExcelJS convertía la fracción de columna usando un ancho de columna de 67 px, no el
+        real (los anchos se fijan después), y el desfase variaba de hoja en hoja. */
   try{
-    if(logoOp){ const d=medirPng(logoOp);
+    const EMU=9525;
+    /* Cada logo cabe en una caja fija, sea como sea su proporción: uno cuadrado o vertical
+       ya no se sale de la franja y tapa el encabezado de la tabla. */
+    if(logoOp){ const c=cajaLogo(medirPng(logoOp),92,34), alto=c.h;
       const id=wb.addImage({base64:logoOp.split(',')[1],extension:'png'});
-      ws.addImage(id,{tl:{col:0.18,row:0.30},ext:{width:92,height:Math.round(92*d.h/d.w)}}); }
+      ws.addImage(id,{tl:{nativeCol:0,nativeColOff:12*EMU,nativeRow:0,nativeRowOff:Math.max(0,Math.round((40-alto)/2))*EMU},
+        ext:{width:c.w,height:alto},editAs:'oneCell'}); }
     if(logoCli){
-      const d=medirPng(logoCli);
-      const anchoLogo=84, alturaLogo=Math.round(anchoLogo*d.h/d.w);
+      const c=cajaLogo(medirPng(logoCli),84,30);
+      const anchoLogo=c.w, alturaLogo=c.h;
       const total=anchos.reduce((a,w)=>a+anchoPx(w),0);
-      /* Se busca en qué columna cae el punto donde debe empezar el logo para quedar
-         a unos 14 px del borde derecho de la última columna. */
-      const meta=Math.max(0,total-anchoLogo-14);
-      let acum=0, col=nCols-1, off=0;
+      const derecha=Math.min(total,XL_VISIBLE_PX)-14;
+      const meta=Math.max(0,derecha-anchoLogo);
+      let acum=0, col=nCols-1, offPx=0;
       for(let i=0;i<nCols;i++){
         const w=anchoPx(anchos[i]);
-        if(acum+w>meta){ col=i; off=Math.min(0.98,Math.max(0,(meta-acum)/w)); break; }
+        if(acum+w>meta){ col=i; offPx=meta-acum; break; }
         acum+=w;
       }
       const id=wb.addImage({base64:logoCli.split(',')[1],extension:'png'});
-      ws.addImage(id,{tl:{col:col+off,row:0.30},ext:{width:anchoLogo,height:alturaLogo}});
+      ws.addImage(id,{tl:{nativeCol:col,nativeColOff:Math.round(offPx*EMU),nativeRow:0,
+        nativeRowOff:Math.max(0,Math.round((40-alturaLogo)/2))*EMU},ext:{width:anchoLogo,height:alturaLogo},editAs:'oneCell'});
     }
   }catch(e){}
   return 4;
@@ -6684,11 +6710,16 @@ function grafParaPdf(canvas,anchoPx){
 function pesoLegible(bytes){
   return bytes<1024?bytes+' B':(bytes<1048576?(bytes/1024).toFixed(0)+' KB':(bytes/1048576).toFixed(1)+' MB');
 }
+/* r136 · Tamaño de hoja según cuántas columnas lleva la tabla. En A4 horizontal, 33
+   columnas quedaban a 24 pt cada una y los encabezados se partían a media palabra
+   («Stat-us», «Priorid-ad»). Un PDF se lee en pantalla: una hoja más grande no cuesta nada
+   y la tabla se lee entera. */
+function formatoTabla(n){ return n<=12? 'a4' : (n<=22? 'a3' : 'a2'); }
 async function exportPDF(data,nombre,conGraficas,cols){
   const CL=cols||COLS;
   if(!window.jspdf){ toast('jsPDF no disponible.','err'); return; }
   const {jsPDF}=window.jspdf;
-  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4',compress:true});
+  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:formatoTabla(CL.length),compress:true});
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight();
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
   const cabecera=()=>cabeceraPdf(doc,W,nombre,logoOp,logoCli);
@@ -6712,7 +6743,7 @@ async function exportPDF(data,nombre,conGraficas,cols){
   if(doc.autoTable){
     doc.autoTable({
       startY:y, margin:{top:76,left:30,right:30},
-      styles:{fontSize:6.5,cellPadding:2.5,overflow:'linebreak'},
+      styles:{fontSize:CL.length>12?7:6.5,cellPadding:2.5,overflow:'linebreak'},
       headStyles:{fillColor:[233,102,45],textColor:[255,255,255],fontStyle:'bold'},
       alternateRowStyles:{fillColor:[244,248,251]},
       head:[CL.map(c=>c[1])],
@@ -7958,9 +7989,10 @@ function renderImportDS(box,ds){
   box.innerHTML='<div class="note">Se cargan '+esc(ds.plural)+' desde un <code>.xlsx</code> exportado del '+
     'sistema de origen. Las columnas se reconocen por su nombre, así que no importa el orden ni '+
     'que sobren columnas: lo único obligatorio es el identificador del '+esc(ds.titulo)+'.</div>'+
-    '<div class="note"><b>Acumular por ID</b> conserva lo que ya hay y actualiza lo que coincida; '+
-    '<b>Reemplazar todo</b> deja únicamente lo del archivo. Si un registro capturado a mano choca '+
-    'con uno del archivo, se pregunta antes de pisarlo.</div>'+
+    '<div class="note"><b>Acumular</b> agrega solo lo que no existe: si el ID ya está, esa fila se ignora. '+
+    '<b>Sobrescribir</b> actualiza con el archivo lo que coincide por ID y agrega lo nuevo. Ninguno de los dos '+
+    'borra nada, y un ID repetido dentro del archivo entra una sola vez. Para empezar de cero, usa '+
+    'Administración › Eliminar datos.</div>'+
     (S.cliente? '' : '<div class="note" style="border-left-color:var(--warn)">Elige un cliente en el '+
       'encabezado: los '+esc(ds.plural)+' se guardan dentro de su carpeta.</div>')+
     '<div class="row" style="margin-top:12px;gap:8px">'+
@@ -7968,7 +8000,7 @@ function renderImportDS(box,ds){
         '⬆ Elegir archivo(s) de '+esc(ds.plural)+
         '<input type="file" id="dsImpFile" accept=".xlsx" multiple class="hide"'+((ro||!S.cliente)?' disabled':'')+'></label>'+
       '<select id="dsImpModo" style="width:230px"'+((ro||!S.cliente)?' disabled':'')+'>'+
-        '<option value="merge">Acumular por ID</option><option value="replace">Reemplazar todo</option></select>'+
+        '<option value="acumular">Acumular: solo agrega lo nuevo</option><option value="sobrescribir">Sobrescribir: actualiza lo que coincide</option></select>'+
       '<button class="btn sec" id="dsImpPlantilla">⬇ Descargar plantilla</button>'+
       '<span style="color:var(--muted);font-size:12px">'+dsLista(ds).length+' '+esc(ds.plural)+' cargados hoy</span>'+
     '</div>'+
@@ -7983,8 +8015,10 @@ function renderImportDS(box,ds){
     const files=Array.prototype.slice.call(f.files||[]); f.value='';
     if(!files.length) return;
     if(!S.cliente){ toast('Selecciona un cliente concreto antes de importar.','err',8000); return; }
+    /* Sin renderCat() aquí: dsImportar solo deja la VISTA PREVIA con su botón «Importar»,
+       y volver a pintar la pantalla la borraba al instante (r134 y anteriores: el archivo
+       «no cargaba»). La pantalla se refresca cuando la importación de verdad termina. */
     await dsImportar(ds,files,box.querySelector('#dsImpModo').value);
-    renderCat();
   };
 }
 /* Los cambios de catálogo ya no dependen de que nadie recargue: se anuncian, se pueden
@@ -8930,12 +8964,15 @@ async function purgar(mod,cli,btn){
       const cliId=S.cliente;
       const r=await gActualizarJson(h,pPmoInterno(cliId),disco=>{
         const d=pmoNormalizar(disco? JSON.parse(JSON.stringify(disco)) : null);
-        n=d.tareas.length+d.proyectos.length;
+        n=d.tareas.length+d.proyectos.length+d.papelera.length;
         if(!n) return undefined;
-        d.tareas=[]; d.proyectos=[];
+        d.tareas=[]; d.proyectos=[]; d.papelera=[];      // vaciar es definitivo: la papelera también
         return d;
       });
       if(r.escrito) await gPutJson(h,pPmoCliente(cliId),pmoProyeccion(r.datos));
+      /* Los archivos adjuntos también: interno y copia del cliente. */
+      try{ await gDelete(h,P_PMO+'/'+sanitizeName(cliId)+'/adjuntos'); }catch(e){}
+      try{ await gDelete(h,pCli(cliId)+D_PMO+'/adjuntos'); }catch(e){}
       const E=pmoEstado(); if(E.cli===cliId) E.datos=pmoNormalizar(r.datos||E.datos);
       logEvent('PURGA_PROYECTOS',cli+' · '+n+' proyecto(s) y tarea(s)');
       toast(n? n+' proyecto(s) y tarea(s) eliminados.' : 'El tablero ya estaba vacío.');
@@ -9276,7 +9313,12 @@ async function leerXlsx(file){
   let hdrRow=1, hdr=[];
   for(let r=1;r<=Math.min(ws.rowCount,10);r++){
     const vals=(ws.getRow(r).values||[]).slice(1).map(celdaTexto);
-    if(vals.filter(Boolean).length>=3){ hdrRow=r; hdr=vals; break; }
+    /* Valores DISTINTOS, no celdas llenas: en la banda de marca el título ocupa celdas
+       combinadas, y ExcelJS devuelve el mismo texto en cada una. Contando celdas, la banda
+       pasaba por fila de encabezados y ningún archivo con marca se podía volver a cargar
+       (así falló el demo de Proyectos en r134). */
+    const distintos=new Set(vals.filter(v=>v!==''&&v!=null).map(v=>String(v).trim()).filter(Boolean));
+    if(distintos.size>=3){ hdrRow=r; hdr=vals; break; }
   }
   if(!hdr.length) throw new Error('No se encontró la fila de encabezados.');
   const keys=hdr.map(normEnc);
@@ -9671,6 +9713,7 @@ async function analizarHistorico(file){
   const filas=await leerXlsx(file);
   const ok=[], err=[], avisos=[];
   const usados=S.idx.map(t=>t.id).slice();
+  const huellas={}, enArchivo={};
   filas.forEach(f=>{
     const L=f._fila;
     const g=(...ks)=>{ for(const k of ks){ if(f[k]!=null&&f[k]!=='') return f[k]; } return ''; };
@@ -9694,9 +9737,25 @@ async function analizarHistorico(file){
     const fres=parseFecha(g('fechadereestablecimientoopcional','fechadereestablecimiento','fecharestablecimiento'));
     const hres=parseHora(g('horadereestablecimiento','horarestablecimiento'));
     if(st==='CERRADO'&&!fcie) avisos.push('Fila '+L+': ticket cerrado sin fecha de cierre.');
-    const id=normFolio(g('deticket','numerodeticket','ticket','id'),loc.id,fap,usados,avisos,L);
+    /* r136 · Una fila SIN folio se identifica por sede + fecha + hora de apertura. Antes se le
+       generaba un folio nuevo siempre, así que cargar dos veces el mismo archivo duplicaba
+       todos los tickets que no traían folio. */
+    const folioArch=String(g('deticket','numerodeticket','ticket','id')||'').trim();
+    const huella=loc.id+'|'+fap+'|'+hap;
+    let id='';
+    if(!folioArch){
+      const mismo=S.idx.find(x=>x.localidadId===loc.id&&x.fechaAp===fap&&String(x.horaAp||'')===hap);
+      if(mismo){ id=mismo.id; avisos.push('Fila '+L+': sin folio, pero coincide con '+mismo.id+' (misma sede, fecha y hora): se trata como ese ticket.'); }
+      if(huellas[huella]){ err.push('Fila '+L+': sin folio y con la misma sede, fecha y hora que la fila '+huellas[huella]+': se repite dentro del archivo.'); return; }
+      huellas[huella]=L;
+    }
+    if(!id) id=normFolio(folioArch,loc.id,fap,usados,avisos,L);
     if(!id){ err.push('Fila '+L+': no se pudo determinar el folio.'); return; }
     const yaExiste = S.idx.some(x=>x.id===id);
+    /* Un folio que ya existe también puede venir dos veces en el archivo: antes pasaba y se
+       escribía dos veces. Ahora cuenta solo la primera fila. */
+    if(enArchivo[id]){ err.push('Fila '+L+': el folio '+id+' se repite dentro del archivo (ya viene en la fila '+enArchivo[id]+').'); return; }
+    enArchivo[id]=L;
     if(!yaExiste && usados.indexOf(id)!==-1){ err.push('Fila '+L+': el folio '+id+' se repite dentro del archivo.'); return; }
     usados.push(id);
     const notas=String(g('notasyactividades')||'').trim();
@@ -9789,13 +9848,34 @@ async function analizarHistorico(file){
   return {ok:ok,err:err,avisos:avisos,total:filas.length};
 }
 async function ejecutarImportacion(lista,progreso){
-  const h=await H(); let n=0;
-  for(const t of lista){
+  const h=await H(); let n=0; const escritos=[];
+  for(const t0 of lista){
+    let t=t0;
+    /* Sobrescribir actualiza DATOS, no borra la vida del ticket: su historial, evidencias,
+       asignación y fecha de alta se conservan, y queda anotado que se actualizó por archivo. */
+    if(t0.yaExiste){
+      const v=S.idx.find(x=>x.id===t0.id);
+      const rutaVieja=(v&&v.ruta)||t0.ruta;
+      const previo=await gGetJson(h,rutaVieja+'/ticket.json').catch(()=>null);
+      if(previo){
+        t=Object.assign({},previo,t0,{
+          ruta:rutaVieja,
+          adjuntos:(previo.adjuntos||[]).concat((t0.adjuntos||[]).filter(a=>!(previo.adjuntos||[]).some(b=>b.nombre===a.nombre))),
+          historial:(previo.historial||[]).concat([{cuando:new Date().toISOString(),usuario:S.me.mail,
+            accion:'ACTUALIZADO POR IMPORTACIÓN',status:t0.status,nota:'<i>Datos actualizados desde el archivo de histórico.</i>',archivos:[]}]),
+          asignadoA:previo.asignadoA||t0.asignadoA||'', asignadoNombre:previo.asignadoNombre||t0.asignadoNombre||'',
+          creado:previo.creado||t0.creado});
+        delete t.yaExiste;
+      }
+    }
     await gPutJson(h,t.ruta+'/ticket.json',t);
+    escritos.push(t);
     n++; if(progreso) progreso(n,lista.length);
   }
   const porCli={};
-  lista.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(idxEntry(t)); });
+  /* El índice se escribe con lo que quedó en disco (ya fusionado), no con la fila del archivo:
+     así no se pierde a quién está asignado un ticket que se actualizó. */
+  escritos.forEach(t=>{ (porCli[t.clienteId]=porCli[t.clienteId]||[]).push(idxEntry(t)); });
   for(const c of Object.keys(porCli)){
     /* Un histórico suele abarcar varios ejercicios: se agrupa por año y se escribe
        cada archivo una sola vez, en vez de uno por ticket. */
@@ -9817,11 +9897,17 @@ function renderHistorico(box,ro){
   box.innerHTML='<div class="note">Carga tickets antiguos con el <b>mismo formato del REPORTE DE INCIDENTES v4</b>. '+
     'Puedes pegar tal cual las columnas de tu Excel. Cada ticket se crea como expediente completo '+
     '(<code>Casos/AAAA-MM/&lt;ID&gt;/ticket.json</code>), así que después puedes abrirlo, adjuntarle evidencias y darle seguimiento.<br><br>'+
-    '<b>Nunca se sobrescribe un ticket existente:</b> si el folio ya está en el sistema, esa fila se omite y te lo aviso.</div>'+
+    '<b>Acumular</b> solo agrega tickets nuevos: si el folio ya está en el sistema, esa fila se omite. <b>Sobrescribir</b> '+
+    'actualiza con el archivo los tickets que ya existen (conservando su historial, sus evidencias y a quién están asignados) '+
+    'y agrega los nuevos. Ninguno borra nada. Una fila sin folio se reconoce por su sede, fecha y hora de apertura, así que '+
+    'cargar dos veces el mismo archivo no duplica.</div>'+
     '<div class="row">'+
       '<button class="btn sec" id="hTpl">⬇ Descargar plantilla</button>'+
       '<label class="btn sec" style="cursor:'+(ro?'not-allowed':'pointer')+';opacity:'+(ro?'.45':'1')+'">⬆ Seleccionar archivo'+
         '<input type="file" id="hFile" accept=".xlsx" class="hide"'+(ro?' disabled':'')+'></label>'+
+      '<select id="hModo" style="width:290px"'+(ro?' disabled':'')+'>'+
+        '<option value="acumular">Acumular: solo agrega lo nuevo</option>'+
+        '<option value="sobrescribir">Sobrescribir: actualiza lo que coincide</option></select>'+
     '</div><div id="hRep" style="margin-top:14px"></div>';
   box.querySelector('#hTpl').onclick=()=>plantillaHistorico().catch(e=>toast(e.message,'err'));
   const inp=box.querySelector('#hFile');
@@ -9853,8 +9939,9 @@ function renderHistorico(box,ro){
                 actual:[v.status,v.cliente,v.localidad,fechaHumana(v.fechaAp)].filter(Boolean).join(' · '),
                 nuevo:[t.status,t.cliente,t.localidad,fechaHumana(t.fechaAp)].filter(Boolean).join(' · ')}; }),
             [['omitir','Omitir la fila del archivo','No se toca el ticket que ya existe'],
-             ['sobrescribir','Sobrescribir el ticket existente','Se pierde el contenido actual del expediente'],
-             ['renumerar','Importar con folio nuevo','Se le asigna el siguiente consecutivo de ese día']],'omitir')
+             ['sobrescribir','Actualizar con el archivo','Los datos del ticket se toman del archivo; su historial, evidencias y asignación se conservan'],
+             ['renumerar','Importar con folio nuevo','Se le asigna el siguiente consecutivo de ese día']],
+            box.querySelector('#hModo').value==='sobrescribir'?'sobrescribir':'omitir')
         : (()=>({}));
       const go=rep.querySelector('#hGo'); if(!go) return;
       go.onclick=async function(){
@@ -11265,8 +11352,8 @@ function dsBarraImport(ds){
   if(bar.querySelector('input[type=file]')) return;
   bar.innerHTML='<label class="btn sec" style="cursor:pointer">⬆ Importar '+esc(ds.plural)+
     '<input type="file" accept=".xlsx" multiple class="hide"></label>'+
-    '<select style="width:230px" data-modo><option value="merge">Acumular por ID</option>'+
-    '<option value="replace">Reemplazar todo</option></select>';
+    '<select style="width:270px" data-modo><option value="acumular">Acumular: solo agrega lo nuevo</option>'+
+    '<option value="sobrescribir">Sobrescribir: actualiza lo que coincide</option></select>';
   const inp=bar.querySelector('input[type=file]');
   inp.onchange=async()=>{
     const files=Array.prototype.slice.call(inp.files||[]); inp.value='';
@@ -11302,20 +11389,37 @@ async function dsImportar(ds,files,modo){
         nuevos.push(dsNormRegistro(ds,o,f.name));
       });
     }
+    /* r136 · Dos modos, los mismos en todos los módulos:
+         Acumular     → solo entra lo que NO existe; lo que ya está se ignora.
+         Sobrescribir → lo que coincide por ID se actualiza con el archivo; lo nuevo se agrega.
+       Ninguno borra. «merge»/«replace» de versiones anteriores equivalen a sobrescribir. */
+    modo= modo==='acumular'? 'acumular' : 'sobrescribir';
+    /* Un mismo ID varias veces en los archivos entra UNA sola vez: la última aparición,
+       que es la corrección más reciente. Antes entraban todas y se duplicaba. */
+    const porId={}, repetidos=[];
+    nuevos.forEach(r=>{ if(porId[r.id]&&repetidos.indexOf(r.id)===-1) repetidos.push(r.id); porId[r.id]=r; });
+    const unicos=Object.keys(porId).map(k=>porId[k]);
     const actuales={}; dsLista(ds).forEach(r=>actuales[r.id]=r);
-    const choques=modo==='replace'?[]:nuevos.filter(r=>actuales[r.id]).map(r=>({clave:r.id,
+    const altas=unicos.filter(r=>!actuales[r.id]);
+    const yaEstan=unicos.filter(r=>actuales[r.id]);
+    const choques=modo==='sobrescribir'? yaEstan.map(r=>({clave:r.id,
       titulo:r.id+(actuales[r.id].fuente==='manual'?' · capturado aquí':''),
       actual:[actuales[r.id].origen.estado,fechaHumana(actuales[r.id].origen.fechaIni||actuales[r.id].origen.vence)].filter(Boolean).join(' · '),
-      nuevo:[r.origen.estado,fechaHumana(r.origen.fechaIni||r.origen.vence)].filter(Boolean).join(' · ')}));
-    const repetidos=nuevos.map(r=>r.id).filter((x,i,a)=>a.indexOf(x)!==i);
-    caja.innerHTML='<div class="note"><b>'+nuevos.length+' registro(s) leídos</b> de '+files.length+' archivo(s) · modo '+
-      (modo==='replace'?'reemplazar todo':'acumular por ID')+
-      (choques.length?' · <b style="color:var(--warn)">'+choques.length+' ya existen</b>':'')+
-      (repetidos.length?'<br><b style="color:var(--warn)">IDs repetidos dentro de los archivos:</b> '+[...new Set(repetidos)].join(', '):'')+
+      nuevo:[r.origen.estado,fechaHumana(r.origen.fechaIni||r.origen.vence)].filter(Boolean).join(' · ')})) : [];
+    const util=altas.length+(modo==='sobrescribir'?yaEstan.length:0);
+    caja.innerHTML='<div class="note"><b>'+nuevos.length+' registro(s) leídos</b> de '+files.length+' archivo(s) · modo <b>'+
+      (modo==='acumular'?'acumular':'sobrescribir')+'</b> · '+altas.length+' nuevo(s)'+
+      (yaEstan.length? (modo==='acumular'
+        ? ' · <b style="color:var(--warn)">'+yaEstan.length+' ya existen y se ignoran</b>'
+        : ' · <b style="color:var(--warn)">'+yaEstan.length+' ya existen y se actualizan</b>') : '')+
+      (repetidos.length?'<br><b style="color:var(--warn)">IDs repetidos dentro de los archivos</b> (entra una sola vez, la última): '+
+        esc(repetidos.slice(0,30).join(', '))+(repetidos.length>30?'…':''):'')+
       (errores.length?'<br><b style="color:var(--p1)">'+errores.map(esc).join('<br>')+'</b>':'')+
       '</div><div id="dsDup_'+ds.k+'"></div>'+
-      (nuevos.length?'<button class="btn" id="dsGo_'+ds.k+'" style="margin-top:10px">Importar</button> '+
-        '<button class="btn sec" id="dsNo_'+ds.k+'" style="margin-top:10px">Cancelar</button>':'');
+      (util?'<button class="btn" id="dsGo_'+ds.k+'" style="margin-top:10px">Importar '+util+'</button> '+
+        '<button class="btn sec" id="dsNo_'+ds.k+'" style="margin-top:10px">Cancelar</button>'
+        : (nuevos.length?'<div class="note" style="margin-top:8px">No hay nada que importar: todo lo del archivo ya existe. '+
+            'Si quieres actualizarlo con el archivo, elige <b>Sobrescribir</b>.</div>':''));
     const leerDec=choques.length? panelDuplicados($('#dsDup_'+ds.k),choques,
       [['sobrescribir','Actualizar con el archivo','Se refresca el origen y se conservan las sedes y la nota de Sipnology'],
        ['conservar','Dejar el registro actual','Se ignora la fila del archivo']],'sobrescribir') : (()=>({}));
@@ -11325,24 +11429,30 @@ async function dsImportar(ds,files,modo){
       busy(this,true);
       try{
         const dec=leerDec();
-        if(modo==='replace') S[ds.st]=nuevos;
-        else{
-          nuevos.forEach(r=>{
-            const ya=actuales[r.id];
-            if(!ya){ S[ds.st].push(r); return; }
+        let act=0;
+        /* Se vuelve a mirar lo que hay en memoria en el momento de confirmar: si otra carga
+           entró entretanto, lo que ya exista no se agrega dos veces. */
+        const vivos={}; dsLista(ds).forEach(r=>vivos[r.id]=r);
+        const entran=altas.filter(r=>!vivos[r.id]);
+        entran.forEach(r=>S[ds.st].push(r));
+        if(modo==='sobrescribir'){
+          yaEstan.concat(altas.filter(r=>vivos[r.id])).forEach(r=>{
+            const ya=vivos[r.id]; if(!ya) return;
             if((dec[r.id]||'sobrescribir')==='conservar') return;
-            /* Se refresca el origen y se respeta la anotación de Sipnology. */
             /* La versión oficial del cliente pasa a mandar, pero la anotación de Sipnology se respeta. */
             ya.origen=r.origen; ya.importado=r.importado; ya.fuente='importado';
             if(!(ya.sip.sedes||[]).length) ya.sip.sedes=r.sip.sedes;
+            act++;
           });
         }
-        if(await conTarea('importando '+nuevos.length+' '+ds.titulo+'(s)',()=>
-            dsPush(ds,'importación de '+nuevos.length+' registro(s) · modo '+
-              (modo==='replace'?'reemplazar todo':'acumular por ID')+' · archivo(s): '+
-              [...files].map(f=>f.name).join(', ').slice(0,220)))){
-          toast(ds.plural+': '+S[ds.st].length+' registros en total.');
+        if(await conTarea('importando '+(entran.length+act)+' '+ds.titulo+'(s)',()=>
+            dsPush(ds,'importación de '+(entran.length+act)+' registro(s) · modo '+modo+' · '+entran.length+' nuevo(s), '+act+' actualizado(s)'+
+              (modo==='acumular'&&yaEstan.length?', '+yaEstan.length+' ignorado(s) por existir':'')+
+              ' · archivo(s): '+[...files].map(f=>f.name).join(', ').slice(0,220)))){
+          toast(ds.plural+': '+entran.length+' nuevo(s), '+act+' actualizado(s) · '+S[ds.st].length+' en total.');
           caja.remove(); dsRender(ds); renderDash();
+          /* Si se importó desde Catálogos, se actualiza el conteo de esa pantalla. */
+          if($('#dsImpFile')&&$('#vCatalogos')&&$('#vCatalogos').classList.contains('on')) renderCat();
         }
       }catch(e){ toast('Falló la importación: '+e.message,'err',10000); }
       finally{ busy(this,false); }
@@ -11543,7 +11653,10 @@ async function repExcel(d,bloques,nombre){
 }
 async function repPDF(d,bloques,nombre){
   const {jsPDF}=window.jspdf;
-  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4',compress:true});
+  /* Una sola medida de hoja para todo el documento (la que pida la tabla más ancha): así
+     las hojas que agrega la tabla al continuar salen del mismo tamaño que la primera. */
+  const maxCols=Math.max(1,...bloques.map(b=>(b.cols||[]).length));
+  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:formatoTabla(maxCols),compress:true});
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight();
   const logoOp=(S.cat&&S.cat.logoOperador)||'', logoCli=S.cliente?logoDe(S.cliente):'';
   const cabecera=sub=>cabeceraPdf(doc,W,d.titulo+(sub?' · '+sub:''),logoOp,logoCli);
@@ -11577,7 +11690,7 @@ async function repPDF(d,bloques,nombre){
       if(gr.length){ doc.addPage(); cabecera(b.m.t); y=76; }
     }
     doc.autoTable({startY:y,margin:{top:76,left:24,right:24},
-      styles:{fontSize:6.3,cellPadding:2.2,overflow:'linebreak'},
+      styles:{fontSize:(b.cols||[]).length>12?7:6.3,cellPadding:2.2,overflow:'linebreak'},
       headStyles:{fillColor:[233,102,45],textColor:[255,255,255],fontStyle:'bold'},
       alternateRowStyles:{fillColor:[244,248,251]},
       head:[b.cols.map(c=>c[1])],
@@ -12231,7 +12344,9 @@ function pmoNormalizar(d){
   o.proyectos=Array.isArray(o.proyectos)?o.proyectos:[];
   o.tareas=Array.isArray(o.tareas)?o.tareas:[];
   o.avisos=Object.assign({activo:true,modo:'clave',destinatarios:[]},o.avisos||{});
+  o.papelera=Array.isArray(o.papelera)?o.papelera:[];
   o.tareas.forEach(t=>{ t.checklist=t.checklist||[]; t.notas=t.notas||[]; t.historial=t.historial||[];
+    t.adjuntos=t.adjuntos||[]; t.area=t.area||'';
     t.etiquetas=t.etiquetas||[]; if(t.visibleCliente===undefined) t.visibleCliente=true; });
   return o;
 }
@@ -12267,8 +12382,11 @@ function pmoProyeccion(d){
   return {version:1, copiaParaCliente:true, generado:new Date().toISOString(),
     proyectos:(d.proyectos||[]).filter(p=>usados.has(p.id)).map(p=>({id:p.id,nombre:p.nombre,color:p.color})),
     tareas:vis.map(t=>({id:t.id, titulo:t.titulo, descripcion:t.descripcion||'', proyectoId:t.proyectoId||'',
-      estado:t.estado, prioridad:t.prioridad, responsableNombre:pmoResp(t),
+      estado:t.estado, prioridad:t.prioridad, responsableNombre:pmoResp(t), area:t.area||'',
       fechaCompromiso:t.fechaCompromiso||'', etiquetas:t.etiquetas||[], visibleCliente:true,
+      /* Solo los archivos marcados visibles, y sin datos de quién los subió más allá del nombre. */
+      adjuntos:(t.adjuntos||[]).filter(a=>a.visibleCliente).map(a=>({id:a.id,nombre:a.nombre,archivo:a.archivo,tam:a.tam,tipo:a.tipo,
+        visibleCliente:true,subido:{cuando:(a.subido||{}).cuando||'',nombre:(a.subido||{}).nombre||''}})),
       checklist:(t.checklist||[]).map(x=>({t:x.t,h:!!x.h})), bloqueo:t.bloqueo||'',
       enColumnaDesde:t.enColumnaDesde||'', creado:{cuando:(t.creado||{}).cuando||'',nombre:(t.creado||{}).nombre||''},
       cerrado:t.cerrado?{cuando:t.cerrado.cuando,nombre:t.cerrado.nombre||'',nota:t.cerrado.nota||''}:null,
@@ -12330,6 +12448,7 @@ async function pmoCrear(datos){
     const t={id:'PMO-'+String(d.seq).padStart(4,'0'), titulo, descripcion:datos.descripcion||'',
       proyectoId:datos.proyectoId||'', estado:'PENDIENTE', prioridad:PM_PRI.indexOf(datos.prioridad)!==-1?datos.prioridad:'Media',
       responsable:normCorreo(datos.responsable||y.mail), responsableNombre:datos.responsableNombre||y.nombre,
+      area:String(datos.area||'').trim(), adjuntos:[],
       fechaCompromiso:datos.fechaCompromiso||'', etiquetas:datos.etiquetas||[],
       checklist:(datos.checklist||[]).map(x=>({t:String(x.t),h:!!x.h})), visibleCliente:datos.visibleCliente!==false,
       notas:[], historial:[], cerrado:null, bloqueo:'',
@@ -12366,7 +12485,9 @@ async function pmoMover(id,destino,texto){
 }
 async function pmoEditar(id,datos){
   if(!String(datos.titulo||'').trim()) throw new Error('El título es obligatorio.');
+  const retirar=[];
   const ef=await pmoMutar(d=>{
+    retirar.length=0;                 // la acción puede repetirse si otro guardó entretanto
     const t=pmoBuscar(d,id), cambios=[];
     const nomProy=v=>{ const p=d.proyectos.find(x=>x.id===v); return p?p.nombre:'—'; };
     const campo=(k,etq,fmt)=>{ if(datos[k]===undefined) return;
@@ -12374,6 +12495,8 @@ async function pmoEditar(id,datos){
       if(JSON.stringify(a)!==JSON.stringify(b)){ cambios.push(etq+': '+(fmt?fmt(a):(a||'—'))+' → '+(fmt?fmt(b):(b||'—'))); t[k]=b; } };
     const respAntes=t.responsable;
     campo('titulo','Título'); campo('descripcion','Descripción',v=>v?'(texto)':'—');
+    if(datos.area!==undefined) datos.area=String(datos.area||'').trim();
+    campo('area','Área');
     campo('proyectoId','Proyecto',nomProy); campo('prioridad','Prioridad');
     campo('fechaCompromiso','Compromiso',v=>v?fechaHumana(v):'sin fecha');
     campo('etiquetas','Etiquetas',v=>(v||[]).join(', ')||'—');
@@ -12387,12 +12510,16 @@ async function pmoEditar(id,datos){
     /* Si se vuelve interna, sus notas compartidas dejan de estarlo: el cliente no puede
        conservar trozos de algo que ya no puede ver. */
     if(!t.visibleCliente) (t.notas||[]).forEach(n=>{ n.cliente=false; });
+    /* Igual con sus archivos: se retiran de la carpeta del cliente después de guardar. */
+    if(!t.visibleCliente) (t.adjuntos||[]).forEach(a=>{ if(a.visibleCliente){ a.visibleCliente=false; retirar.push(a.archivo); } });
     pmoHist(t,'EDITADA',cambios.join(' · '));
     const reasig=respAntes!==t.responsable;
     return {tipo:reasig?'REASIGNADA':'EDITADA',tarea:pmoCopia(t),
       detalle:reasig?'Ahora la lleva '+pmoResp(t)+'.':cambios.join(' · '),cambios};
   });
   if(!ef) return [];
+  if(retirar.length){ const h=await H();
+    for(const a of retirar){ try{ await gDelete(h,pPmoAdjCli(S.cliente,id)+'/'+a); }catch(e){ diagFallo('proyectos: retirar archivo del cliente',e.message); } } }
   logEvent('PMO_TAREA_EDITADA',S.cliente+' · '+id+' · '+ef.cambios.join(' · '));
   return ef.cambios;
 }
@@ -12459,7 +12586,7 @@ function pmoDestinatarios(t,cfg){
 function pmoCorreoHTML(ef,d,cli){
   const t=ef.tarea, y=pmoYo(), p=(d.proyectos||[]).find(x=>x.id===t.proyectoId);
   const verbo={CREADA:'creó',MOVIDA:'cambió de estado',REASIGNADA:'reasignó',CERRADA:'terminó',REABIERTA:'reabrió',
-    EDITADA:'modificó',NOTA:'añadió una nota a',CHECKLIST:'actualizó la lista de'}[ef.tipo]||'modificó';
+    EDITADA:'modificó',NOTA:'añadió una nota a',CHECKLIST:'actualizó la lista de',ADJUNTO:'actualizó los archivos de',ELIMINADA:'eliminó'}[ef.tipo]||'modificó';
   const td='padding:4px 10px;border-bottom:1px solid #e6edf5';
   const fila=(a,b)=>'<tr><td style="'+td+';color:#5b6b80">'+a+'</td><td style="'+td+'">'+b+'</td></tr>';
   return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#12263a">'+
@@ -12481,7 +12608,7 @@ async function pmoAvisar(ef,d,cli){
   if(!dest.para.length) return false;
   if(correoBloqueado()){ logEvent('PMO_AVISO_BLOQUEADO',cli+' · '+ef.tarea.id+' · bloqueo total de correo'); return false; }
   const verbo={CREADA:'creada',MOVIDA:'cambió de estado',REASIGNADA:'reasignada',CERRADA:'terminada',
-    REABIERTA:'reabierta',EDITADA:'modificada',NOTA:'tiene una nota nueva',CHECKLIST:'avanzó en su lista'}[ef.tipo]||'modificada';
+    REABIERTA:'reabierta',EDITADA:'modificada',NOTA:'tiene una nota nueva',CHECKLIST:'avanzó en su lista',ADJUNTO:'tiene archivos nuevos',ELIMINADA:'eliminada'}[ef.tipo]||'modificada';
   const asunto='[PMO · '+nombreCliente(cli)+'] '+ef.tarea.id+' '+verbo+' — '+ef.tarea.titulo;
   try{
     await enviarAvisoSistema(dest.para,asunto,pmoCorreoHTML(ef,d,cli));
@@ -12529,7 +12656,9 @@ function pmoPintarFiltros(){
   $('#pmfMias').classList.toggle('on',f.mias); $('#pmfVenc').classList.toggle('on',f.venc); $('#pmfInt').classList.toggle('on',f.internas);
 }
 function pmoPintarKpis(){
-  const v=pmoVisibles(), ab=v.filter(t=>t.estado!=='TERMINADA'), semana=Date.now()-7*PM_DIA;
+  /* r136: los contadores siguen al filtro. Con un proyecto elegido, cuentan ese proyecto:
+     antes se quedaban con el total del tablero y no cuadraban con las columnas. */
+  const v=pmoVisibles().filter(pmoFiltra), ab=v.filter(t=>t.estado!=='TERMINADA'), semana=Date.now()-7*PM_DIA;
   const k=[['Abiertas',ab.length,''],['Vencidas',ab.filter(pmoVencida).length,'color:var(--p1)'],
     ['Bloqueadas',v.filter(t=>t.estado==='BLOQUEADA').length,'color:var(--warn)'],
     ['Terminadas · 7 días',v.filter(t=>t.cerrado&&new Date(t.cerrado.cuando).getTime()>=semana).length,'color:var(--p3)']];
@@ -12546,7 +12675,8 @@ function pmoTarjeta(t){
     '<div class="tt">'+esc(t.titulo)+'</div>'+
     '<div class="f3"><span class="pm-chip pm-pri-'+esc(t.prioridad)+'">'+esc(t.prioridad)+'</span>'+
       (!t.visibleCliente&&pmoVeInternas()?'<span class="pm-chip pm-int" title="El cliente no la ve">Interna</span>':'')+
-      '<span>'+esc(pmoResp(t))+'</span>'+
+      '<span>'+esc(pmoResp(t))+(t.area?' <span class="muted">· '+esc(t.area)+'</span>':'')+'</span>'+
+      (pmoAdjuntosVisibles(t).length?'<span class="muted" title="Archivos adjuntos">📎 '+pmoAdjuntosVisibles(t).length+'</span>':'')+
       (t.fechaCompromiso?'<span class="'+(pmoVencida(t)?'pm-venc':'muted')+'">'+(pmoVencida(t)?'⚠ ':'')+esc(fechaHumana(t.fechaCompromiso))+'</span>':'')+
     '</div>'+
     (t.estado==='BLOQUEADA'&&t.bloqueo?'<div style="margin-top:6px;font-size:12px;color:#fcd34d">⛔ '+esc(t.bloqueo)+'</div>':'')+
@@ -12557,6 +12687,7 @@ function pmoTarjeta(t){
     '</div></div>';
 }
 function pmoPintarTablero(){
+  pmoPintarKpis();
   const vis=pmoVisibles().filter(pmoFiltra);
   $('#pmTablero').innerHTML=PM_COLS.map(c=>{
     const ts=vis.filter(t=>t.estado===c.k).sort((a,b)=>PM_PRI.indexOf(a.prioridad)-PM_PRI.indexOf(b.prioridad)||
@@ -12630,16 +12761,25 @@ function pmoOpcGente(sel){
   if(sel&&!g.some(x=>x.mail===sel)) g.push({mail:sel,nombre:sel});
   return g.map(x=>'<option value="'+esc(x.mail)+'" data-nombre="'+esc(x.nombre)+'"'+((sel||yo)===x.mail?' selected':'')+'>'+esc(x.nombre)+'</option>').join('');
 }
+function pmoAreasUsadas(){
+  const d=pmoEstado().datos; if(!d) return [];
+  const vistas={}; d.tareas.forEach(t=>{ const a=String(t.area||'').trim(); if(a&&!vistas[a.toLowerCase()]) vistas[a.toLowerCase()]=a; });
+  return Object.keys(vistas).map(k=>vistas[k]).sort((a,b)=>a.localeCompare(b));
+}
 function pmoForm(t){
   const ro=!pmoPuedeEscribir();
   const v=t||{titulo:'',descripcion:'',proyectoId:pmoEstado().filtro.proyecto||'',prioridad:'Media',
-    responsable:normCorreo(S.me.mail),fechaCompromiso:'',etiquetas:[],visibleCliente:true};
+    responsable:normCorreo(S.me.mail),area:'',fechaCompromiso:'',etiquetas:[],visibleCliente:true};
   return '<div class="'+(ro?'pm-ro':'')+'">'+
     '<div class="f"><label>Título'+(ro?'':' <span class="req">*</span>')+'</label><input id="pmeTit" value="'+esc(v.titulo)+'" placeholder="Qué hay que hacer, en una línea"></div>'+
     '<div class="grid" style="margin-top:10px">'+
       '<div class="f"><label>Proyecto</label><select id="pmePro">'+pmoOpcProyecto(v.proyectoId)+'</select></div>'+
       (ro? '<div class="f"><label>Responsable</label><input value="'+esc(pmoResp(v))+'"></div>'
          : '<div class="f"><label>Responsable</label><select id="pmeRes">'+pmoOpcGente(v.responsable)+'</select></div>')+
+      /* Área: se escribe a mano (lo pidió la PMO). Se sugieren las que ya se usan para no
+         tener «Redes», «redes» y «Área de redes» como tres áreas distintas. */
+      '<div class="f"><label>Área</label><input id="pmeArea" list="pmAreas" value="'+esc(v.area||'')+'" placeholder="Ej. Redes, Seguridad, Cliente"'+(ro?' readonly':'')+'>'+
+        '<datalist id="pmAreas">'+pmoAreasUsadas().map(a=>'<option value="'+esc(a)+'">').join('')+'</datalist></div>'+
       '<div class="f"><label>Prioridad</label><select id="pmePri">'+PM_PRI.map(p=>'<option'+(p===v.prioridad?' selected':'')+'>'+p+'</option>').join('')+'</select></div>'+
       '<div class="f"><label>Fecha compromiso</label><input id="pmeFec" type="date" value="'+esc(v.fechaCompromiso)+'"></div>'+
       '<div class="f"><label>Etiquetas (separadas por coma)</label><input id="pmeEti" value="'+esc((v.etiquetas||[]).join(', '))+'"></div>'+
@@ -12653,6 +12793,7 @@ function pmoLeerForm(){
   const sel=$('#pmeRes'), opt=sel&&sel.options[sel.selectedIndex];
   return {titulo:$('#pmeTit').value, proyectoId:$('#pmePro').value,
     responsable:sel?sel.value:undefined, responsableNombre:opt?(opt.getAttribute('data-nombre')||opt.textContent):undefined,
+    area:$('#pmeArea')?$('#pmeArea').value:undefined,
     prioridad:$('#pmePri').value, fechaCompromiso:$('#pmeFec').value,
     etiquetas:$('#pmeEti').value.split(',').map(s=>s.trim()).filter(Boolean),
     descripcion:$('#pmeDes').value, visibleCliente:$('#pmeVis')?$('#pmeVis').checked:true};
@@ -12663,7 +12804,8 @@ function pmoAbrirNueva(){
   _pmChk=[];
   $('#pmTTitulo').textContent='Nueva tarea · '+nombreCliente(S.cliente);
   $('#pmTCuerpo').innerHTML=pmoForm(null)+'<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Lista de puntos (opcional)</label>'+
-    '<div id="pmNChk"></div><input id="pmNChkTxt" placeholder="Añade un punto y pulsa Enter" style="margin-top:6px">';
+    '<div id="pmNChk"></div><input id="pmNChkTxt" placeholder="Añade un punto y pulsa Enter" style="margin-top:6px">'+
+    '<div class="muted" style="font-size:12px;margin-top:10px">📎 Los archivos se adjuntan desde la tarjeta, una vez creada.</div>';
   const pinta=()=>{ $('#pmNChk').innerHTML=_pmChk.map((p,i)=>'<div class="pm-chk">• '+esc(p.t)+' <button class="btn sec" data-pmq="'+i+'" style="padding:2px 8px">quitar</button></div>').join('');
     $$('#pmNChk [data-pmq]').forEach(b=>b.onclick=()=>{ _pmChk.splice(+b.dataset.pmq,1); pinta(); }); };
   $('#pmNChkTxt').onkeydown=e=>{ if(e.key==='Enter'&&e.target.value.trim()){ e.preventDefault(); _pmChk.push({t:e.target.value.trim(),h:false}); e.target.value=''; pinta(); } };
@@ -12692,13 +12834,15 @@ function pmoAbrirTarea(id){
     (t.estado==='BLOQUEADA'&&t.bloqueo?'<div class="pm-aviso">⛔ <b>Bloqueada:</b> '+esc(t.bloqueo)+'</div>':'')+
     (t.cerrado?'<div class="pm-aviso azul">✔ <b>Terminada</b> el '+esc(fechaHumana(String(t.cerrado.cuando).slice(0,10)))+
       ' por '+esc(t.cerrado.nombre||'')+': '+esc(t.cerrado.nota)+'</div>':'')+
-    (ro?'<div class="pm-aviso azul">Consulta de solo lectura. Proyecto: <b>'+esc(p?p.nombre:'—')+'</b></div>':'')+
+    (ro?'<div class="pm-aviso azul">Consulta de solo lectura. Proyecto: <b>'+esc(p?p.nombre:'—')+'</b></div>'
+       :'<div class="muted" style="font-size:12px;margin-bottom:8px">✏️ Puedes cambiar el título y cualquier dato de la tarjeta; se guarda con <b>Guardar cambios</b>.</div>')+
     pmoForm(t)+
     (ro?'':'<div class="f" style="margin-top:10px"><label>Mover a</label><div class="row" style="gap:6px">'+
       PM_COLS.map(c=>'<button class="btn sec'+(c.k===t.estado?' on':'')+'" data-pmmover="'+c.k+'" style="padding:5px 10px'+(c.k===t.estado?';background:var(--brand2);color:#fff':'')+'">'+c.t+'</button>').join('')+'</div></div>')+
     '<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Lista de puntos · '+t.checklist.filter(x=>x.h).length+'/'+t.checklist.length+'</label>'+
     (t.checklist.length? t.checklist.map((x,i)=>'<label class="pm-chk"><input type="checkbox" data-pmpt="'+i+'"'+(x.h?' checked':'')+(ro?' disabled':'')+'> '+esc(x.t)+'</label>').join('')
       : '<div class="muted" style="font-size:12.5px">Sin puntos.</div>')+
+    pmoPintarAdjuntos(t,ro)+
     '<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Notas'+(ro?'':' · internas salvo que se compartan')+'</label>'+
     (notas.length?'<div class="pm-linea" style="margin-top:6px">'+notas.map(n=>'<div class="it"><div class="q">'+esc(fechaISOHumana(n.cuando))+' · '+quien(n)+
       (!ro?(n.cliente?' · <b style="color:#5eead4">compartida con el cliente</b>':' · <b style="color:#fcd9a0">interna</b>'):'')+'</div>'+esc(n.texto)+'</div>').join('')+'</div>'
@@ -12711,8 +12855,10 @@ function pmoAbrirTarea(id){
     '<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Historial'+(ro?' · cambios de estado':' · todo lo que le ha pasado')+'</label>'+
     '<div class="pm-linea" style="margin-top:6px">'+hist.map(h=>'<div class="it"><div class="q">'+esc(fechaISOHumana(h.cuando))+' · '+quien(h)+' · '+esc(h.accion)+'</div>'+esc(h.detalle)+'</div>').join('')+'</div>';
   $('#pmTPie').innerHTML= ro? '<button class="btn sec" data-pmcierra="pmMTarea">Cerrar</button>'
-    : '<button class="btn sec" data-pmcierra="pmMTarea">Cerrar</button><button class="btn" id="pmGuardar">Guardar cambios</button>';
+    : (pmoEsAdmin()? '<button class="btn dan" id="pmEliminar" style="margin-right:auto" title="La tarjeta va a la papelera; se puede restaurar durante '+PMO_PAPELERA_DIAS+' días">🗑 Eliminar tarjeta</button>' : '')+
+      '<button class="btn sec" data-pmcierra="pmMTarea">Cerrar</button><button class="btn" id="pmGuardar">Guardar cambios</button>';
   pmoEnlazarCierres();
+  pmoEnlazarAdjuntos(t);
   if(!ro){
     $$('#pmTCuerpo [data-pmmover]').forEach(b=>b.onclick=()=>pmoIntentarMover(t.id,b.dataset.pmmover));
     $$('#pmTCuerpo [data-pmpt]').forEach(c=>c.onchange=async()=>{
@@ -12720,6 +12866,13 @@ function pmoAbrirTarea(id){
     $('#pmNotaOk').onclick=async function(){ busy(this,true);
       try{ await pmoNota(t.id,$('#pmNTexto').value,$('#pmNComp').checked); pmoPintar(); pmoAbrirTarea(t.id); toast('Nota agregada'); }
       catch(e){ toast(e.message,'err'); } finally{ busy(this,false); } };
+    const bEl=$('#pmEliminar');
+    if(bEl) bEl.onclick=async function(){
+      if(!confirm('¿Eliminar '+t.id+' · '+t.titulo+'?\n\nVa a la papelera con sus archivos: un administrador puede restaurarla durante '+
+          PMO_PAPELERA_DIAS+' días desde ⚙ Proyectos. Mientras tanto el cliente ya no la ve.')) return;
+      busy(this,true);
+      try{ await pmoEliminarTarea(t.id); pmoCerrar('pmMTarea'); pmoPintar(); toast(t.id+' enviada a la papelera'); }
+      catch(e){ toast(e.message,'err',8000); busy(this,false); } };
     $('#pmGuardar').onclick=async function(){ busy(this,true);
       try{ const c=await pmoEditar(t.id,pmoLeerForm()); pmoPintar(); pmoAbrirTarea(t.id);
         toast(c.length? c.length+' cambio(s) guardado(s)':'No había cambios'); }
@@ -12771,8 +12924,10 @@ function pmoEnlazar(){
   $('#pmRefrescar').onclick=e=>pmoRefrescar(e.currentTarget);
   $('#pmExpPdf').onclick=e=>pmoExportPDF(e.currentTarget);
   $('#pmExpXls').onclick=e=>pmoExportExcel(e.currentTarget);
+  $('#pmExpZip').onclick=e=>pmoExportZip(e.currentTarget);
   $('#pmNueva').onclick=pmoAbrirNueva;
   $('#pmAvisos').onclick=pmoAbrirAvisos;
+  $('#pmGestion').onclick=pmoAbrirGestion;
   $('#pmNuevoProy').onclick=()=>{ $('#pmPrNombre').value=''; $('#pmPrErr').classList.add('hide'); $('#pmMProy').classList.add('on'); };
   $('#pmPrOk').onclick=async function(){ busy(this,true);
     try{ const p=await pmoCrearProyecto($('#pmPrNombre').value,$('#pmPrColor').value);
@@ -12793,7 +12948,7 @@ function pmoEnlazar(){
 const PMO_PLANTILLA_COLS=[
   ['folio','Folio (vacío = tarea nueva)',17],['proyecto','Proyecto',34],['titulo','Tarea',42],
   ['descripcion','Descripción',40],['estado','Estado',14],['prioridad','Prioridad',11],
-  ['responsable','Responsable (correo)',32],['responsableNombre','Nombre del responsable',24],
+  ['responsable','Responsable (correo)',32],['responsableNombre','Nombre del responsable',24],['area','Área',20],
   ['fechaCompromiso','Fecha compromiso',16],['etiquetas','Etiquetas',22],
   ['checklist','Puntos de control',46],['visible','Visible para el cliente',12],
   ['motivo','Motivo de bloqueo / nota de cierre',46]];
@@ -12807,6 +12962,7 @@ const PMO_SINONIMOS=[
   ['estado',[/^estado/,/^status/,/^estatus/,/^columna/]],
   ['prioridad',[/^prioridad/]],
   ['responsableNombre',[/^nombredelresponsable/,/^responsablenombre/]],
+  ['area',[/^area/,/^departamento/]],
   ['responsable',[/^responsablecorreo/,/^correo/,/^email/,/^responsable$/]],
   ['fechaCompromiso',[/^fechacompromiso/,/^compromiso/,/^fechalimite/,/^vence/]],
   ['etiquetas',[/^etiquetas?$/]],
@@ -12822,19 +12978,19 @@ const PMO_COLORES=['#3b82f6','#22c55e','#e9662d','#a855f7','#14b8a6','#f59e0b','
    inventados a propósito: la plantilla la baja cualquiera y puede acabar en otro cliente. */
 const PMO_EJEMPLO=[
   {folio:'',proyecto:'Renovación de APs · Piso 12',titulo:'Levantamiento de cobertura del piso 12',descripcion:'Mapa de calor antes del cambio',
-   estado:'Terminada',prioridad:'Alta',responsable:'ana.lopez@sipnology.com.mx',responsableNombre:'Ana López',fechaCompromiso:'2026-10-02',
+   estado:'Terminada',prioridad:'Alta',responsable:'ana.lopez@sipnology.com.mx',responsableNombre:'Ana López',area:'Redes',fechaCompromiso:'2026-10-02',
    etiquetas:'Site survey',checklist:'[x] Mapa de calor\n[x] Reporte al cliente',visible:'Sí',motivo:'Reporte entregado y aprobado por el cliente.'},
   {folio:'',proyecto:'Renovación de APs · Piso 12',titulo:'Instalación de 8 APs nuevos',descripcion:'',
-   estado:'En curso',prioridad:'Alta',responsable:'jorge.ruiz@sipnology.com.mx',responsableNombre:'Jorge Ruiz',fechaCompromiso:'2026-10-09',
+   estado:'En curso',prioridad:'Alta',responsable:'jorge.ruiz@sipnology.com.mx',responsableNombre:'Jorge Ruiz',area:'Instalaciones',fechaCompromiso:'2026-10-09',
    etiquetas:'Instalación, Wi-Fi',checklist:'[x] Recepción de equipo\n[ ] Montaje\n[ ] Alta en la controladora',visible:'Sí',motivo:''},
   {folio:'',proyecto:'Renovación de APs · Piso 12',titulo:'Aprobación de la ventana de cambio',descripcion:'',
-   estado:'Bloqueada',prioridad:'Media',responsable:'ana.lopez@sipnology.com.mx',responsableNombre:'Ana López',fechaCompromiso:'2026-10-06',
+   estado:'Bloqueada',prioridad:'Media',responsable:'ana.lopez@sipnology.com.mx',responsableNombre:'Ana López',area:'Redes',fechaCompromiso:'2026-10-06',
    etiquetas:'CRQ',checklist:'',visible:'Sí',motivo:'Pendiente de aprobación del comité de cambios del cliente.'},
   {folio:'',proyecto:'Renovación de APs · Piso 12',titulo:'Costeo de licencias adicionales',descripcion:'Solo para Sipnology',
-   estado:'En revisión',prioridad:'Baja',responsable:'',responsableNombre:'Luis Pérez',fechaCompromiso:'2026-10-05',
+   estado:'En revisión',prioridad:'Baja',responsable:'',responsableNombre:'Luis Pérez',area:'Comercial',fechaCompromiso:'2026-10-05',
    etiquetas:'Comercial',checklist:'',visible:'No',motivo:''},
   {folio:'',proyecto:'Migración de controladora',titulo:'Respaldo de configuración',descripcion:'',
-   estado:'Pendiente',prioridad:'Media',responsable:'jorge.ruiz@sipnology.com.mx',responsableNombre:'Jorge Ruiz',fechaCompromiso:'13/10/2026',
+   estado:'Pendiente',prioridad:'Media',responsable:'jorge.ruiz@sipnology.com.mx',responsableNombre:'Jorge Ruiz',area:'Instalaciones',fechaCompromiso:'13/10/2026',
    etiquetas:'',checklist:'Exportar configuración; Copia fuera del equipo',visible:'Sí',motivo:''}];
 const PMO_INSTRUCCIONES=[
   {col:'Folio (vacío = tarea nueva)',que:'Déjalo vacío para crear una tarea. Si pones el folio de una tarea que ya existe (PMO-0007), esa fila la ACTUALIZA: solo cambian las celdas que tengan algo.',valores:'Vacío o PMO-#### existente'},
@@ -12845,6 +13001,7 @@ const PMO_INSTRUCCIONES=[
   {col:'Prioridad',que:'Vacío = Media.',valores:'Alta · Media · Baja'},
   {col:'Responsable (correo)',que:'Correo de Sipnology de quien la lleva. Sirve para «Mis tareas».',valores:'nombre@sipnology.com.mx'},
   {col:'Nombre del responsable',que:'Lo que se muestra en la tarjeta. Si falta, se toma del correo.',valores:'Texto libre'},
+  {col:'Área',que:'Área del responsable, escrita a mano. Se muestra en la tarjeta junto a su nombre.',valores:'Texto libre (ej. Redes)'},
   {col:'Fecha compromiso',que:'Fecha en que debe quedar. Vencida = pasa a rojo en el tablero.',valores:'AAAA-MM-DD o DD/MM/AAAA'},
   {col:'Etiquetas',que:'Separadas por coma.',valores:'Instalación, Wi-Fi'},
   {col:'Puntos de control',que:'Uno por renglón (o separados por punto y coma). [x] al inicio = hecho.',valores:'[x] Hecho · [ ] Pendiente'},
@@ -12869,10 +13026,19 @@ function pmoLeerChecklist(txt){
 }
 /* Analiza sin escribir nada. Devuelve lo que se va a crear, lo que se va a cambiar y los
    renglones que no pueden entrar, con su motivo. Es la vista previa del botón Importar. */
-function pmoAnalizarImport(filas,d){
+function pmoAnalizarImport(filas,d,modo){
+  /* r136 · Acumular: solo entran tareas nuevas; lo que ya existe se ignora.
+     Sobrescribir: lo que ya existe se actualiza con el archivo. Una fila «ya existe» si trae
+     el folio de una tarea, o si sin folio coincide con una tarea del mismo proyecto y con el
+     mismo título: así cargar dos veces el mismo archivo nunca duplica. */
+  modo= modo==='acumular'? 'acumular' : 'sobrescribir';
   d=pmoNormalizar(d? JSON.parse(JSON.stringify(d)) : null);
   const mapa=pmoMapaEncabezados(filas.encabezados||[]);
-  const out={nuevas:[],cambios:[],proyectosNuevos:[],errores:[]};
+  const out={nuevas:[],cambios:[],proyectosNuevos:[],errores:[],ignoradas:[],modo:modo};
+  const clave=(proy,tit)=>normEnc(proy)+'|'+normEnc(tit);
+  const nomProy=id=>{ const p=d.proyectos.find(x=>x.id===id); return p?p.nombre:''; };
+  const existentes={}; d.tareas.forEach(t=>{ const k=clave(nomProy(t.proyectoId),t.titulo); if(!existentes[k]) existentes[k]=t; });
+  const titulosArch={};
   if(!mapa.titulo&&!mapa.folio){ out.errores.push('No se encontró la columna «Tarea» ni la de «Folio»: ¿es la plantilla de Proyectos?'); return out; }
   const vistos={}, proyN=[];
   const g=(f,c)=>mapa[c]? String(f[mapa[c]]==null?'':f[mapa[c]]).trim() : '';
@@ -12889,6 +13055,13 @@ function pmoAnalizarImport(filas,d){
       actual=d.tareas.find(t=>t.id===folio)||null;
       if(!actual) prob.push('el folio '+folio+' no existe en este tablero; déjalo vacío para crear la tarea');
     }else if(!v.titulo) prob.push('falta el nombre de la tarea');
+    else{
+      const k=clave(v.proyecto,v.titulo);
+      if(titulosArch[k]) prob.push('la tarea «'+v.titulo+'» de ese proyecto se repite en el archivo (renglón '+titulosArch[k]+')');
+      else{ titulosArch[k]=L; actual=existentes[k]||null; }
+    }
+    /* En Acumular, lo que ya existe ni se valida: se ignora tal cual. */
+    if(actual&&modo==='acumular'&&!prob.length){ out.ignoradas.push({renglon:L,id:actual.id}); return; }
     let estado='';
     if(v.estado){ estado=PMO_ESTADO_DE[normEnc(v.estado)]||''; if(!estado) prob.push('estado «'+v.estado+'» no reconocido (Pendiente, En curso, En revisión, Bloqueada o Terminada)'); }
     let prioridad='';
@@ -12917,7 +13090,7 @@ function pmoAnalizarImport(filas,d){
         proyN.push(n); pid=n.id; }
     }
     const nom=v.responsableNombre||(correo? correo.split('@')[0].split('.').map(x=>x.charAt(0).toUpperCase()+x.slice(1)).join(' ') : '');
-    const datos={titulo:v.titulo,descripcion:v.descripcion,proyectoId:pid,estado:destino,
+    const datos={titulo:v.titulo,descripcion:v.descripcion,proyectoId:pid,estado:destino,area:v.area,
       prioridad:prioridad,responsable:correo,responsableNombre:nom,fechaCompromiso:fecha,
       etiquetas:v.etiquetas? v.etiquetas.split(',').map(x=>x.trim()).filter(Boolean) : null,
       checklist:v.checklist? pmoLeerChecklist(v.checklist) : null,visible:visible,motivo:v.motivo,renglon:L};
@@ -12930,10 +13103,11 @@ function pmoAnalizarImport(filas,d){
       if(prioridad&&prioridad!==actual.prioridad) campos.push('prioridad');
       if((correo&&correo!==actual.responsable)||(v.responsableNombre&&v.responsableNombre!==actual.responsableNombre)) campos.push('responsable');
       if(fecha&&fecha!==actual.fechaCompromiso) campos.push('compromiso');
+      if(v.area&&v.area!==(actual.area||'')) campos.push('área');
       if(datos.etiquetas&&JSON.stringify(datos.etiquetas)!==JSON.stringify(actual.etiquetas)) campos.push('etiquetas');
       if(datos.checklist&&JSON.stringify(datos.checklist)!==JSON.stringify(actual.checklist)) campos.push('puntos de control');
       if(visible!==null&&visible!==actual.visibleCliente) campos.push('visibilidad');
-      if(campos.length) out.cambios.push({id:folio,campos:campos,datos:datos});
+      if(campos.length) out.cambios.push({id:actual.id,campos:campos,datos:datos});
     }else out.nuevas.push(datos);
   });
   out.proyectosNuevos=proyN;
@@ -12969,6 +13143,7 @@ async function pmoAplicarImport(an,archivo){
       d.seq++;
       const t={id:'PMO-'+String(d.seq).padStart(4,'0'),titulo:n.titulo,descripcion:n.descripcion||'',proyectoId:pid(n.proyectoId),
         estado:'PENDIENTE',prioridad:n.prioridad||'Media',responsable:n.responsable||'',responsableNombre:n.responsableNombre||'',
+        area:n.area||'',adjuntos:[],
         fechaCompromiso:n.fechaCompromiso||'',etiquetas:n.etiquetas||[],checklist:n.checklist||[],
         visibleCliente:n.visible!==false,notas:[],historial:[],cerrado:null,bloqueo:'',
         creado:{por:y.mail,nombre:y.nombre,cuando:ahora},enColumnaDesde:ahora};
@@ -12986,6 +13161,7 @@ async function pmoAplicarImport(an,archivo){
       if(n.responsable) t.responsable=n.responsable;
       if(c.campos.indexOf('responsable')!==-1&&n.responsableNombre) t.responsableNombre=n.responsableNombre;
       if(n.fechaCompromiso) t.fechaCompromiso=n.fechaCompromiso;
+      if(n.area) t.area=n.area;
       if(n.etiquetas) t.etiquetas=n.etiquetas;
       if(n.checklist) t.checklist=n.checklist;
       if(n.visible!==null&&n.visible!==undefined) t.visibleCliente=n.visible;
@@ -13019,15 +13195,19 @@ function renderImportPmo(box){
   box.innerHTML=
     '<div class="note">Carga proyectos y tareas en el tablero de <b>'+esc(cli?nombreCliente():'—')+'</b> desde un '+
       '<code>.xlsx</code>. Descarga la plantilla: trae filas de ejemplo y una hoja de instrucciones.</div>'+
-    '<div class="note"><b>Añade y actualiza por folio; nunca borra.</b> Una fila sin folio crea una tarea; una fila con '+
-      'el folio de una tarea existente (PMO-0007) la actualiza, cambiando solo las celdas que traigan algo. Los proyectos '+
-      'que no existan se crean. Todo queda en el historial de cada tarea y en la bitácora, y la importación no manda correos.</div>'+
+    '<div class="note"><b>Nunca borra ni duplica.</b> Una fila corresponde a una tarea que ya existe si trae su folio '+
+      '(PMO-0007) o, sin folio, si coincide con una tarea del mismo proyecto y con el mismo título. <b>Acumular</b> ignora esas '+
+      'filas y solo crea las nuevas; <b>Sobrescribir</b> las actualiza, cambiando solo las celdas que traigan algo. Los '+
+      'proyectos que no existan se crean. Todo queda en el historial de cada tarea y en la bitácora, y la carga no manda correos.</div>'+
     (!cli? '<div class="note" style="border-left-color:var(--warn)">Elige un cliente en el encabezado: cada cliente tiene su tablero.</div>'
      : !activo? '<div class="note" style="border-left-color:var(--warn)">'+esc(nombreCliente())+' no tiene activado el módulo de Proyectos '+
        '(Catálogos › Administración › Clientes).</div>' : '')+
     '<div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">'+
       '<label class="btn" style="cursor:'+((ro||!activo)?'not-allowed':'pointer')+';opacity:'+((ro||!activo)?'.45':'1')+'">'+
         '⬆ Elegir archivo de Proyectos<input type="file" id="pmImpFile" accept=".xlsx" class="hide"'+((ro||!activo)?' disabled':'')+'></label>'+
+      '<select id="pmImpModo" style="width:290px"'+((ro||!activo)?' disabled':'')+'>'+
+        '<option value="acumular">Acumular: solo agrega lo nuevo</option>'+
+        '<option value="sobrescribir">Sobrescribir: actualiza lo que coincide</option></select>'+
       '<button class="btn sec" id="pmImpPlantilla">⬇ Descargar plantilla</button>'+
       '<span style="flex:1"></span>'+
       '<button class="btn dan" id="pmImpVaciar"'+(esDueno()&&activo?'':' disabled')+' title="'+
@@ -13050,8 +13230,11 @@ function renderImportPmo(box){
     try{
       const filas=await leerXlsx(file);
       const d=await pmoCargar();
-      const an=pmoAnalizarImport(filas,d);
-      pmoPintarAnalisis(box,rep,an,file.name);
+      const modoSel=box.querySelector('#pmImpModo');
+      const analiza=()=>pmoPintarAnalisis(box,rep,pmoAnalizarImport(filas,pmoEstado().datos||d,modoSel.value),file.name);
+      analiza();
+      /* Cambiar el modo con el archivo ya leído vuelve a calcular la vista previa. */
+      modoSel.onchange=()=>{ if(rep.querySelector('#pmImpOk')) analiza(); };
     }catch(e){ rep.innerHTML='<div class="note" style="border-left-color:var(--p1)">No se pudo leer el archivo: '+esc(e.message)+'</div>'; }
   };
 }
@@ -13059,7 +13242,9 @@ function pmoPintarAnalisis(box,rep,an,nombre){
   const util=an.nuevas.length+an.cambios.length;
   rep.innerHTML='<div class="note" style="border-left-color:'+(an.errores.length?'var(--warn)':'var(--p3)')+'">'+
     '<b>'+esc(nombre)+'</b> · '+an.nuevas.length+' tarea(s) nueva(s) · '+an.cambios.length+' actualización(es) · '+
-    an.proyectosNuevos.length+' proyecto(s) nuevo(s)'+(an.errores.length? ' · <b>'+an.errores.length+' renglón(es) no entran</b>':'')+
+    an.proyectosNuevos.length+' proyecto(s) nuevo(s)'+
+    ((an.ignoradas||[]).length? ' · <b style="color:var(--warn)">'+an.ignoradas.length+' ya existen y se ignoran</b>':'')+
+    (an.errores.length? ' · <b>'+an.errores.length+' renglón(es) no entran</b>':'')+
     (an.proyectosNuevos.length? '<div style="margin-top:6px">Proyectos que se crean: '+esc(an.proyectosNuevos.map(p=>p.nombre).join(', '))+'</div>':'')+
     (an.cambios.length? '<div style="margin-top:6px">Se actualizan: '+an.cambios.slice(0,12).map(c=>'<b>'+esc(c.id)+'</b> ('+esc(c.campos.join(', '))+')').join(' · ')+
       (an.cambios.length>12?' · …':'')+'</div>':'')+
@@ -13118,23 +13303,26 @@ function pmoFilasExport(ts){
     const hechos=t.checklist.filter(x=>x.h).length;
     const enCol=Date.now()-new Date(t.enColumnaDesde||(t.creado||{}).cuando||Date.now()).getTime();
     return {folio:t.id,proyecto:p?p.nombre:'',titulo:t.titulo,estado:PM_NOMBRE_COL[t.estado]||t.estado,prioridad:t.prioridad,
-      resp:pmoResp(t),comp:t.fechaCompromiso||'',venc:pmoVencida(t)?'Sí':'',
+      resp:pmoResp(t),area:t.area||'',archivos:pmoAdjuntosVisibles(t).map(a=>a.nombre).join(', '),
+      comp:t.fechaCompromiso||'',venc:pmoVencida(t)?'Sí':'',
       dias:t.estado==='TERMINADA'?'':Math.floor(enCol/PM_DIA),avance:t.checklist.length?hechos+'/'+t.checklist.length:'',
       etiquetas:(t.etiquetas||[]).join(', '),motivo:t.estado==='BLOQUEADA'?(t.bloqueo||''):(t.cerrado?(t.cerrado.nota||''):''),
       visible:t.visibleCliente?'Sí':'No',cerrada:t.cerrado?String(t.cerrado.cuando||'').slice(0,10):''}; });
 }
-async function pmoExportExcel(btn){
+async function pmoExportExcel(btn,devolver){
   if(!S.cliente) return;
   busy(btn,true);
   try{
     const ts=pmoTareasExport(), sip=pmoVeInternas();
     const cols=[['folio','Folio',11],['proyecto','Proyecto',32],['titulo','Tarea',44],['estado','Estado',13],['prioridad','Prioridad',10],
-      ['resp','Responsable',24],['comp','Compromiso',12],['venc','Vencida',9],['dias','Días en la columna',11],['avance','Avance',9],
+      ['resp','Responsable',24],['area','Área',18],['comp','Compromiso',12],['venc','Vencida',9],['dias','Días en la columna',11],['avance','Avance',9],
+      ['archivos','Archivos',30],
       ['etiquetas','Etiquetas',20],['motivo','Bloqueo / nota de cierre',44],['cerrada','Terminada el',12]]
       .concat(sip? [['visible','Visible para el cliente',11]] : []);
     const colsR=[['proyecto','Proyecto',34]].concat(PM_COLS.map(c=>[c.k,c.t,12]),[['total','Total',9],['vencidas','Vencidas',10]]);
-    await escribirXlsx(pmoNombreArchivo(),[{nombre:'Tareas',cols:cols,filas:pmoFilasExport(ts)},
-      {nombre:'Resumen',cols:colsR,filas:pmoResumenProyectos(ts)}]);
+    const r=await escribirXlsx(pmoNombreArchivo(),[{nombre:'Tareas',cols:cols,filas:pmoFilasExport(ts)},
+      {nombre:'Resumen',cols:colsR,filas:pmoResumenProyectos(ts)}],devolver);
+    if(devolver) return r;                                  // para meterlo en el .zip
     logEvent('EXPORT_PMO_EXCEL',S.cliente+' · '+ts.length+' tarea(s) · '+pmoFiltrosTexto());
   }catch(e){ toast('No se pudo exportar: '+e.message,'err',9000); }
   finally{ busy(btn,false); }
@@ -13150,7 +13338,7 @@ function pmoJpeg(canvas,y0,alto,anchoMax){
   cx.drawImage(canvas,0,y0,canvas.width,alto,0,0,c.width,c.height);
   return c.toDataURL('image/jpeg',0.68);
 }
-async function pmoExportPDF(btn){
+async function pmoExportPDF(btn,devolver){
   if(!S.cliente) return;
   if(!window.jspdf||typeof html2canvas==='undefined'){ toast('No se cargaron las librerías de PDF. Recarga la página.','err'); return; }
   busy(btn,true);
@@ -13204,6 +13392,7 @@ async function pmoExportPDF(btn){
     }
     const total=pieDePagina(doc,W,H,titulo,30);
     const blob=doc.output('blob');
+    if(devolver) return {blob:blob,paginas:total};          // para meterlo en el .zip
     bajar(blob,pmoNombreArchivo()+'.pdf');
     const peso=pesoLegible(blob.size);
     toast('PDF del tablero · '+total+' página(s) · '+peso, blob.size>4*1048576?'warn':null, 7000);
@@ -13211,6 +13400,431 @@ async function pmoExportPDF(btn){
     return {paginas:total,bytes:blob.size,franjas:pag};
   }catch(e){ toast('No se pudo generar el PDF: '+e.message,'err',9000); }
   finally{ busy(btn,false); }
+}
+
+/* ---------------------- PROYECTOS: ARCHIVOS ADJUNTOS Y EXPORTAR .ZIP (r136) ----------------------
+   Cada archivo se guarda en la carpeta INTERNA del tablero (PMO/<cliente>/adjuntos/<tarea>/).
+   Al subirlo se elige si el cliente lo ve: si sí, se copia a su carpeta (Clientes/<ID>/Proyectos/
+   adjuntos/<tarea>/). Es el mismo criterio que las tareas internas: lo que el cliente no debe ver
+   no está en ningún sitio que pueda leer, ni por la aplicación ni pidiéndolo a SharePoint. */
+const PMO_ADJ_MAX=25*1024*1024;
+/* Ejecutables y scripts no: un tablero compartido con el cliente no es un sitio para repartirlos. */
+const PMO_ADJ_VETADAS=['exe','bat','cmd','com','msi','js','vbs','vbe','ps1','scr','jar','sh','dll','hta','lnk','reg','cpl','msp'];
+const pPmoAdj=(c,tid)=>P_PMO+'/'+sanitizeName(c||'_sin_cliente')+'/adjuntos/'+sanitizeName(tid);
+const pPmoAdjCli=(c,tid)=>pCli(c)+D_PMO+'/adjuntos/'+sanitizeName(tid);
+function pmoAdjValidar(file){
+  const n=String(file&&file.name||''), ext=(n.split('.').pop()||'').toLowerCase();
+  if(!n) return 'El archivo no tiene nombre.';
+  if(n.indexOf('.')===-1||PMO_ADJ_VETADAS.indexOf(ext)!==-1) return '«'+n+'»: ese tipo de archivo no se permite (ejecutables y scripts).';
+  if(!(file.size>0)) return '«'+n+'» está vacío.';
+  if(file.size>PMO_ADJ_MAX) return '«'+n+'» pesa '+pesoLegible(file.size)+'; el máximo es '+pesoLegible(PMO_ADJ_MAX)+'.';
+  return '';
+}
+async function gBajarBytes(h,path){
+  const m=await gGet(h,path);
+  if(!m||!m['@microsoft.graph.downloadUrl']) throw new Error('No se encontró el archivo «'+String(path).split('/').pop()+'».');
+  const r=await fetch(m['@microsoft.graph.downloadUrl']);
+  if(!r.ok) throw new Error('No se pudo descargar «'+String(path).split('/').pop()+'» ('+r.status+').');
+  return new Uint8Array(await r.arrayBuffer());
+}
+async function pmoSubirAdjunto(id,file,visible){
+  if(!pmoPuedeEscribir()) throw new Error('Tu perfil es de solo lectura.');
+  const malo=pmoAdjValidar(file); if(malo) throw new Error(malo);
+  const cli=S.cliente, d0=pmoEstado().datos, t0=d0&&d0.tareas.find(x=>x.id===id);
+  if(!t0) throw new Error('La tarea '+id+' ya no existe.');
+  const vis=!!visible&&t0.visibleCliente;          // una tarea interna no tiene archivos visibles
+  const y=pmoYo(), ahora=new Date().toISOString();
+  const archivo=Date.now().toString(36)+'_'+sanitizeName(file.name);
+  const h=await H();
+  const ruta=pPmoAdj(cli,id)+'/'+archivo, rutaCli=pPmoAdjCli(cli,id)+'/'+archivo;
+  await gUpload(h,ruta,file);
+  if(vis){ try{ await gUpload(h,rutaCli,file); }catch(e){ try{ await gDelete(h,ruta); }catch(x){} throw e; } }
+  let ef;
+  try{
+    ef=await pmoMutar(d=>{
+      const t=pmoBuscar(d,id);
+      const a={id:'A'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36),nombre:file.name,archivo:archivo,
+        tam:file.size,tipo:file.type||'',visibleCliente:vis&&t.visibleCliente,subido:{por:y.mail,nombre:y.nombre,cuando:ahora}};
+      t.adjuntos=t.adjuntos||[]; t.adjuntos.push(a); t.actualizado=ahora;
+      pmoHist(t,'ADJUNTO','Archivo agregado: '+file.name+' ('+pesoLegible(file.size)+')'+(a.visibleCliente?' · visible para el cliente':' · interno'));
+      return {tipo:'ADJUNTO',tarea:pmoCopia(t),detalle:file.name,adjunto:a};
+    });
+  }catch(e){
+    /* Si el tablero no se pudo guardar, el archivo no se queda huérfano en SharePoint. */
+    try{ await gDelete(h,ruta); }catch(x){} if(vis){ try{ await gDelete(h,rutaCli); }catch(x){} }
+    throw e;
+  }
+  logEvent('PMO_ADJUNTO',cli+' · '+id+' · '+file.name+' · '+pesoLegible(file.size)+(ef.adjunto.visibleCliente?' · visible':' · interno'));
+  return ef.adjunto;
+}
+async function pmoQuitarAdjunto(id,adjId){
+  if(!pmoPuedeEscribir()) throw new Error('Tu perfil es de solo lectura.');
+  const cli=S.cliente; let quitado=null;
+  await pmoMutar(d=>{
+    const t=pmoBuscar(d,id), i=(t.adjuntos||[]).findIndex(a=>a.id===adjId);
+    if(i<0) return false;
+    quitado=t.adjuntos.splice(i,1)[0]; t.actualizado=new Date().toISOString();
+    pmoHist(t,'ADJUNTO','Archivo quitado: '+quitado.nombre);
+    return {tipo:'ADJUNTO',tarea:pmoCopia(t),detalle:'quitado '+quitado.nombre};
+  });
+  if(!quitado) return false;
+  const h=await H();
+  try{ await gDelete(h,pPmoAdj(cli,id)+'/'+quitado.archivo); }catch(e){ diagFallo('proyectos: borrar adjunto',e.message); }
+  try{ await gDelete(h,pPmoAdjCli(cli,id)+'/'+quitado.archivo); }catch(e){}
+  logEvent('PMO_ADJUNTO_QUITADO',cli+' · '+id+' · '+quitado.nombre);
+  return true;
+}
+/* Cambiar después si el cliente ve un archivo: se copia a su carpeta o se retira de ella. */
+async function pmoVisibilidadAdjunto(id,adjId,visible){
+  if(!pmoPuedeEscribir()) throw new Error('Tu perfil es de solo lectura.');
+  const cli=S.cliente, d0=pmoEstado().datos, t0=d0&&d0.tareas.find(x=>x.id===id);
+  const a0=t0&&(t0.adjuntos||[]).find(a=>a.id===adjId);
+  if(!a0) throw new Error('El archivo ya no existe.');
+  if(visible&&!t0.visibleCliente) throw new Error('La tarea es interna: sus archivos no pueden ser visibles para el cliente.');
+  const h=await H(), rutaCli=pPmoAdjCli(cli,id)+'/'+a0.archivo;
+  if(visible){
+    const bytes=await gBajarBytes(h,pPmoAdj(cli,id)+'/'+a0.archivo);
+    await gUpload(h,rutaCli,new Blob([bytes],{type:a0.tipo||'application/octet-stream'}));
+  }
+  await pmoMutar(d=>{
+    const t=pmoBuscar(d,id), a=(t.adjuntos||[]).find(x=>x.id===adjId); if(!a||a.visibleCliente===!!visible) return false;
+    a.visibleCliente=!!visible; t.actualizado=new Date().toISOString();
+    pmoHist(t,'ADJUNTO','Archivo '+a.nombre+(visible?' ahora visible para el cliente':' ahora solo interno'));
+    return {tipo:'ADJUNTO',tarea:pmoCopia(t),detalle:a.nombre};
+  });
+  if(!visible){ try{ await gDelete(h,rutaCli); }catch(e){} }
+  logEvent('PMO_ADJUNTO_VISIBILIDAD',cli+' · '+id+' · '+a0.nombre+' · '+(visible?'visible':'interno'));
+}
+/* Sipnology lee de la carpeta interna; el cliente, de su copia. */
+function pmoRutaAdjunto(tid,a){ return (pmoVeInternas()? pPmoAdj(S.cliente,tid) : pPmoAdjCli(S.cliente,tid))+'/'+a.archivo; }
+async function pmoBajarAdjunto(tid,adjId){
+  const d=pmoEstado().datos, t=d&&d.tareas.find(x=>x.id===tid), a=t&&(t.adjuntos||[]).find(x=>x.id===adjId);
+  if(!a) throw new Error('El archivo ya no existe.');
+  if(!pmoVeInternas()&&!a.visibleCliente) throw new Error('Ese archivo no está disponible.');
+  const bytes=await gBajarBytes(await H(),pmoRutaAdjunto(tid,a));
+  bajar(new Blob([bytes],{type:a.tipo||'application/octet-stream'}),a.nombre);
+  logEvent('PMO_ADJUNTO_DESCARGADO',S.cliente+' · '+tid+' · '+a.nombre);
+}
+function pmoAdjuntosVisibles(t){ return (t.adjuntos||[]).filter(a=>pmoVeInternas()||a.visibleCliente); }
+
+/* ---- ZIP sin librerías ----
+   Formato ZIP «almacenado» (sin comprimir): las fotos, PDF y documentos de Office ya vienen
+   comprimidos, así que comprimir otra vez apenas ahorra y cuesta tiempo. Nombres en UTF-8
+   para que «Revisión» y «Año» lleguen tal cual. */
+const _CRC_T=(()=>{ const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c= (c&1)? (0xEDB88320^(c>>>1)) : (c>>>1); t[n]=c>>>0; }
+  return t; })();
+function crc32(u8){ let c=0xFFFFFFFF; for(let i=0;i<u8.length;i++) c=_CRC_T[(c^u8[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+function zipCrear(entradas,fecha){
+  const enc=new TextEncoder(), f=fecha||new Date(), partes=[], central=[];
+  const dosT=((f.getHours()<<11)|(f.getMinutes()<<5)|Math.floor(f.getSeconds()/2))&0xFFFF;
+  const dosD=(((f.getFullYear()-1980)<<9)|((f.getMonth()+1)<<5)|f.getDate())&0xFFFF;
+  let off=0;
+  entradas.forEach(e=>{
+    const nom=enc.encode(e.nombre), dat=e.datos, crc=crc32(dat);
+    const lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true); lh.setUint16(8,0,true);
+    lh.setUint16(10,dosT,true); lh.setUint16(12,dosD,true); lh.setUint32(14,crc,true);
+    lh.setUint32(18,dat.length,true); lh.setUint32(22,dat.length,true); lh.setUint16(26,nom.length,true); lh.setUint16(28,0,true);
+    partes.push(new Uint8Array(lh.buffer),nom,dat);
+    const ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true); ch.setUint16(10,0,true);
+    ch.setUint16(12,dosT,true); ch.setUint16(14,dosD,true); ch.setUint32(16,crc,true);
+    ch.setUint32(20,dat.length,true); ch.setUint32(24,dat.length,true); ch.setUint16(28,nom.length,true);
+    ch.setUint32(42,off,true);
+    central.push(new Uint8Array(ch.buffer),nom);
+    off+=30+nom.length+dat.length;
+  });
+  const tamC=central.reduce((a,x)=>a+x.length,0);
+  const fin=new DataView(new ArrayBuffer(22));
+  fin.setUint32(0,0x06054b50,true); fin.setUint16(8,entradas.length,true); fin.setUint16(10,entradas.length,true);
+  fin.setUint32(12,tamC,true); fin.setUint32(16,off,true);
+  const todo=partes.concat(central,[new Uint8Array(fin.buffer)]);
+  const out=new Uint8Array(todo.reduce((a,x)=>a+x.length,0)); let p=0;
+  todo.forEach(x=>{ out.set(x,p); p+=x.length; });
+  return out;
+}
+function nombreEnZip(txt,max){ return String(txt||'').replace(/[\\\/:*?"<>|\u0000-\u001f]+/g,' ').replace(/\s+/g,' ').trim().slice(0,max||80)||'archivo'; }
+/* Exporta lo que se ve (con el proyecto elegido en el filtro): el PDF y el Excel del tablero
+   y una carpeta por tarjeta con sus archivos. El cliente solo recibe los archivos visibles. */
+async function pmoExportZip(btn){
+  if(!S.cliente) return;
+  const ts=pmoTareasExport();
+  if(!ts.length){ toast('No hay tareas en la vista actual.','warn'); return; }
+  const conArch=ts.filter(t=>pmoAdjuntosVisibles(t).length);
+  const peso=conArch.reduce((a,t)=>a+pmoAdjuntosVisibles(t).reduce((b,x)=>b+(+x.tam||0),0),0);
+  if(peso>150*1048576&&!confirm('Los archivos de esta vista suman '+pesoLegible(peso)+'. El .zip tardará y puede ser '+
+      'demasiado grande para mandarlo por correo. Filtra por proyecto para reducirlo.\n\n¿Continuar de todos modos?')) return;
+  busy(btn,true);
+  try{
+    const d=pmoEstado().datos||pmoVacio(), f=pmoEstado().filtro;
+    const proy=f.proyecto? d.proyectos.find(p=>p.id===f.proyecto) : null;
+    const base=nombreEnZip((proy?proy.nombre:'Tablero')+' - '+nombreCliente()+' - '+todayISO(),120);
+    const entradas=[];
+    const pdf=await pmoExportPDF(null,true);
+    if(pdf&&pdf.blob) entradas.push({nombre:base+'/Tablero.pdf',datos:new Uint8Array(await pdf.blob.arrayBuffer())});
+    const xls=await pmoExportExcel(null,true);
+    if(xls&&xls.blob) entradas.push({nombre:base+'/Tareas.xlsx',datos:new Uint8Array(await xls.blob.arrayBuffer())});
+    const h=await H(), fallos=[];
+    let n=0;
+    for(const t of conArch){
+      const carpeta=base+'/Archivos/'+nombreEnZip(t.id+' - '+t.titulo,70);
+      const usados={};
+      for(const a of pmoAdjuntosVisibles(t)){
+        try{
+          const bytes=await gBajarBytes(h,pmoRutaAdjunto(t.id,a));
+          let nom=nombreEnZip(a.nombre,90);
+          if(usados[nom]){ const i=nom.lastIndexOf('.'); nom=(i>0?nom.slice(0,i):nom)+' ('+(++usados[nom])+')'+(i>0?nom.slice(i):''); } else usados[nom]=1;
+          entradas.push({nombre:carpeta+'/'+nom,datos:bytes}); n++;
+        }catch(e){ fallos.push(t.id+' · '+a.nombre); }
+      }
+    }
+    const zip=zipCrear(entradas);
+    bajar(new Blob([zip],{type:'application/zip'}),base+'.zip');
+    toast('.zip del '+(proy?'proyecto «'+proy.nombre+'»':'tablero')+' · '+ts.length+' tarea(s), '+n+' archivo(s) · '+pesoLegible(zip.length)+
+      (fallos.length?' · '+fallos.length+' archivo(s) no se pudieron incluir':''), fallos.length?'warn':null, 9000);
+    logEvent('EXPORT_PMO_ZIP',S.cliente+' · '+(proy?proy.nombre:'todo el tablero')+' · '+ts.length+' tarea(s) · '+n+' archivo(s) · '+
+      pesoLegible(zip.length)+(fallos.length?' · faltaron: '+fallos.join(', ').slice(0,200):''));
+    return {entradas:entradas.map(e=>e.nombre),bytes:zip.length,fallos:fallos};
+  }catch(e){ toast('No se pudo generar el .zip: '+e.message,'err',9000); }
+  finally{ busy(btn,false); }
+}
+function pmoPintarAdjuntos(t,ro){
+  const lista=pmoAdjuntosVisibles(t);
+  return '<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Archivos · '+lista.length+'</label>'+
+    (lista.length? '<div class="pm-linea" style="margin-top:6px">'+lista.map(a=>
+      '<div class="it" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+        '<span style="flex:1;min-width:180px">📎 <b>'+esc(a.nombre)+'</b> <span class="muted" style="font-size:12px">· '+
+          esc(pesoLegible(+a.tam||0))+' · '+esc(fechaISOHumana((a.subido||{}).cuando))+' · '+esc((a.subido||{}).nombre||'')+'</span>'+
+          (pmoVeInternas()? (a.visibleCliente?' <b style="color:#5eead4;font-size:12px">visible para el cliente</b>':' <b style="color:#fcd9a0;font-size:12px">interno</b>') : '')+'</span>'+
+        '<button class="btn sec" data-pmadj-bajar="'+esc(a.id)+'" style="padding:3px 10px">Descargar</button>'+
+        (ro?'':(t.visibleCliente? '<button class="btn sec" data-pmadj-vis="'+esc(a.id)+'" data-v="'+(a.visibleCliente?'0':'1')+'" style="padding:3px 10px">'+
+            (a.visibleCliente?'Ocultar al cliente':'Hacer visible')+'</button>' : '')+
+          '<button class="btn sec" data-pmadj-quitar="'+esc(a.id)+'" style="padding:3px 10px">Quitar</button>')+
+      '</div>').join('')+'</div>'
+      : '<div class="muted" style="font-size:12.5px">Sin archivos'+(ro?' disponibles':'')+'.</div>')+
+    (ro?'':'<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">'+
+      '<label class="btn sec" style="cursor:pointer">📎 Adjuntar archivo(s)<input type="file" id="pmAdjFile" multiple class="hide"></label>'+
+      '<label class="pm-chk"><input type="checkbox" id="pmAdjVis"'+(t.visibleCliente?'':' disabled')+'> Visible para el cliente'+
+        (t.visibleCliente?'':' <span class="muted" style="font-size:12px">(no disponible: la tarea es interna)</span>')+'</label>'+
+      '<span class="muted" style="font-size:12px">Imágenes, PDF, Word, Excel… hasta '+pesoLegible(PMO_ADJ_MAX)+' cada uno.</span></div>');
+}
+function pmoEnlazarAdjuntos(t){
+  $$('#pmTCuerpo [data-pmadj-bajar]').forEach(b=>b.onclick=async function(){ busy(this,true);
+    try{ await pmoBajarAdjunto(t.id,b.dataset.pmadjBajar); }catch(e){ toast(e.message,'err',8000); } finally{ busy(this,false); } });
+  $$('#pmTCuerpo [data-pmadj-vis]').forEach(b=>b.onclick=async function(){ busy(this,true);
+    try{ await pmoVisibilidadAdjunto(t.id,b.dataset.pmadjVis,b.dataset.v==='1'); pmoPintar(); pmoAbrirTarea(t.id); }
+    catch(e){ toast(e.message,'err',8000); busy(this,false); } });
+  $$('#pmTCuerpo [data-pmadj-quitar]').forEach(b=>b.onclick=async function(){
+    const a=(t.adjuntos||[]).find(x=>x.id===b.dataset.pmadjQuitar);
+    if(!a||!confirm('¿Quitar «'+a.nombre+'» de '+t.id+'? Se borra de SharePoint y no se puede deshacer.')) return;
+    busy(this,true);
+    try{ await pmoQuitarAdjunto(t.id,a.id); pmoPintar(); pmoAbrirTarea(t.id); toast('Archivo quitado'); }
+    catch(e){ toast(e.message,'err',8000); busy(this,false); } });
+  const inp=$('#pmAdjFile');
+  if(inp) inp.onchange=async()=>{
+    const files=Array.prototype.slice.call(inp.files||[]); inp.value=''; if(!files.length) return;
+    const vis=$('#pmAdjVis')&&$('#pmAdjVis').checked;
+    let ok=0; const malos=[];
+    for(const f of files){
+      try{ toast('Subiendo '+f.name+'…',null,4000); await pmoSubirAdjunto(t.id,f,vis); ok++; }
+      catch(e){ malos.push(e.message); }
+    }
+    if(ok) toast(ok+' archivo(s) adjuntados a '+t.id+(vis?' · visibles para el cliente':' · internos'));
+    if(malos.length) toast(malos.join(' · '),'err',12000);
+    pmoPintar(); pmoAbrirTarea(t.id);
+  };
+}
+
+/* ---------------------- PROYECTOS: EDITAR PROYECTOS, ELIMINAR Y PAPELERA (r137) ----------------------
+   Reglas acordadas con Fernando:
+   · Editar el contenido de una tarjeta: cualquier persona de Sipnology (como hasta ahora).
+   · Renombrar / recolorear un proyecto y ELIMINAR proyectos o tarjetas: solo administradores
+     y propietarios.
+   · Borrar un proyecto se lleva sus tarjetas y sus archivos.
+   · Nada se borra al instante: va a una PAPELERA de 30 días, de donde un administrador lo
+     restaura. Mientras está en la papelera no aparece en el tablero, ni en la copia del
+     cliente, ni en sus archivos; pasado el plazo se elimina de verdad, archivos incluidos.
+   · Los folios nunca se reutilizan: una tarjeta restaurada vuelve con el suyo. */
+const PMO_PAPELERA_DIAS=30;
+function pmoEsAdmin(){ return pmoPuedeEscribir() && isAdmin(); }
+function pmoExigirAdmin(){ if(!pmoEsAdmin()) throw new Error('Solo un administrador puede hacerlo.'); }
+async function pmoEditarProyecto(id,datos){
+  pmoExigirAdmin();
+  const nombre=String((datos&&datos.nombre)||'').trim();
+  if(!nombre) throw new Error('El nombre del proyecto es obligatorio.');
+  const ef=await pmoMutar(d=>{
+    const p=d.proyectos.find(x=>x.id===id); if(!p) throw new Error('El proyecto ya no existe.');
+    if(d.proyectos.some(x=>x.id!==id&&x.nombre.toLowerCase()===nombre.toLowerCase())) throw new Error('Ya existe otro proyecto con ese nombre.');
+    const cambios=[];
+    if(p.nombre!==nombre){ cambios.push('Nombre: '+p.nombre+' → '+nombre); p.nombre=nombre; }
+    if(datos.color&&p.color!==datos.color){ cambios.push('Color'); p.color=datos.color; }
+    if(!cambios.length) return false;
+    return {proyecto:Object.assign({},p),cambios:cambios};
+  });
+  if(!ef) return [];
+  logEvent('PMO_PROYECTO_EDITADO',S.cliente+' · '+ef.cambios.join(' · '));
+  return ef.cambios;
+}
+/* Quita del cliente las copias de los archivos visibles de unas tarjetas. */
+async function pmoRetirarCopiasCliente(tareas){
+  const h=await H();
+  for(const t of tareas){
+    for(const a of (t.adjuntos||[]).filter(x=>x.visibleCliente)){
+      try{ await gDelete(h,pPmoAdjCli(S.cliente,t.id)+'/'+a.archivo); }catch(e){ diagFallo('proyectos: retirar copia del cliente',e.message); }
+    }
+  }
+}
+/* Vuelve a copiar al cliente los archivos visibles de unas tarjetas restauradas. */
+async function pmoReponerCopiasCliente(tareas){
+  const h=await H(); let fallos=0;
+  for(const t of tareas){
+    if(!t.visibleCliente) continue;
+    for(const a of (t.adjuntos||[]).filter(x=>x.visibleCliente)){
+      try{
+        const bytes=await gBajarBytes(h,pPmoAdj(S.cliente,t.id)+'/'+a.archivo);
+        await gUpload(h,pPmoAdjCli(S.cliente,t.id)+'/'+a.archivo,new Blob([bytes],{type:a.tipo||'application/octet-stream'}));
+      }catch(e){ fallos++; diagFallo('proyectos: reponer copia del cliente',e.message); }
+    }
+  }
+  return fallos;
+}
+async function pmoEliminarTarea(id){
+  pmoExigirAdmin();
+  const y=pmoYo(), ahora=new Date().toISOString();
+  const ef=await pmoMutar(d=>{
+    const i=d.tareas.findIndex(x=>x.id===id); if(i<0) throw new Error('La tarea '+id+' ya no existe.');
+    const t=d.tareas.splice(i,1)[0];
+    const p=d.proyectos.find(x=>x.id===t.proyectoId);
+    pmoHist(t,'ELIMINADA','Enviada a la papelera');
+    d.papelera.push({id:'X'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36),tipo:'tarea',
+      nombre:t.id+' · '+t.titulo,proyectoNombre:p?p.nombre:'',cuando:ahora,por:y.mail,porNombre:y.nombre,tareas:[t]});
+    return {tipo:'ELIMINADA',tarea:pmoCopia(t),detalle:'Enviada a la papelera'};
+  });
+  await pmoRetirarCopiasCliente([ef.tarea]);
+  logEvent('PMO_TAREA_ELIMINADA',S.cliente+' · '+id+' · '+ef.tarea.titulo+' · a la papelera ('+PMO_PAPELERA_DIAS+' días)');
+  pmoLimpiarPapelera().catch(e=>diagFallo('proyectos: limpiar papelera',e.message));
+  return ef.tarea;
+}
+async function pmoEliminarProyecto(id,confirmacion){
+  pmoExigirAdmin();
+  const d0=pmoEstado().datos, p0=d0&&d0.proyectos.find(x=>x.id===id);
+  if(!p0) throw new Error('El proyecto ya no existe.');
+  if(String(confirmacion||'').trim()!==p0.nombre) throw new Error('Para eliminarlo escribe exactamente el nombre del proyecto.');
+  const y=pmoYo(), ahora=new Date().toISOString();
+  const ef=await pmoMutar(d=>{
+    const i=d.proyectos.findIndex(x=>x.id===id); if(i<0) throw new Error('El proyecto ya no existe.');
+    const p=d.proyectos.splice(i,1)[0];
+    const suyas=d.tareas.filter(t=>t.proyectoId===id);
+    d.tareas=d.tareas.filter(t=>t.proyectoId!==id);
+    suyas.forEach(t=>pmoHist(t,'ELIMINADA','Enviada a la papelera con su proyecto «'+p.nombre+'»'));
+    d.papelera.push({id:'X'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36),tipo:'proyecto',
+      nombre:p.nombre,proyecto:p,cuando:ahora,por:y.mail,porNombre:y.nombre,tareas:suyas});
+    return {proyecto:p,tareas:suyas.map(pmoCopia)};
+  });
+  await pmoRetirarCopiasCliente(ef.tareas);
+  if(pmoEstado().filtro.proyecto===id) pmoEstado().filtro.proyecto='';
+  logEvent('PMO_PROYECTO_ELIMINADO',S.cliente+' · '+ef.proyecto.nombre+' · '+ef.tareas.length+' tarjeta(s) · a la papelera ('+PMO_PAPELERA_DIAS+' días)');
+  pmoLimpiarPapelera().catch(e=>diagFallo('proyectos: limpiar papelera',e.message));
+  return ef;
+}
+async function pmoRestaurar(entradaId){
+  pmoExigirAdmin();
+  const y=pmoYo(), ahora=new Date().toISOString();
+  const ef=await pmoMutar(d=>{
+    const i=d.papelera.findIndex(x=>x.id===entradaId); if(i<0) throw new Error('Eso ya no está en la papelera.');
+    const e=d.papelera.splice(i,1)[0];
+    let proyectoId='';
+    if(e.tipo==='proyecto'&&e.proyecto){
+      const p=Object.assign({},e.proyecto);
+      /* Si mientras tanto se creó otro con el mismo nombre, el restaurado se distingue. */
+      if(d.proyectos.some(x=>x.nombre.toLowerCase()===p.nombre.toLowerCase())) p.nombre=p.nombre+' (restaurado)';
+      if(d.proyectos.some(x=>x.id===p.id)) p.id='P'+Date.now().toString(36);
+      d.proyectos.push(p); proyectoId=p.id;
+    }
+    const vuelven=(e.tareas||[]).map(t=>{
+      const c=JSON.parse(JSON.stringify(t));
+      if(e.tipo==='proyecto') c.proyectoId=proyectoId;
+      else if(!d.proyectos.some(p=>p.id===c.proyectoId)) c.proyectoId='';        // su proyecto ya no existe
+      c.historial.push({cuando:ahora,usuario:y.mail,nombre:y.nombre,accion:'RESTAURADA',detalle:'Recuperada de la papelera'});
+      return c;
+    }).filter(c=>!d.tareas.some(x=>x.id===c.id));
+    d.tareas=d.tareas.concat(vuelven);
+    return {entrada:{tipo:e.tipo,nombre:e.nombre},tareas:vuelven.map(pmoCopia)};
+  });
+  const fallos=await pmoReponerCopiasCliente(ef.tareas);
+  logEvent('PMO_RESTAURADO',S.cliente+' · '+(ef.entrada.tipo==='proyecto'?'proyecto ':'tarjeta ')+ef.entrada.nombre+' · '+ef.tareas.length+' tarjeta(s)'+
+    (fallos?' · '+fallos+' archivo(s) no se pudieron volver a compartir':''));
+  return ef;
+}
+/* Lo que lleva más de 30 días en la papelera se elimina de verdad, con sus archivos. Lo
+   hace cualquier administrador al borrar, restaurar o abrir la papelera: no depende de que
+   haya nadie conectado a una hora concreta. */
+async function pmoLimpiarPapelera(){
+  if(!pmoEsAdmin()) return 0;
+  const limite=Date.now()-PMO_PAPELERA_DIAS*PM_DIA;
+  let viejas=[];
+  const ef=await pmoMutar(d=>{
+    viejas=d.papelera.filter(e=>new Date(e.cuando).getTime()<limite);
+    if(!viejas.length) return false;
+    d.papelera=d.papelera.filter(e=>new Date(e.cuando).getTime()>=limite);
+    return {purgadas:viejas.length};
+  });
+  if(!ef) return 0;
+  const h=await H();
+  for(const e of viejas) for(const t of (e.tareas||[])){
+    try{ await gDelete(h,pPmoAdj(S.cliente,t.id)); }catch(x){}
+    try{ await gDelete(h,pPmoAdjCli(S.cliente,t.id)); }catch(x){}
+  }
+  logEvent('PMO_PAPELERA_VACIADA',S.cliente+' · '+viejas.length+' elemento(s) con más de '+PMO_PAPELERA_DIAS+' días');
+  return viejas.length;
+}
+function pmoDiasRestantes(e){ return Math.max(0,PMO_PAPELERA_DIAS-Math.floor((Date.now()-new Date(e.cuando).getTime())/PM_DIA)); }
+/* Ventana «⚙ Proyectos»: editar nombre y color, eliminar, y la papelera. */
+function pmoAbrirGestion(){
+  const d=pmoEstado().datos||pmoVacio(), adm=pmoEsAdmin();
+  const cuenta=id=>d.tareas.filter(t=>t.proyectoId===id).length;
+  $('#pmGesCuerpo').innerHTML=
+    (adm? '' : '<div class="pm-aviso">Solo un <b>administrador</b> renombra o elimina proyectos. Puedes consultarlos.</div>')+
+    '<label style="font-size:11.5px;color:var(--muted);font-weight:600">Proyectos de '+esc(nombreCliente())+'</label>'+
+    (d.proyectos.length? d.proyectos.map(p=>
+      '<div class="row" style="gap:8px;margin-top:8px;align-items:center" data-pmg="'+esc(p.id)+'">'+
+        '<input type="color" value="'+esc(p.color||'#22c55e')+'" data-pmg-color style="width:46px;height:34px;padding:2px"'+(adm?'':' disabled')+'>'+
+        '<input value="'+esc(p.nombre)+'" data-pmg-nombre style="flex:1"'+(adm?'':' readonly')+'>'+
+        '<span class="muted" style="font-size:12px;white-space:nowrap">'+cuenta(p.id)+' tarjeta(s)</span>'+
+        (adm? '<button class="btn sec" data-pmg-guardar style="padding:5px 10px">Guardar</button>'+
+              '<button class="btn dan" data-pmg-borrar style="padding:5px 10px">Eliminar</button>' : '')+
+      '</div>').join('') : '<div class="muted" style="font-size:12.5px;margin-top:6px">Sin proyectos.</div>')+
+    (adm? '<hr class="pm-sep"><label style="font-size:11.5px;color:var(--muted);font-weight:600">Papelera · se conserva '+PMO_PAPELERA_DIAS+' días</label>'+
+      (d.papelera.length? d.papelera.slice().reverse().map(e=>
+        '<div class="row" style="gap:8px;margin-top:8px;align-items:center">'+
+          '<span style="flex:1">'+(e.tipo==='proyecto'?'📁 Proyecto ':'🗂 ')+'<b>'+esc(e.nombre)+'</b>'+
+            (e.tipo==='proyecto'?' <span class="muted">· '+(e.tareas||[]).length+' tarjeta(s)</span>':(e.proyectoNombre?' <span class="muted">· '+esc(e.proyectoNombre)+'</span>':''))+
+            '<div class="muted" style="font-size:12px">Eliminado el '+esc(fechaISOHumana(e.cuando))+' por '+esc(e.porNombre||e.por||'')+
+            ' · quedan '+pmoDiasRestantes(e)+' día(s)</div></span>'+
+          '<button class="btn sec" data-pmg-restaurar="'+esc(e.id)+'" style="padding:5px 10px">Restaurar</button></div>').join('')
+        : '<div class="muted" style="font-size:12.5px;margin-top:6px">La papelera está vacía.</div>') : '');
+  $$('#pmGesCuerpo [data-pmg-guardar]').forEach(b=>b.onclick=async function(){
+    const fila=b.closest('[data-pmg]'); busy(this,true);
+    try{ const c=await pmoEditarProyecto(fila.dataset.pmg,{nombre:fila.querySelector('[data-pmg-nombre]').value,color:fila.querySelector('[data-pmg-color]').value});
+      toast(c.length?'Proyecto actualizado':'No había cambios'); pmoPintar(); pmoAbrirGestion(); }
+    catch(e){ toast(e.message,'err',8000); busy(this,false); } });
+  $$('#pmGesCuerpo [data-pmg-borrar]').forEach(b=>b.onclick=async function(){
+    const fila=b.closest('[data-pmg]'), p=d.proyectos.find(x=>x.id===fila.dataset.pmg); if(!p) return;
+    const conf=prompt('Eliminar el proyecto «'+p.nombre+'» y sus '+cuenta(p.id)+' tarjeta(s), con sus archivos.\n\n'+
+      'Irá a la papelera: un administrador puede restaurarlo durante '+PMO_PAPELERA_DIAS+' días. Mientras tanto el cliente ya no lo ve.\n\n'+
+      'Escribe exactamente el nombre del proyecto para confirmar:');
+    if(conf===null) return;
+    busy(this,true);
+    try{ const r=await pmoEliminarProyecto(p.id,conf); toast('Proyecto «'+r.proyecto.nombre+'» enviado a la papelera ('+r.tareas.length+' tarjeta(s))');
+      pmoPintar(); pmoAbrirGestion(); }
+    catch(e){ toast(e.message,'err',8000); busy(this,false); } });
+  $$('#pmGesCuerpo [data-pmg-restaurar]').forEach(b=>b.onclick=async function(){ busy(this,true);
+    try{ const r=await pmoRestaurar(b.dataset.pmgRestaurar); toast('Restaurado: '+r.entrada.nombre+' · '+r.tareas.length+' tarjeta(s)');
+      pmoPintar(); pmoAbrirGestion(); }
+    catch(e){ toast(e.message,'err',8000); busy(this,false); } });
+  $('#pmMGestion').classList.add('on');
+  if(adm) pmoLimpiarPapelera().then(n=>{ if(n) pmoAbrirGestion(); }).catch(e=>diagFallo('proyectos: limpiar papelera',e.message));
 }
 
 /* ---------------------- AYUDA EN PANTALLA ----------------------
@@ -13638,7 +14252,13 @@ const AYUDA=[
     '<li>El <b>PDF</b> trae arriba un resumen (tareas abiertas, vencidas, bloqueadas y terminadas, y cuántas hay '+
     'de cada proyecto en cada columna) y debajo una imagen del tablero. Está hecho para ser ligero y poder '+
     'mandarse por correo.</li>'+
-    '<li>El <b>Excel</b> trae una fila por tarea y una hoja de resumen por proyecto.</li></ul>'},
+    '<li>El <b>Excel</b> trae una fila por tarea y una hoja de resumen por proyecto.</li>'+
+    '<li>El <b>.zip</b> junta el PDF, el Excel y los archivos de cada tarjeta, en una carpeta por tarjeta. '+
+    'Si eliges un proyecto en el filtro, sale solo ese proyecto con sus archivos.</li></ul>'},
+ {c:'Proyectos', n:'cliente', ir:'vPMO',
+  q:'¿Dónde veo los archivos de una tarea?',
+  a:'Abre la tarjeta: en <b>Archivos</b> están los documentos que Sipnology compartió contigo (fotos, PDF, '+
+    'Word, Excel…), cada uno con su botón <b>Descargar</b>. La tarjeta muestra 📎 y cuántos tiene.'},
  {c:'Proyectos', n:'operador', ir:'vPMO',
   q:'¿Cómo creo una tarea y la muevo por el tablero?',
   a:'En <b>Proyectos</b>, con <b>+ Nueva tarea</b>. Solo el título es obligatorio; conviene poner '+
@@ -13650,6 +14270,19 @@ const AYUDA=[
     '<li>Cualquier cuenta de Sipnology puede crear, mover y terminar tareas.</li></ul>'+
     '<div class="avi">Si dos personas mueven tarjetas a la vez no se pisan: cada cambio se aplica '+
     'sobre la versión más reciente del tablero.</div>'},
+ {c:'Proyectos', n:'operador', ir:'vPMO',
+  q:'¿Cómo adjunto archivos a una tarjeta?',
+  a:'Abre la tarjeta y, en <b>Archivos</b>, pulsa <b>📎 Adjuntar archivo(s)</b>. Se aceptan imágenes, PDF, Word, '+
+    'Excel y demás documentos de hasta 25 MB; ejecutables y scripts no.<ul>'+
+    '<li>Marca <b>Visible para el cliente</b> solo si el cliente debe verlo. Si no, el archivo es interno y no está '+
+    'en ningún sitio al que el cliente tenga acceso.</li>'+
+    '<li>Puedes cambiarlo después con <b>Hacer visible</b> / <b>Ocultar al cliente</b>, o quitarlo con <b>Quitar</b>.</li>'+
+    '<li>Si la tarea pasa a interna, sus archivos dejan de estar visibles para el cliente.</li></ul>'},
+ {c:'Proyectos', n:'operador', ir:'vPMO',
+  q:'¿Para qué es el campo Área?',
+  a:'Para anotar a qué área pertenece el responsable (Redes, Seguridad, Cliente…). Se escribe a mano y el '+
+    'sistema te sugiere las que ya se usan en el tablero, para no tener la misma área escrita de tres formas. '+
+    'Se ve en la tarjeta junto al nombre del responsable y sale en el Excel.'},
  {c:'Proyectos', n:'operador', ir:'vPMO',
   q:'¿Qué es una tarea interna y quién la ve?',
   a:'Una tarea con la casilla <b>«Visible para el cliente»</b> desmarcada. Sirve para lo que el '+
@@ -13679,12 +14312,23 @@ const AYUDA=[
   a:'En <b>Catálogos → Módulos Extra → Proyectos</b>, con el cliente elegido arriba. Descarga la '+
     '<b>plantilla</b>: trae filas de ejemplo de cada caso y una hoja de instrucciones. Borra el ejemplo, '+
     'llénala y cárgala; antes de escribir nada te enseña qué se crea, qué se actualiza y qué renglones no entran.<ul>'+
-    '<li>Una fila <b>sin folio</b> crea una tarea; una fila con el <b>folio</b> de una que ya existe (PMO-0007) la '+
-    'actualiza, cambiando solo las celdas que traigan algo. Nunca se borra nada.</li>'+
+    '<li>Elige el modo: <b>Acumular</b> solo crea tareas nuevas; <b>Sobrescribir</b> además actualiza las que ya '+
+    'existen. Una fila es de una tarea existente si trae su <b>folio</b> (PMO-0007) o, sin folio, si coincide con una '+
+    'tarea del mismo proyecto y con el mismo título. Así, cargar dos veces el mismo archivo no duplica nada. '+
+    'Nunca se borra nada.</li>'+
     '<li>Una tarea <b>Bloqueada</b> necesita el motivo y una <b>Terminada</b> su nota de cierre, igual que en el tablero.</li>'+
     '<li>La carga no manda correos y queda en la bitácora y en el historial de cada tarea.</li></ul>'+
     '<div class="avi"><b>Vaciar tablero</b>, en la misma pantalla, borra todos los proyectos y tareas del cliente. '+
     'Es solo para propietarios y pide escribir la confirmación.</div>'},
+ {c:'Proyectos', n:'admin', ir:'vPMO',
+  q:'¿Cómo renombro o elimino un proyecto o una tarjeta?',
+  a:'<b>Proyectos:</b> con <b>⚙ Proyectos</b> cambias el nombre y el color de cada uno, o lo eliminas (pide escribir su '+
+    'nombre para confirmar). Eliminar un proyecto se lleva sus tarjetas y sus archivos.<br>'+
+    '<b>Tarjetas:</b> ábrela y pulsa <b>🗑 Eliminar tarjeta</b>. El contenido de una tarjeta lo puede editar cualquier persona '+
+    'de Sipnology con <b>Guardar cambios</b>; eliminar es solo de administradores.'+
+    '<div class="avi">Nada se borra al instante: va a la <b>papelera</b> (en ⚙ Proyectos) y se puede <b>Restaurar</b> durante '+
+    '30 días, con su folio y sus archivos. Mientras está en la papelera el cliente no lo ve. Pasado el plazo se elimina de '+
+    'verdad. Todo queda en la bitácora.</div>'},
  {c:'Proyectos', n:'admin', ir:'vCatalogos',
   q:'¿Cómo activo Proyectos para un cliente?',
   a:'En <b>Catálogos → Administración → Clientes</b>, marcando la casilla <b>Proyectos</b> en la '+
@@ -13769,9 +14413,11 @@ window.SIP={S:S,esc:esc,
   accLeer:accLeer,accCambiarRol:accCambiarRol,accSincronizar:accSincronizar,accCambiarModo:accCambiarModo,
   accPersonas:accPersonas,accDiferencias:accDiferencias,accRevisar:accRevisar,accEntraManda:accEntraManda,
   accGuardarCache:accGuardarCache,rolDeLista:rolDeLista,scopesDeToken:scopesDeToken,renderAccesos:renderAccesos,
-  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,pmoAnalizarImport:pmoAnalizarImport,pmoAplicarImport:pmoAplicarImport,
+  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,bandaMarcaXlsx:bandaMarcaXlsx,cajaLogo:cajaLogo,formatoTabla:formatoTabla,cabeceraPdf:cabeceraPdf,pmoAnalizarImport:pmoAnalizarImport,pmoAplicarImport:pmoAplicarImport,
   PMO_PLANTILLA_COLS:PMO_PLANTILLA_COLS,PMO_EJEMPLO:PMO_EJEMPLO,PMO_INSTRUCCIONES:PMO_INSTRUCCIONES,pmoTareasExport:pmoTareasExport,
-  pmoResumenProyectos:pmoResumenProyectos,pmoFiltrosTexto:pmoFiltrosTexto,pmoFilasExport:pmoFilasExport,pmoLeerChecklist:pmoLeerChecklist,accQuitarDeLista:accQuitarDeLista,accActualizar:accActualizar,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
+  pmoResumenProyectos:pmoResumenProyectos,pmoFiltrosTexto:pmoFiltrosTexto,
+  zipCrear:zipCrear,crc32:crc32,pmoEditarProyecto:pmoEditarProyecto,pmoEliminarTarea:pmoEliminarTarea,pmoEliminarProyecto:pmoEliminarProyecto,
+  pmoRestaurar:pmoRestaurar,pmoLimpiarPapelera:pmoLimpiarPapelera,PMO_PAPELERA_DIAS:PMO_PAPELERA_DIAS,pPmoAdj:pPmoAdj,pPmoAdjCli:pPmoAdjCli,pmoAdjValidar:pmoAdjValidar,pmoFilasExport:pmoFilasExport,pmoLeerChecklist:pmoLeerChecklist,accQuitarDeLista:accQuitarDeLista,accActualizar:accActualizar,GRUPO_ADMINS:GRUPO_ADMINS,sanitizeHtml:sanitizeHtml,sanitizeName:sanitizeName,to24:to24,from24:from24,
   durHMS:durHMS,hmsToMs:hmsToMs,baseFolio:baseFolio,siguienteConsecutivo:siguienteConsecutivo,
   slaInfo:slaInfo,filtrar:filtrar,agrupar:agrupar,DIMENSIONES:DIMENSIONES,graphEncPath:graphEncPath,mttr:mttr,
   ORDENABLES:ORDENABLES,ordenarSeg:ordenarSeg,alternarOrden:alternarOrden,orden:()=>_segOrden,flechaOrden:flechaOrden,
