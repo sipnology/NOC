@@ -1301,7 +1301,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r138';
+const APP_VER = '2026-09-30 · r139';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -2395,6 +2395,17 @@ async function catalogoPush(){
     if(k==='accesos' && !esDuenoReal()){
       toast('Solo un propietario puede cambiar cómo se administran los accesos. Ese cambio no se guardó.','err',10000);
       S.cat.accesos=clon(S.catGlobal.accesos||{modo:'catalogo'});
+      return;
+    }
+    /* r139 · Solo un propietario da de alta (o de baja) administradores: un administrador
+       no puede nombrar a otros. Es el control interno de quién tiene ese privilegio. Aquí
+       también, no solo en la pantalla: el catálogo es la copia que se usa si Entra no responde. */
+    if(k==='admins' && (!esDuenoReal()||_simRol)){
+      /* Un Sistema/ sin lista todavía se compara con los valores de arranque: eso no es un alta. */
+      if(S.catGlobal.admins===undefined && JSON.stringify(S.cat.admins)===JSON.stringify(CAT_DEFAULT.admins)) return;
+      toast('Solo un propietario puede dar de alta o quitar administradores. Ese cambio no se guardó.','err',10000);
+      logEvent('ACCESO_DENEGADO','intento de cambiar la lista de administradores sin ser propietario');
+      S.cat.admins=clon(S.catGlobal.admins||CAT_DEFAULT.admins||[]);
       return;
     }
     if(k==='propietarios'){
@@ -5660,7 +5671,7 @@ function barraAdmin(t){
 /* Eliminación definitiva. Pensada para limpiar la carga de pruebas antes de producción:
    se lleva el expediente entero, incluidas sus evidencias, y no hay deshacer. */
 async function borrarTicket(t){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario.','err',10000); return; }
   const escrito=prompt('Esto elimina el ticket '+t.id+' y TODO su expediente en SharePoint:\n'+
     'ticket.json, evidencias y su carpeta. No se puede deshacer.\n\n'+
     'Escribe el folio para confirmar:');
@@ -5696,7 +5707,7 @@ function confirmarBorrado(que,n,detalle){
 /* Borra tickets agrupando por cliente: un solo reescrito de índice por cliente
    en vez de uno por ticket, que con 250 folios serían 250 escrituras a SharePoint. */
 async function borrarTicketsLote(lista,btn){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario.','err',10000); return; }
   if(!lista.length){ toast('No hay tickets seleccionados.','warn'); return; }
   if(!confirmarBorrado('ticket(s) con TODO su expediente en SharePoint',lista.length,
       'Se eliminan sus carpetas, evidencias y entradas del índice.')) return;
@@ -6976,6 +6987,12 @@ CAT_AREAS.forEach(a=>{
   if(a.modulos && !a.secciones)
     a.secciones=a.modulos.reduce((acc,m)=>acc.concat(m.secciones),[]);
 });
+/* r139 · «Accesos y roles» es solo de propietarios: los demás perfiles ni la ven en el menú
+   ni pueden abrirla. Con esDueno() (y no esDuenoReal()), un propietario que simula otro
+   perfil la ve desaparecer igual que la vería esa persona. */
+const SEC_SOLO_DUENO=['accesos'];
+function seccionVisible(k){ return SEC_SOLO_DUENO.indexOf(k)===-1 || esDueno(); }
+function seccionesVisibles(area){ return area.secciones.filter(s=>seccionVisible(s[0])); }
 function moduloDeSeccion(area,k){
   if(!area.modulos) return null;
   return area.modulos.find(m=>m.secciones.some(s=>s[0]===k))||null;
@@ -7669,7 +7686,7 @@ function renderSubtabs(area){
   /* Sin módulos intermedios, una sola tira con los apartados del área. */
   if(!area.modulos){
     if(nav2){ nav2.innerHTML=''; nav2.classList.add('hide'); }
-    nav.innerHTML=area.secciones.map(([k,titulo,desc])=>
+    nav.innerHTML=seccionesVisibles(area).map(([k,titulo,desc])=>
       '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
       ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
   }else{
@@ -7682,7 +7699,7 @@ function renderSubtabs(area){
       /* Un módulo con un solo apartado no necesita una tira para elegirlo. */
       const unico=mod.secciones.length<2;
       nav2.classList.toggle('hide',unico);
-      nav2.innerHTML=unico? '' : mod.secciones.map(([k,titulo,desc])=>
+      nav2.innerHTML=unico? '' : mod.secciones.filter(x=>seccionVisible(x[0])).map(([k,titulo,desc])=>
         '<button data-sec="'+esc(k)+'"'+(k===S._catSec?' class="on"':'')+
         ' title="'+esc(desc)+'">'+esc(titulo)+'</button>').join('');
     }
@@ -7703,7 +7720,8 @@ function renderCat(){
   const box=$('#catBody'), ro=!isAdmin();
   const area=CAT_AREAS.find(a=>a.id===$('#catSel').value)||CAT_AREAS[0];
   /* Al entrar a un área se abre su primer apartado: nunca una pantalla vacía. */
-  if(!S._catSec || !area.secciones.some(x=>x[0]===S._catSec)) S._catSec=area.secciones[0][0];
+  const visibles=seccionesVisibles(area);
+  if(!S._catSec || !visibles.some(x=>x[0]===S._catSec)) S._catSec=visibles[0][0];
   const k=S._catSec;
   const sec=seccionDe(k);
   /* Dentro de Catálogos, la pestaña no dice nada: lo que importa es el apartado. */
@@ -7733,7 +7751,7 @@ function renderCat(){
     renderTabla(k,ESQUEMAS[k],box,r); if(k==='equipos') barraEquipos(box,r); return; }
   /* Accesos va ANTES del dibujo genérico de listas: si una sección de roles cayera ahí, un
      administrador vería un campo editable y solo descubriría que no puede al guardar. */
-  if(k==='accesos') return renderAccesos(box);
+  if(k==='accesos') return esDueno()? renderAccesos(box) : void(box.innerHTML='');
   if(LISTAS[k]) return renderLista(k,LISTAS[k],box,ro);
   if(k==='diagnostico') return renderDiagnostico(box,ro);
   if(k==='alertas') return renderAlertas(box,ro);
@@ -8540,7 +8558,7 @@ function renderAccesos(box){
   const bs=$('#btnCatSave'); if(bs) bs.disabled=true;   // aquí cada cambio se aplica al momento
   /* Si todavía no se leyó Entra, se lee y se vuelve a pintar. Solo una vez: al volver,
      S.acc ya existe y no hay bucle. */
-  if(!S.acc) accLeer().then(()=>{ if(S._catSec==='accesos') renderAccesos(box); },
+  if(!S.acc) accLeer().then(()=>{ if(S._catSec==='accesos'&&esDueno()) renderAccesos(box); },
                           e=>diagFallo('accesos: lectura de Entra',e&&e.message));
   const a=S.acc||{estado:'pendiente'};
   const soyDueno=esDuenoReal()&&!_simRol;
@@ -8557,10 +8575,10 @@ function renderAccesos(box){
       'sube de nivel. Cambiar un rol aquí cambia su grupo en Microsoft al momento: no hay un segundo paso en SharePoint.'+
       '<table style="margin-top:10px;font-size:12.5px"><tbody>'+
       '<tr><td style="white-space:nowrap"><b>Propietario</b></td><td>Todo lo del administrador, y además borra tickets, '+
-        'restaura y borra respaldos, da de baja clientes, elimina datos en bloque y asigna roles. '+
+        'restaura y borra respaldos, da de baja clientes, elimina datos en bloque y asigna roles (es el único que da de alta administradores). '+
         '<span style="color:var(--muted)">Dueño del grupo de Microsoft 365 del sitio (control total).</span></td></tr>'+
       '<tr><td style="white-space:nowrap"><b>Administrador</b></td><td>Todo lo del operador, y además catálogos, usuarios '+
-        'cliente, bitácora, alertas y diagnóstico. <span style="color:var(--muted)">Integrante de «'+esc(GRUPO_ADMINS)+
+        'cliente, bitácora, alertas y diagnóstico. No puede dar de alta a otros administradores. <span style="color:var(--muted)">Integrante de «'+esc(GRUPO_ADMINS)+
         '» (edición en Sistema/).</span></td></tr>'+
       '<tr><td style="white-space:nowrap"><b>Operador</b></td><td>Tickets, CRQ, SIT, casos, RMA, inventario, proyectos y '+
         'reportes. <span style="color:var(--muted)">Cualquier cuenta de Sipnology; no se da de alta.</span></td></tr>'+
@@ -8625,7 +8643,7 @@ function renderAccesos(box){
                  'los grupos: desde entonces, dar o quitar un rol aquí o en el portal de Microsoft es lo mismo. ')+
               '<button class="btn" id="accModoEntra"'+(difs.length?' disabled':'')+'>Leer los roles desde los grupos de Microsoft</button>')+
       '</div>' : '')+
-    (!soyDueno? '<div class="note" style="margin-top:10px"><b>Solo un propietario asigna roles.</b> Puedes ver quién tiene cada uno.</div>':'');
+    (!soyDueno? '<div class="note" style="margin-top:10px"><b>Solo un propietario asigna roles</b>: un administrador no puede dar de alta a otros administradores. Puedes ver quién tiene cada uno.</div>':'');
 
   const rev=box.querySelector('#accRevision');
   if(rev&&soyDueno) accRevisar().then(items=>{
@@ -8960,7 +8978,7 @@ function renderMantenimiento(box){
   };
 }
 async function purgar(mod,cli,btn){
-  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario: los ves en Catálogos › Administración › Accesos y roles.','err',10000); return; }
+  if(!esDueno()){ toast('El borrado definitivo está reservado a los propietarios del sistema. Pídeselo a un propietario.','err',10000); return; }
   const frase='BORRAR '+mod.toUpperCase();
   const escrito=prompt('Vas a eliminar TODOS los '+mod+' de '+cli+'. No hay deshacer.\n\n'+
     'Escribe exactamente: '+frase);
@@ -14299,10 +14317,11 @@ const AYUDA=[
     'propietarios, y si te quitas el rol a ti mismo te lo pide confirmar, porque después tendría '+
     'que devolvértelo otro propietario.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
-  q:'¿Dónde veo quién es administrador o propietario?',
-  a:'En <b>Administración → Accesos y roles</b>. Ahí está cada persona con su rol y lo que puede hacer '+
-    'cada nivel. Todas las demás cuentas de Sipnology son operadores.'+
-    '<div class="avi">Solo un propietario cambia roles. Si necesitas uno, pídeselo a un propietario.</div>'},
+  q:'¿Quién da de alta administradores o cambia roles?',
+  a:'Solo los <b>propietarios</b>. La pantalla <b>Accesos y roles</b>, donde se asignan, la ven '+
+    'únicamente ellos: un administrador no puede nombrar a otro administrador ni cambiarle el rol a nadie. '+
+    'Todas las cuentas de Sipnology que no tienen otro rol son operadores.'+
+    '<div class="avi">Si necesitas que alguien suba o baje de rol, pídeselo a un propietario.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
   q:'¿Cómo cambio quién recibe las alertas de SLA?',
   a:'En <b>Administración → Alertas</b>, en «A quién se avisa de los SLA». Escribe las '+
@@ -14604,7 +14623,7 @@ window.SIP={S:S,esc:esc,
   dsNormRegistro:dsNormRegistro,
   abrirFormEq:abrirFormEq,ofrecerCambioSerie:ofrecerCambioSerie,equipoPorSerie:equipoPorSerie,
   PLANTILLA_DS:PLANTILLA_DS,borrarExpedientesCliente:borrarExpedientesCliente,
-  CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,tiposDesajustados:tiposDesajustados,
+  CAT_AREAS:CAT_AREAS,areaDe:areaDe,seccionDe:seccionDe,seccionVisible:seccionVisible,tiposDesajustados:tiposDesajustados,
   moduloDeSeccion:moduloDeSeccion,
   pIdxAnio:pIdxAnio,anioDe:anioDe,anioSolo:anioSolo,aniosDe:aniosDe,leerIndice:leerIndice,idxUpsert:idxUpsert,volcarIdx:volcarIdx,idxRetener:idxRetener,idxSoltar:idxSoltar,
   repartirIndicePorAnio:repartirIndicePorAnio,repartirIndicesSiHaceFalta:repartirIndicesSiHaceFalta,
