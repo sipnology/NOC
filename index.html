@@ -1301,7 +1301,7 @@ const cfg = {
 ,"alertas":{"auto":false,"slaVencido":true,"slaPorVencer":true,"compromiso":true,"bloquearCorreo":false}};
 /* Versión visible en la interfaz. Sirve para saber de un vistazo si lo que está
    publicado en GitHub Pages es lo mismo que tienes en tu máquina. */
-const APP_VER = '2026-09-29 · r137';
+const APP_VER = '2026-09-29 · r138';
 const AUTH_TTL   = 3*60*60*1000;      // 3 h de inactividad dentro de la misma sesión
 /* Autenticación estricta: la sesión vive en sessionStorage, así que al cerrar la pestaña
    desaparece y hay que volver a entrar. Además se pide reautenticación explícita.
@@ -1953,7 +1953,7 @@ function censoSedes(cat){
 /* Qué secciones son del cliente y cuáles son de Sipnology. */
 const SEC_CLIENTE=['localidades','categorias','tipos','prioridades','tiposDispositivo',
   'imputables','aliasSedes','clientesExternos','catsConTiempos','estadosCRQ',
-  'estadosFab','estadosRMA','estatus'];
+  'estadosFab','estadosRMA','estatus','destinatarios'];
 const SEC_GLOBAL=['admins','propietarios','logoOperador','alertas','diagnostico','accesos'];
 const pInv  =c=>pCli(c)+D_INV+'/inventario.json';
 const pCrq  =c=>pCli(c)+D_CRQ+'/crq.json';
@@ -4728,24 +4728,52 @@ function alertaPendiente(clave){
   return !m[clave] || (Date.now()-m[clave])>ALERTA_REPETIR_MIN*60000;
 }
 /* Manda por correo los tickets que acaban de entrar en aviso. Solo los que no se hayan
-   avisado ya: repetir lo mismo cada cinco minutos convierte el aviso en ruido. */
+   avisado ya: repetir lo mismo cada cinco minutos convierte el aviso en ruido.
+   r138 · Un correo POR CLIENTE. La lista de Sipnology (Administración › Alertas) recibe el
+   de cada cliente; las direcciones marcadas «Alertas» en los destinatarios de un cliente
+   reciben SOLO el de su cliente. Antes salía un único correo con los tickets de todos los
+   clientes visibles: mandarlo a alguien de un cliente habría mostrado los de otro. */
 async function correoAlertasSLA(vencidos,porVencer,compromiso){
-  const para=(cfgAlertas().destinatariosSLA||[]).filter(correoValido);
-  if(!para.length) return false;
   if(correoBloqueado()){ logEvent('ALERTA_SLA_BLOQUEADA','bloqueo total de correo'); return false; }
+  const internos=(cfgAlertas().destinatariosSLA||[]).map(normCorreo).filter(correoValido);
   const grupos=[['VENCIDO',vencidos],['POR VENCER',porVencer],['COMPROMISO DE TERCERO',compromiso]];
-  const nuevos=[], claves=[];
-  grupos.forEach(([tipo,lista])=>{
-    (lista||[]).forEach(t=>{
-      const clave=tipo+'|'+t.id;
-      if(!alertaPendiente(clave)) return;
-      claves.push(clave); nuevos.push({tipo:tipo,t:t});
-    });
-  });
-  if(!nuevos.length) return false;
+  const porCli={};
+  grupos.forEach(([tipo,lista])=>(lista||[]).forEach(t=>{ const c=t.clienteId||''; (porCli[c]=porCli[c]||[]).push({tipo:tipo,t:t}); }));
+  let alguno=false;
+  for(const cli of Object.keys(porCli)){
+    /* Quien está en las dos listas recibe una sola vez: el correo interno. */
+    const deCliente=destinatariosDe(cli,'alertas').filter(c=>internos.indexOf(c)===-1);
+    for(const [grupo,para] of [['int',internos],['cli',deCliente]]){
+      if(!para.length) continue;
+      const claves=[], nuevos=[];
+      porCli[cli].forEach(x=>{
+        /* El interno conserva la clave de antes (tipo|folio): al actualizar no se repiten
+           los avisos que ya salieron. El del cliente lleva su propio prefijo. */
+        const clave=(grupo==='int'?'':'cli|')+x.tipo+'|'+x.t.id;
+        if(!alertaPendiente(clave)) return;
+        claves.push(clave); nuevos.push(x);
+      });
+      if(!nuevos.length) continue;
+      try{
+        await enviarAvisoSistema(para,'[NOC] '+nuevos.length+' ticket(s) de '+nombreCliente(cli)+' requieren atención',
+          htmlAlertaSLA(nuevos,cli,grupo==='int'));
+        marcarAlertaEnviada(claves);
+        logEvent('ALERTA_SLA_ENVIADA',nombreCliente(cli)+' · '+nuevos.length+' ticket(s) a '+para.length+' destinatario(s)'+
+          (grupo==='cli'?' del cliente':' de Sipnology'));
+        alguno=true;
+      }catch(e){
+        /* No se marca como enviado: si falló, el siguiente intento vuelve a incluirlo. */
+        diagFallo('alerta de SLA por correo', e.message);
+        logEvent('ALERTA_SLA_FALLIDA',nombreCliente(cli)+' · '+e.message.slice(0,140));
+      }
+    }
+  }
+  return alguno;
+}
+function htmlAlertaSLA(nuevos,cli,interno){
   /* El aviso se lee en el teléfono y hay que decidir en dos segundos a cuál se entra
      primero. Se ordenan por lo que llevan vencido: el peor arriba. */
-  nuevos.sort((a,b)=> (slaInfo(b.t).excedido||0)-(slaInfo(a.t).excedido||0));
+  nuevos=nuevos.slice().sort((a,b)=> (slaInfo(b.t).excedido||0)-(slaInfo(a.t).excedido||0));
   const td='padding:4px 10px;border-bottom:1px solid #e6edf5';
   const fila=x=>{
     const s=slaInfo(x.t), q=sinAtencion(x.t), a=asignado(x.t);
@@ -4762,8 +4790,8 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
       '<td style="'+td+'">'+esc(a.nombre||'Sin asignar')+'</td></tr>';
   };
   const th='text-align:left;padding:4px 10px';
-  const html='<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#12263a">'+
-    '<p><b>'+nuevos.length+' ticket(s)</b> de <b>'+esc(nombreCliente())+'</b> requieren atención.</p>'+
+  return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#12263a">'+
+    '<p><b>'+nuevos.length+' ticket(s)</b> de <b>'+esc(nombreCliente(cli))+'</b> requieren atención.</p>'+
     '<table style="border-collapse:collapse;font-size:12.5px">'+
     '<tr><th style="'+th+'">Aviso</th><th style="'+th+'">Folio</th>'+
     '<th style="'+th+'">Sede</th><th style="'+th+'">Prioridad</th>'+
@@ -4773,20 +4801,13 @@ async function correoAlertasSLA(vencidos,porVencer,compromiso){
     '<p style="color:#5b6b80;font-size:12px;margin-top:10px">El tiempo sin movimiento descuenta '+
     'las esperas imputables al cliente o a un tercero. Un «~» significa que el ticket no se ha '+
     'vuelto a guardar desde que se registra el último movimiento, y la cifra es aproximada.</p>'+
-    '<p style="color:#5b6b80;font-size:12px;margin-top:14px">Enviado por el Sistema de Tickets NOC desde '+
-    'la sesión de '+esc(S.me.mail||'')+'. Para dejar de recibirlo, quita tu dirección en '+
-    'Catálogos › Administración › Alertas.</p></div>';
-  try{
-    await enviarAvisoSistema(para,'[NOC] '+nuevos.length+' ticket(s) de '+nombreCliente()+' requieren atención',html);
-    marcarAlertaEnviada(claves);
-    logEvent('ALERTA_SLA_ENVIADA',nuevos.length+' ticket(s) a '+para.length+' destinatario(s)');
-    return true;
-  }catch(e){
-    /* No se marca como enviado: si falló, el siguiente intento vuelve a incluirlo. */
-    diagFallo('alerta de SLA por correo', e.message);
-    logEvent('ALERTA_SLA_FALLIDA',e.message.slice(0,140));
-    return false;
-  }
+    (interno
+      ? '<p style="color:#5b6b80;font-size:12px;margin-top:14px">Enviado por el Sistema de Tickets NOC desde '+
+        'la sesión de '+esc(S.me.mail||'')+'. Para dejar de recibirlo, quita tu dirección en '+
+        'Catálogos › Administración › Alertas.</p>'
+      : '<p style="color:#5b6b80;font-size:12px;margin-top:14px">Aviso automático del Sistema de Tickets NOC de Sipnology. '+
+        'Si ya no deseas recibirlo, avísale a tu contacto de Sipnology.</p>')+
+    '</div>';
 }
 function alertasSLA(){
   if(S.role==='cliente') return;
@@ -6810,8 +6831,8 @@ function correoHTML(t,fase,nota,paraEnvio){
 }
 function abrirCorreo(t,fase,nota,archivos){
   S._mail={t:t,fase:fase,nota:nota||t.descripcion,archivos:archivos||(t.adjuntos||[]).map(a=>a.nombre)};
-  const cli=(S.cat.clientes||[]).find(c=>c.id===t.clienteId)||{};
-  $('#mmTo').value=(cli.correosNotif||[]).join('; ');
+  /* r138: «Para» sale de Catálogos › Tickets › Destinatarios de correo del cliente del ticket. */
+  $('#mmTo').value=destinatariosDe(t.clienteId,'tickets').join('; ');
   $('#mmCc').value=S.me.mail;
   $('#mmSubj').value='['+fase+'] Ticket '+t.id+' · '+t.cliente+' · '+t.localidad+' · '+t.prioridad;
   $('#mmBody').innerHTML='';
@@ -6890,7 +6911,7 @@ const LISTAS={tiposDispositivo:'Tipos de dispositivo',imputables:'Imputables',
 
 /* Secciones que pertenecen a un cliente concreto: sin cliente activo no se pueden
    editar, porque no habría dónde guardarlas. */
-const CAT_DE_CLIENTE=['localidades','pisos','categorias','tipos','prioridades','equipos',
+const CAT_DE_CLIENTE=['destinatarios','localidades','pisos','categorias','tipos','prioridades','equipos',
   'tiposDispositivo','imputables','aliasSedes','clientesExternos','catsConTiempos',
   'estadosCRQ','estadosFab','estadosRMA','mantenimiento','historico','impCrq','impSit','impFab','impRma'];
 /* A qué menú pertenece cada apartado. Sirve para el título de la pantalla y para las
@@ -6909,6 +6930,8 @@ const CAT_AREAS=[
     ['prioridades','Prioridades y SLA','Horas de compromiso de cada prioridad'],
     ['imputables','Imputables','A quién se atribuye la falla'],
     ['catsConTiempos','Categorías con tiempo de falla','Las que piden hora de inicio y fin'],
+    /* r138: a quién se mandan los correos de tickets y las alertas de ESTE cliente. */
+    ['destinatarios','Destinatarios de correo','A quién llegan los correos de tickets y las alertas de SLA de este cliente'],
     ['historico','Importar histórico','Carga masiva de tickets ya cerrados']]},
   {id:'inventario', nombre:'Inventario', icono:'💻', secciones:[
     ['equipos','Equipos y dispositivos','Alta, edición y baja del inventario'],
@@ -7720,6 +7743,7 @@ function renderCat(){
   if(k==='impFab') return renderImportDS(box,DATASETS.fab);
   if(k==='impRma') return renderImportDS(box,DATASETS.rma);
   if(k==='impPmo') return renderImportPmo(box);
+  if(k==='destinatarios') return renderDestinatarios(box,ro);
   if(k==='mantenimiento') return renderMantenimiento(box);
   if(k==='aliasSedes') return renderAlias(box,ro);
   if(k==='pisos') return renderPisos(box,ro);
@@ -9036,7 +9060,9 @@ function renderClientes(box,ro){
           ?'Clientes/'+esc(c.id)+'/ · no se puede cambiar'
           :'se genera del nombre')+'</span></div>'+
       '<div class="f"><label>Dominios de correo (coma)</label><input data-c="dominios" data-i="'+i+'" value="'+esc((c.dominios||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
-      '<div class="f"><label>Correos de notificación (coma)</label><input data-c="correosNotif" data-i="'+i+'" value="'+esc((c.correosNotif||[]).join(', '))+'"'+(ro?' disabled':'')+'></div>'+
+      /* r138: los destinatarios se configuran en Catálogos › Tickets › Destinatarios de correo. */
+      '<div class="f"><label>Destinatarios de correo</label><div style="font-size:12.5px;color:var(--muted);padding-top:8px">'+
+        'Se configuran en <b>Catálogos › Tickets › Destinatarios de correo</b>, con el cliente elegido arriba.</div></div>'+
       '</div>'+
       '<div class="row" style="margin-top:12px;align-items:flex-start;gap:26px">'+
         '<div><label style="font-size:11.5px;color:var(--muted);font-weight:600">MÓDULOS</label>'+
@@ -12220,8 +12246,7 @@ function enlazarEventos(){
     try{
       const f=await fichaTicket(folio);
       if($('#repFichaCorreo').checked){
-        const cli=((S.cat.clientes||[]).find(c=>c.id===f.ticket.clienteId)||{});
-        const para=prompt('Enviar la ficha de '+f.ticket.id+' a:',(cli.correosNotif||[]).join('; '));
+        const para=prompt('Enviar la ficha de '+f.ticket.id+' a:',destinatariosDe(f.ticket.clienteId,'tickets').join('; '));
         if(!para){ $('#repFichaEstado').innerHTML=''; return; }
         const dest=await enviarArchivos(para,'[FICHA] Ticket '+f.ticket.id+' · '+f.ticket.cliente,
           correoHTML(f.ticket,f.ticket.status==='CERRADO'?'CIERRE':'SEGUIMIENTO',f.ticket.descripcion,true),
@@ -13827,6 +13852,106 @@ function pmoAbrirGestion(){
   if(adm) pmoLimpiarPapelera().then(n=>{ if(n) pmoAbrirGestion(); }).catch(e=>diagFallo('proyectos: limpiar papelera',e.message));
 }
 
+/* ---------------------- DESTINATARIOS DE CORREO POR CLIENTE (r138) ----------------------
+   Catálogos › Tickets › Destinatarios de correo. Es un catálogo DEL CLIENTE (vive en su
+   catalogo.json, como sus sedes): las direcciones de BBVA no existen para otro cliente.
+   Cada dirección —de Sipnology o de cualquier dominio— elige qué recibe:
+     · Tickets: los correos de apertura, seguimiento y cierre de los tickets de ese cliente
+       (van en «Para» de la ventana de envío, que el operador revisa y manda).
+     · Alertas: los avisos automáticos de SLA (vencido, por vencer, compromiso de tercero)
+       de los tickets de ese cliente, y solo de ese cliente.
+   La lista global de Administración › Alertas sigue siendo la de Sipnology, que recibe
+   las alertas de todos los clientes. */
+function destinatariosLista(cliId){
+  const cc=(S.catCli||{})[cliId];
+  /* Se usa lo GUARDADO, no lo que alguien esté editando sin guardar en Catálogos. */
+  return (cc&&Array.isArray(cc.destinatarios))? cc.destinatarios : null;   // null: nunca se ha configurado
+}
+/* Direcciones válidas y sin repetir de un cliente para «tickets» o «alertas». Si la lista
+   nunca se ha guardado, los correos de tickets usan los «correos de notificación» que
+   tenía la ficha del cliente, para que nadie deje de recibir nada al actualizar. */
+function destinatariosDe(cliId,tipo){
+  const lista=destinatariosLista(cliId);
+  let out;
+  if(lista) out=lista.filter(d=>d&&d[tipo]).map(d=>normCorreo(d.correo));
+  else if(tipo==='tickets'){ const c=((S.cat&&S.cat.clientes)||[]).find(x=>x.id===cliId)||{}; out=(c.correosNotif||[]).map(normCorreo); }
+  else out=[];
+  return out.filter(correoValido).filter((c,i,a)=>a.indexOf(c)===i);
+}
+function revisarDestinatarios(lista){
+  const vistos={}, malos=[], repes=[], mudos=[];
+  (lista||[]).forEach((d,i)=>{
+    const c=normCorreo(d.correo);
+    if(!c) return;
+    if(!correoValido(c)) malos.push(d.correo);
+    else if(vistos[c]) repes.push(c);
+    else vistos[c]=1;
+    if(c&&!d.tickets&&!d.alertas) mudos.push(c);
+  });
+  return {malos,repes,mudos};
+}
+function renderDestinatarios(box,ro){
+  const cli=S.cliente;
+  let lista=Array.isArray(S.cat.destinatarios)? S.cat.destinatarios : null;
+  let traidos=false;
+  if(!lista){
+    const c=(S.cat.clientes||[]).find(x=>x.id===cli)||{};
+    lista=(c.correosNotif||[]).map(x=>({correo:x,nombre:'',tickets:true,alertas:false}));
+    traidos=lista.length>0;
+    /* Solo si se trajo algo queda como cambio pendiente (y se conserva al guardar). Una
+       lista vacía no se marca: abrir la pestaña no debe dejar «cambios sin guardar». */
+    if(!ro&&traidos) S.cat.destinatarios=lista;
+  }
+  const a=cfgAlertas();
+  const pinta=()=>{
+    const r=revisarDestinatarios(lista);
+    /* Se cuentan direcciones distintas, que es a cuántas llega de verdad. */
+    const cuenta=k=>new Set(lista.filter(d=>d[k]).map(d=>normCorreo(d.correo)).filter(correoValido)).size;
+    const nT=cuenta('tickets'), nA=cuenta('alertas');
+    box.innerHTML=
+      '<div class="note">A estas direcciones se envían los correos de <b>'+esc(nombreCliente())+'</b>. Pueden ser de Sipnology o de '+
+        'cualquier otro dominio. En cada una eliges qué recibe:<ul style="margin:6px 0 0 18px">'+
+        '<li><b>Tickets</b>: apertura, seguimiento y cierre. Salen en «Para» de la ventana de envío, que el operador revisa y manda.</li>'+
+        '<li><b>Alertas</b>: los avisos automáticos de SLA vencido, por vencer y compromiso de tercero vencido, '+
+          '<b>solo de los tickets de este cliente</b>.</li></ul></div>'+
+      '<div class="note" style="border-left-color:'+(a.auto&&!a.bloquearCorreo?'var(--p3)':'var(--warn)')+';margin-top:8px">'+
+        (a.bloquearCorreo? '<b>El bloqueo total de correo está activo</b> (Administración › Alertas): mientras siga así no sale ningún correo.'
+         : a.auto? 'Las alertas automáticas están <b>encendidas</b>.'
+         : 'Las alertas automáticas están <b>apagadas</b> (Administración › Alertas): quienes tengan «Alertas» empezarán a recibirlas cuando se enciendan. Los correos de tickets sí salen.')+
+      '</div>'+
+      (traidos? '<div class="note" style="border-left-color:var(--brand2);margin-top:8px">Se trajeron las direcciones que tenía la ficha del cliente '+
+        '(«correos de notificación»), marcadas para <b>Tickets</b>. Revisa y pulsa <b>Guardar cambios</b> para conservarlas aquí.</div>':'')+
+      '<div class="tw" style="margin-top:12px"><table><thead><tr><th>Correo</th><th>Nombre (opcional)</th>'+
+        '<th style="text-align:center">Tickets</th><th style="text-align:center">Alertas</th><th></th></tr></thead><tbody>'+
+      (lista.length? lista.map((d,i)=>'<tr>'+
+        '<td><input data-dc="correo" data-i="'+i+'" value="'+esc(d.correo||'')+'" placeholder="nombre@dominio.com"'+(ro?' readonly':'')+
+          (d.correo&&!correoValido(normCorreo(d.correo))?' style="border-color:var(--p1)"':'')+'></td>'+
+        '<td><input data-dc="nombre" data-i="'+i+'" value="'+esc(d.nombre||'')+'"'+(ro?' readonly':'')+'></td>'+
+        '<td style="text-align:center"><input type="checkbox" data-dk="tickets" data-i="'+i+'"'+(d.tickets?' checked':'')+(ro?' disabled':'')+' style="width:auto"></td>'+
+        '<td style="text-align:center"><input type="checkbox" data-dk="alertas" data-i="'+i+'"'+(d.alertas?' checked':'')+(ro?' disabled':'')+' style="width:auto"></td>'+
+        '<td>'+(ro?'':'<button class="btn sec" data-dq="'+i+'" style="padding:3px 10px">Quitar</button>')+'</td></tr>').join('')
+        : '<tr><td colspan="5" class="muted">Sin direcciones: los correos de tickets de este cliente saldrán sin destinatario y nadie del cliente recibirá alertas.</td></tr>')+
+      '</tbody></table></div>'+
+      (ro?'':'<button class="btn sec" id="destAdd" style="margin-top:10px">+ Agregar dirección</button>')+
+      '<div style="font-size:12.5px;margin-top:10px"><b>'+nT+'</b> reciben correos de tickets · <b>'+nA+'</b> reciben alertas'+
+        (r.malos.length?' · <span style="color:var(--p1)">no parecen correos (no se usarán): '+esc(r.malos.join(', '))+'</span>':'')+
+        (r.repes.length?' · <span style="color:var(--warn)">repetidas (se envía una vez): '+esc(r.repes.join(', '))+'</span>':'')+
+        (r.mudos.length?' · <span style="color:var(--warn)">sin Tickets ni Alertas (no recibirán nada): '+esc(r.mudos.join(', '))+'</span>':'')+
+      '</div>'+
+      (ro?'<div class="note" style="margin-top:10px"><b>Tu perfil es de solo lectura.</b></div>':'');
+    if(ro) return;
+    const cambio=()=>{ S.cat.destinatarios=lista; renderPendCat(); };
+    box.querySelectorAll('[data-dc]').forEach(inp=>inp.onchange=()=>{
+      const d=lista[+inp.dataset.i]; d[inp.dataset.dc]= inp.dataset.dc==='correo'? normCorreo(inp.value) : inp.value.trim(); cambio(); pinta(); });
+    box.querySelectorAll('[data-dk]').forEach(ch=>ch.onchange=()=>{ lista[+ch.dataset.i][ch.dataset.dk]=ch.checked; cambio(); pinta(); });
+    box.querySelectorAll('[data-dq]').forEach(b=>b.onclick=()=>{ lista.splice(+b.dataset.dq,1); cambio(); pinta(); });
+    const add=box.querySelector('#destAdd');
+    if(add) add.onclick=()=>{ lista.push({correo:'',nombre:'',tickets:true,alertas:false}); cambio(); pinta();
+      const ins=box.querySelectorAll('[data-dc="correo"]'); if(ins.length&&ins[ins.length-1].focus) ins[ins.length-1].focus(); };
+  };
+  pinta();
+}
+
 /* ---------------------- AYUDA EN PANTALLA ----------------------
    Sustituye a los manuales en Word. La razón es el mantenimiento: este sistema va por la
    versión r125, y cada cambio de pantalla deja obsoleta una captura de un documento que
@@ -14046,7 +14171,9 @@ const AYUDA=[
   q:'¿Cómo mando la ficha de un ticket al cliente?',
   a:'Dentro del ticket, al final, tienes <b>Generar ficha en PDF</b> y <b>✉ Enviar por correo</b>. '+
     'La ficha lleva los datos de apertura, el historial completo, las pausas y los adjuntos, con '+
-    'el logo de Sipnology y el del cliente.<div class="avi">El envío sale desde tu propia cuenta '+
+    'el logo de Sipnology y el del cliente. En «Para» ya vienen las direcciones que el '+
+    'administrador marcó para <b>Tickets</b> en los destinatarios de ese cliente; revísalas antes de enviar.'+
+    '<div class="avi">El envío sale desde tu propia cuenta '+
     'de Microsoft 365, así que el cliente ve que se lo mandaste tú. Si está puesto el bloqueo '+
     'total de correo en Administración, no sale nada.</div>'},
  {c:'Tickets', n:'operador',
@@ -14182,7 +14309,21 @@ const AYUDA=[
     'direcciones separadas por coma, punto y coma o una por línea. Debajo te dice cuántas '+
     'reconoció y te marca en rojo las que no parecen correos, las repetidas y las de fuera '+
     'de sipnology.com.mx.<div class="avi">Los avisos salen desde <b>la sesión de quien esté '+
-    'conectado</b>. De madrugada, sin nadie con el sistema abierto, no hay quien los mande.</div>'},
+    'conectado</b>. De madrugada, sin nadie con el sistema abierto, no hay quien los mande.</div>'+
+    '<div class="avi">Esta lista es la de Sipnology y recibe las alertas de <b>todos</b> los clientes. '+
+    'Las direcciones de un cliente se ponen en <b>Catálogos → Tickets → Destinatarios de correo</b>.</div>'},
+ {c:'Administración', n:'admin', ir:'vCatalogos',
+  q:'¿Cómo hago que a un cliente le lleguen los correos de sus tickets o sus alertas?',
+  a:'Con el cliente elegido, en <b>Catálogos → Tickets → Destinatarios de correo</b>. Agrega cada '+
+    'dirección (de Sipnology o de cualquier dominio) y marca qué recibe:<ul>'+
+    '<li><b>Tickets</b>: sale ya puesta en «Para» cuando se envía un ticket o su ficha (apertura, '+
+    'seguimiento, cierre). El operador la ve y puede cambiarla antes de mandar.</li>'+
+    '<li><b>Alertas</b>: recibe los avisos automáticos de SLA vencido, por vencer y compromiso de '+
+    'tercero vencido, <b>solo de los tickets de ese cliente</b>. Nunca le llega un ticket de otro.</li></ul>'+
+    'Puedes marcar las dos. Pulsa <b>Guardar cambios</b> al terminar: hasta entonces no se usa.'+
+    '<div class="avi">Las alertas solo salen si el interruptor general de <b>Administración → Alertas</b> '+
+    'está encendido y no hay bloqueo total de correo. Quien esté también en la lista de Sipnology '+
+    'recibe un solo correo, el interno.</div>'},
  {c:'Administración', n:'admin', ir:'vCatalogos',
   q:'¿Para qué sirve el interruptor general de alertas?',
   a:'Con <b>Avisos automáticos</b> apagado el sistema no dice nada por su cuenta: ni recordatorios '+
@@ -14413,7 +14554,7 @@ window.SIP={S:S,esc:esc,
   accLeer:accLeer,accCambiarRol:accCambiarRol,accSincronizar:accSincronizar,accCambiarModo:accCambiarModo,
   accPersonas:accPersonas,accDiferencias:accDiferencias,accRevisar:accRevisar,accEntraManda:accEntraManda,
   accGuardarCache:accGuardarCache,rolDeLista:rolDeLista,scopesDeToken:scopesDeToken,renderAccesos:renderAccesos,
-  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,bandaMarcaXlsx:bandaMarcaXlsx,cajaLogo:cajaLogo,formatoTabla:formatoTabla,cabeceraPdf:cabeceraPdf,pmoAnalizarImport:pmoAnalizarImport,pmoAplicarImport:pmoAplicarImport,
+  tokenGrupos:tokenGrupos,nomGrupo:nomGrupo,destinatariosDe:destinatariosDe,correoAlertasSLA:correoAlertasSLA,renderDestinatarios:renderDestinatarios,bandaMarcaXlsx:bandaMarcaXlsx,cajaLogo:cajaLogo,formatoTabla:formatoTabla,cabeceraPdf:cabeceraPdf,pmoAnalizarImport:pmoAnalizarImport,pmoAplicarImport:pmoAplicarImport,
   PMO_PLANTILLA_COLS:PMO_PLANTILLA_COLS,PMO_EJEMPLO:PMO_EJEMPLO,PMO_INSTRUCCIONES:PMO_INSTRUCCIONES,pmoTareasExport:pmoTareasExport,
   pmoResumenProyectos:pmoResumenProyectos,pmoFiltrosTexto:pmoFiltrosTexto,
   zipCrear:zipCrear,crc32:crc32,pmoEditarProyecto:pmoEditarProyecto,pmoEliminarTarea:pmoEliminarTarea,pmoEliminarProyecto:pmoEliminarProyecto,
